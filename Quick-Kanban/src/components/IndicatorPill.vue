@@ -1,14 +1,17 @@
 <template>
-    <div :key="indicator" data-action="indicator" class='btn btn-default btn-xs indicator-pill' :class="indicator">
-    </div>
+  <span
+    data-action="indicator"
+    class="quick-kanban-indicator-swatch"
+    :class="indicator"
+    aria-hidden="true"
+  ></span>
 </template>
 
 <script setup>
-
-import { defineProps } from 'vue';
-
-const props = defineProps({
-    indicator: String,
-});
-
+defineProps({
+  indicator: {
+    type: String,
+    default: 'gray',
+  },
+})
 </script>

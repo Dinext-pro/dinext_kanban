@@ -1,13 +1,41 @@
 <template>
-  <div class="kanban" ref="kanbanBoard">
-    <KanbanColumn
-      v-for="(column, columnIndex) in columns"
-      :column="column"
-      :columnIndex="columnIndex"
-      :config="config"
-      @drop="drop"
-    />
-  </div>
+  <section class="kanban-shell" :aria-label="__('Kanban board {0}', [config.board_name])">
+    <div v-if="loading" class="kanban-state" role="status">
+      <span class="loading-indicator" aria-hidden="true"></span>
+      {{ __('Loading Kanban board…') }}
+    </div>
+
+    <div v-if="error" class="kanban-state kanban-error" role="alert">
+      <span>{{ error }}</span>
+      <button type="button" class="btn btn-default btn-sm" @click="retry">
+        {{ __('Retry') }}
+      </button>
+    </div>
+
+    <div
+      ref="kanbanBoard"
+      class="kanban"
+      tabindex="0"
+      :aria-label="__('Kanban columns. Scroll horizontally to see more.')"
+    >
+      <KanbanColumn
+        v-for="(column, columnIndex) in columns"
+        :key="column.name"
+        :column="column"
+        :columnIndex="columnIndex"
+        :config="config"
+        @dragstart="rememberDrag"
+        @drop="drop"
+      />
+      <p v-if="!loading && !error && columns.length === 0" class="kanban-state">
+        {{ __('No columns are configured for this board.') }}
+      </p>
+    </div>
+
+    <p class="sr-only" aria-live="polite" aria-atomic="true">
+      {{ announcement }}
+    </p>
+  </section>
 </template>
 
 <script setup>
@@ -19,47 +47,84 @@ const store = useStore();
 const columns = computed(() => store.getters.getColumns);
 const config = computed(() => store.getters.getConfig);
 const kanbanBoard = ref(null);
+const loading = computed(() => store.state.loading)
+const error = computed(() => store.state.error)
+const announcement = computed(() => store.state.announcement)
+const __ = globalThis.__
+let dragContext = null
+let hydrationToken = 0
+let onMouseDown
+let onMouseLeave
+let onMouseUp
+let onMouseMove
 
-const board_name = frappe.get_route()[3];
+const currentBoardName = () => frappe.get_route()[3]
 
 onMounted(() => {
   window.refreshKanbanBoard = refreshKanbanBoard;
-  refreshKanbanBoard();
+  window.hydrateQuickKanban = hydrateQuickKanban;
+  if (window.quickKanbanInitialData) {
+    hydrateQuickKanban(window.quickKanbanInitialData)
+    delete window.quickKanbanInitialData
+  } else {
+    refreshKanbanBoard();
+  }
   bindClickDrag();
 });
 
 onBeforeUnmount(() => {
   unbindClickDrag();
+  delete window.refreshKanbanBoard
+  delete window.hydrateQuickKanban
 });
 
-const refreshKanbanBoard = (args) => {
-  store
-    .dispatch("fetchColumns", { board_name })
-    .then(() => {
-      return store.dispatch("fetchKanban", { args });
+const refreshKanbanBoard = async (args, forceConfig = false) => {
+  hydrationToken += 1
+  try {
+    await store.dispatch("refreshBoard", {
+      board_name: currentBoardName(),
+      args,
+      forceConfig,
     })
-    .catch((error) => console.error("Error during Kanban setup:", error));
+  } catch {
+    // The store exposes the user-facing error state.
+  }
 };
 
-function drop(event) {
-  const evt = event.event;
-  if (evt.newIndex === -1) {
-    console.log("Dropped from index", evt.oldIndex);
+async function hydrateQuickKanban(payload) {
+  const token = ++hydrationToken
+  await store.dispatch("hydrateFromList", payload)
+  if (token !== hydrationToken) return
+  try {
+    const current = await store.dispatch("fetchColumnTotals", {
+      args: payload.args,
+    })
+    if (current === false || token !== hydrationToken) return
+    await store.dispatch("topUpInitialColumns", { args: payload.args })
+  } catch {
+    // The store exposes errors and keeps per-column scroll retry available.
   }
-  if (evt.oldIndex === -1) {
-    const card = columns.value[evt.to.id].cards.find(
-      (item) => item.name === event.key
-    );
-    console.log(card.name, ":", card[config.value.title_field]);
+}
 
-    store.dispatch("updateOrder", {
-      fromColumn: evt.from.id,
-      toColumn: evt.to.id,
-      fromIndex: -1,
-      toIndex: evt.newIndex,
-      card,
-    });
-  }
+function retry() {
+  return refreshKanbanBoard(window.cur_list?.get_args?.(), true)
+}
+
+function rememberDrag(context) {
+  dragContext = context
+}
+
+function drop(event) {
+  if (event.oldIndex !== -1 || !dragContext) return
+
+  const toColumn = Number(event.event.to.id)
+  if (toColumn === dragContext.fromColumn) return
+  store.dispatch("persistMovedCard", {
+    ...dragContext,
+    toColumn,
+    toIndex: event.newIndex,
+  }).catch(() => {})
+  dragContext = null
 }
 
 const bindClickDrag = () => {
@@ -69,7 +134,7 @@ const bindClickDrag = () => {
 
   const draggable = kanbanBoard.value;
 
-  const onMouseDown = (e) => {
+  onMouseDown = (e) => {
     let ignoreEl = [
       ".kanban-column .kanban-column-header",
       ".kanban-column .add-card",
@@ -84,17 +149,17 @@ const bindClickDrag = () => {
     scrollLeft = draggable.scrollLeft;
   };
 
-  const onMouseLeave = () => {
+  onMouseLeave = () => {
     isDown = false;
     draggable.classList.remove("clickdrag-active");
   };
 
-  const onMouseUp = () => {
+  onMouseUp = () => {
     isDown = false;
     draggable.classList.remove("clickdrag-active");
   };
 
-  const onMouseMove = (e) => {
+  onMouseMove = (e) => {
     if (!isDown) return;
     e.preventDefault();
     const x = e.pageX - draggable.offsetLeft;
@@ -110,10 +175,11 @@ const bindClickDrag = () => {
 
 const unbindClickDrag = () => {
   const draggable = kanbanBoard.value;
-
+  if (!draggable) return
   draggable.removeEventListener("mousedown", onMouseDown);
   draggable.removeEventListener("mouseleave", onMouseLeave);
   draggable.removeEventListener("mouseup", onMouseUp);
   draggable.removeEventListener("mousemove", onMouseMove);
 };
+
 </script>
