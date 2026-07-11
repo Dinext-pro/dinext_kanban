@@ -66,7 +66,7 @@
     <div id="kanbanapp"></div>
     <script type="module">
       window.__ = (message, values = []) =>
-        values.reduce(
+        (values || []).reduce(
           (result, value, index) => result.replace(`{${index}}`, value),
           message,
         )
@@ -145,15 +145,18 @@
         get_meta: () => ({
           title_field: 'subject',
           fields: [
-            { fieldname: 'subject', label: 'Subject', fieldtype: 'Data' },
-            { fieldname: 'priority', label: 'Priority', fieldtype: 'Select' },
-            { fieldname: 'expected_end_date', label: 'Expected End Date', fieldtype: 'Date' },
-            { fieldname: 'project', label: 'Project', fieldtype: 'Link' },
+            { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+            { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+            { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
+            { fieldname: 'expected_end_date', label: 'Expected End Date', fieldtype: 'Date', parent: 'Task' },
+            { fieldname: 'project', label: 'Project', fieldtype: 'Link', parent: 'Task' },
           ],
         }),
         get_palette: () => ['--blue-100', '--blue-800'],
         get_route: () => ['List', 'Task', 'Kanban', 'Browser Board'],
-        new_doc: () => {},
+        new_doc: (doctype, defaults = {}) => {
+          window.__lastNewDoc = { doctype, defaults }
+        },
         show_alert: (alert) => window.__quickKanbanAlerts.push(alert),
         update_user_info: (userInfo = {}) => {
           Object.assign(window.frappe.boot.user_info, userInfo)

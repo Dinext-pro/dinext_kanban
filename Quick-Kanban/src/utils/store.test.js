@@ -880,6 +880,38 @@ describe('card moves', () => {
     }))
   })
 
+  test('uses translated column labels in move alerts while preserving raw API values', async () => {
+    const originalTranslate = globalThis.__
+    globalThis.__ = (message, values = []) => {
+      const labels = { Done: 'Готово' }
+      const label = labels[values[0]] || values[0]
+      return message.replace('{0}', label)
+    }
+
+    frappe.call.mockResolvedValue({ message: { modified: '2026-07-10 10:01:00' } })
+    const store = hydratedStore()
+    store.state.columns[1].display_name = 'Готово'
+
+    await store.dispatch('moveCard', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      toColumn: 1,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      args: expect.objectContaining({ value: 'Done' }),
+    }))
+    expect(frappe.show_alert).toHaveBeenCalledWith({
+      message: 'Card moved to Готово',
+      indicator: 'green',
+    })
+    expect(store.state.announcement).toBe('Card moved to Готово')
+
+    globalThis.__ = originalTranslate
+  })
+
   test('rolls back an optimistic move when persistence fails', async () => {
     frappe.call.mockRejectedValue(new Error('Not permitted'))
     const store = hydratedStore()

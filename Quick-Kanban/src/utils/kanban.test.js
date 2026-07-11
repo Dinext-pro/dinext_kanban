@@ -1,11 +1,31 @@
 import { describe, expect, test } from 'vitest'
 import {
+  attachColumnDisplayNames,
   formatCardField,
+  getCardFieldDisplayValue,
+  getColumnDisplayName,
   getIndicatorClass,
   groupCardsByColumn,
   isNearScrollEnd,
   normalizeBoardConfig,
+  shouldTranslateFieldValue,
+  translateFieldLabel,
+  translateFieldValue,
 } from './kanban'
+
+const translationMap = {
+  'Due date': 'Срок',
+  'Task': 'Задача',
+  Open: 'Открыто',
+  Done: 'Готово',
+  High: 'Высокий',
+  'Custom note': 'Пользовательская заметка',
+}
+
+function mockTranslate(message, _values, context) {
+  const key = context ? `${message}::${context}` : message
+  return translationMap[key] || translationMap[message] || message
+}
 
 describe('normalizeBoardConfig', () => {
   test('normalizes missing optional values and includes the highlighted field', () => {
@@ -17,7 +37,14 @@ describe('normalizeBoardConfig', () => {
       custom_highlighted_field: 'priority',
       custom_highlight_table: null,
       show_labels: 1,
-    }, { title_field: 'subject' })
+    }, {
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+        { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
+        { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+      ],
+    })
 
     expect(config).toMatchObject({
       board_name: 'Tasks',
@@ -28,6 +55,9 @@ describe('normalizeBoardConfig', () => {
       highlighted_field: 'priority',
       highlight_table: [],
       show_labels: true,
+      title_field_meta: { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+      status_field_meta: { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+      highlighted_field_meta: { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
     })
   })
 
@@ -126,6 +156,42 @@ describe('formatCardField', () => {
     expect(formatter).toHaveBeenCalledWith('2026-07-10', meta, {}, card)
   })
 
+  test('translates translatable text fields before formatting', () => {
+    const meta = {
+      fieldtype: 'Data',
+      fieldname: 'custom_note',
+      translatable: 1,
+      parent: 'Task',
+    }
+    const formatter = vi.fn((value) => `formatted:${value}`)
+
+    expect(formatCardField(
+      'Custom note',
+      meta,
+      formatter,
+      {},
+      mockTranslate,
+    )).toBe('formatted:Пользовательская заметка')
+    expect(formatter).toHaveBeenCalledWith(
+      'Пользовательская заметка',
+      meta,
+      {},
+      {},
+    )
+  })
+
+  test('does not pre-translate Select values because Frappe formatter handles them', () => {
+    const meta = {
+      fieldtype: 'Select',
+      fieldname: 'priority',
+      parent: 'Task',
+    }
+    const formatter = vi.fn((value) => `formatted:${value}`)
+
+    formatCardField('High', meta, formatter, {}, mockTranslate)
+    expect(formatter).toHaveBeenCalledWith('High', meta, {}, {})
+  })
+
   test('returns an em dash for empty values', () => {
     expect(formatCardField(null, null)).toBe('—')
   })
@@ -143,5 +209,57 @@ describe('formatCardField', () => {
     expect(result).not.toContain('onclick')
     expect(result).not.toContain('<img')
     expect(result).toContain('<span class="indicator green">Safe</span>')
+  })
+})
+
+describe('translation helpers', () => {
+  test('translates field labels with DocType context', () => {
+    expect(translateFieldLabel({
+      fieldname: 'due_date',
+      label: 'Due date',
+      parent: 'Task',
+    }, mockTranslate)).toBe('Срок')
+  })
+
+  test('translates Select values and column names', () => {
+    const statusField = {
+      fieldname: 'status',
+      fieldtype: 'Select',
+      parent: 'Task',
+    }
+
+    expect(shouldTranslateFieldValue({ fieldtype: 'Select' })).toBe(true)
+    expect(translateFieldValue('High', {
+      fieldtype: 'Select',
+      parent: 'Task',
+    }, mockTranslate)).toBe('Высокий')
+    expect(getColumnDisplayName('Open', statusField, mockTranslate)).toBe('Открыто')
+    expect(attachColumnDisplayNames([
+      { name: 'open', column_name: 'Open' },
+      { name: 'done', column_name: 'Done' },
+    ], statusField, mockTranslate)).toEqual([
+      { name: 'open', column_name: 'Open', display_name: 'Открыто' },
+      { name: 'done', column_name: 'Done', display_name: 'Готово' },
+    ])
+  })
+
+  test('translates translatable Data values but leaves plain Data untouched', () => {
+    expect(translateFieldValue('Custom note', {
+      fieldtype: 'Data',
+      translatable: 1,
+      parent: 'Task',
+    }, mockTranslate)).toBe('Пользовательская заметка')
+    expect(translateFieldValue('Plain value', {
+      fieldtype: 'Data',
+      translatable: 0,
+      parent: 'Task',
+    }, mockTranslate)).toBe('Plain value')
+  })
+
+  test('returns translated plain display values for card fields', () => {
+    expect(getCardFieldDisplayValue('High', {
+      fieldtype: 'Select',
+      parent: 'Task',
+    }, mockTranslate)).toBe('Высокий')
   })
 })
