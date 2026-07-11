@@ -52,6 +52,41 @@ bench build --app quick_kanban
 bench --site <site-name> clear-cache
 ```
 
+Для Quick Kanban frontend сначала соберите Vue bundle, затем запустите `bench build` (или Frappe esbuild):
+
+```bash
+yarn workspace quick_kanban build
+cd ../frappe && yarn run production --apps quick_kanban
+```
+
+### Если `bench` падает с `ImportError: _check_nested_chain`
+
+Конфликт версий `frappe-bench` и `click`. Обновите bench CLI:
+
+```bash
+pip3 install --user --upgrade 'frappe-bench>=5.31'
+```
+
+Пока `bench` недоступен, можно использовать обходные команды из корня bench:
+
+```bash
+# Очистка кэша сайта
+env/bin/python -c "
+import os, sys
+sys.path.insert(0, 'apps/frappe')
+os.chdir('sites')
+import frappe
+frappe.init(site='<site-name>', sites_path='.')
+frappe.connect()
+frappe.clear_cache()
+print('cache cleared')
+"
+
+# Сборка assets Quick Kanban
+cd apps/dinext_kanban && yarn workspace quick_kanban build
+cd ../frappe && yarn run production --apps quick_kanban
+```
+
 ## Конфигурация
 
 Включите новый Kanban для всех пользователей сайта:

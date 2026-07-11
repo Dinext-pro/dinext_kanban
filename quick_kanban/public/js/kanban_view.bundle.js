@@ -3,6 +3,77 @@ frappe.provide("frappe.views");
 const NativeKanbanView = frappe.views.KanbanView;
 const bootstrap = window.quickKanbanBootstrap;
 let configPromise;
+
+function removeStaleQuickKanbanStylesheets(href) {
+    document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+        const linkHref = link.getAttribute("href") || "";
+        if (linkHref.includes("quick_kanban.bundle") && linkHref !== href) {
+            link.remove();
+        }
+    });
+}
+
+function loadStylesheet(href) {
+    if (bootstrap?.loadStylesheet) {
+        return bootstrap.loadStylesheet(href);
+    }
+
+    return new Promise((resolve, reject) => {
+        removeStaleQuickKanbanStylesheets(href);
+
+        const existing = document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
+        if (existing) {
+            resolve(existing);
+            return;
+        }
+
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        link.addEventListener("load", () => resolve(link), { once: true });
+        link.addEventListener(
+            "error",
+            () => reject(new Error(`Failed to load ${href}`)),
+            { once: true },
+        );
+        document.head.appendChild(link);
+    });
+}
+
+function loadScript(src) {
+    if (bootstrap?.loadScript) {
+        return bootstrap.loadScript(src);
+    }
+
+    return new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[src="${src}"]`);
+        if (existing?.dataset?.loaded === "true") {
+            resolve(existing);
+            return;
+        }
+
+        const script = existing || document.createElement("script");
+        script.addEventListener(
+            "load",
+            () => {
+                script.dataset.loaded = "true";
+                resolve(script);
+            },
+            { once: true },
+        );
+        script.addEventListener(
+            "error",
+            () => reject(new Error(`Failed to load ${src}`)),
+            { once: true },
+        );
+
+        if (!existing) {
+            script.src = src;
+            document.head.appendChild(script);
+        }
+    });
+}
+
 const getConfig = () => {
     if (!bootstrap) {
         return Promise.reject(new Error("Quick Kanban bootstrap is unavailable"));
@@ -13,7 +84,7 @@ const getConfig = () => {
     return configPromise;
 };
 
-frappe.views.KanbanView = class KanbanView extends NativeKanbanView {
+const QuickKanbanView = class KanbanView extends NativeKanbanView {
     async setup_defaults() {
         await super.setup_defaults();
         try {
@@ -81,8 +152,8 @@ frappe.views.KanbanView = class KanbanView extends NativeKanbanView {
         try {
             const cssUrl = frappe.assets.bundled_asset("quick_kanban.bundle.css");
             const bundleUrl = frappe.assets.bundled_asset("quick_kanban.bundle.js");
-            await bootstrap.loadStylesheet(cssUrl);
-            await bootstrap.loadScript(bundleUrl);
+            await loadStylesheet(cssUrl);
+            await loadScript(bundleUrl);
             window.mountQuickKanban?.();
         } catch {
             delete window.quickKanbanInitialData;
@@ -115,3 +186,54 @@ frappe.views.KanbanView = class KanbanView extends NativeKanbanView {
         }
     }
 };
+
+frappe.views.KanbanView = QuickKanbanView;
+
+function isKanbanRoute(route) {
+    return Array.isArray(route)
+        && route[0] === "List"
+        && route[2] === "Kanban";
+}
+
+async function upgradeActiveKanbanView() {
+    const active = window.cur_list;
+    if (!active || active.__quickKanbanUpgraded || active.constructor === QuickKanbanView) {
+        return;
+    }
+
+    if (!isKanbanRoute(frappe.get_route?.())) {
+        return;
+    }
+
+    try {
+        const config = await getConfig();
+        if (!bootstrap?.shouldUseBeta(config, frappe.session.user)) {
+            return;
+        }
+    } catch {
+        return;
+    }
+
+    active.__quickKanbanUpgraded = true;
+    Object.setPrototypeOf(active, QuickKanbanView.prototype);
+
+    try {
+        await active.setup_defaults?.();
+    } catch {
+        // setup_defaults may have already completed for the native instance.
+    }
+
+    try {
+        await active.set_fields?.();
+    } catch {
+        // Field setup falls back to native behavior when config is unavailable.
+    }
+
+    try {
+        await active.refresh?.();
+    } catch {
+        // If refresh fails, the next user interaction will retry render.
+    }
+}
+
+upgradeActiveKanbanView();
