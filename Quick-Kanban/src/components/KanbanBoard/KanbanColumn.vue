@@ -16,7 +16,7 @@
           {{ totalDisplay }}
         </span>
         <h2 :id="headingId" class="column-title">
-          {{ column.column_name }}
+          {{ columnLabel }}
         </h2>
       </div>
 
@@ -29,7 +29,7 @@
             ref="colorMenuButton"
             type="button"
             class="header-item"
-            :aria-label="__('Change {0} column color', [column.column_name])"
+            :aria-label="__('Change {0} column color', [columnLabel])"
             :aria-expanded="String(colorMenuOpen)"
             @click="colorMenuOpen = !colorMenuOpen"
           >
@@ -50,7 +50,7 @@
               :key="indicator.name"
               type="button"
               class="indicator-choice"
-              :aria-label="__('Set {0} color to {1}', [column.column_name, indicator.name])"
+              :aria-label="__('Set {0} color to {1}', [columnLabel, indicator.name])"
               @click="setIndicator(indicator.value)"
             >
               <IndicatorPill :indicator="indicator.class" />
@@ -62,7 +62,7 @@
         <button
           type="button"
           class="header-item"
-          :aria-label="__('Add {0} to {1}', [config.ref_doctype, column.column_name])"
+          :aria-label="__('Add {0} to {1}', [config.ref_doctype, columnLabel])"
           @click="newDoc(column.column_name)"
         >
           <svg class="icon icon-sm" aria-hidden="true">
@@ -76,7 +76,7 @@
       v-model="cards"
       role="list"
       tabindex="0"
-      :aria-label="__('Cards in {0}', [column.column_name])"
+      :aria-label="__('Cards in {0}', [columnLabel])"
       @drag="drag"
       @drop="emits('drop', $event)"
       @bottom="loadNextPage"
@@ -182,10 +182,13 @@ const columnTotal = computed(
 const totalDisplay = computed(
   () => Number.isFinite(columnTotal.value) ? columnTotal.value : '…',
 )
+const columnLabel = computed(
+  () => props.column.display_name || props.column.column_name,
+)
 const columnAriaLabel = computed(
   () => Number.isFinite(columnTotal.value)
-    ? __('{0}, {1} records', [props.column.column_name, columnTotal.value])
-    : __('{0}, total loading', [props.column.column_name]),
+    ? __('{0}, {1} records', [columnLabel.value, columnTotal.value])
+    : __('{0}, total loading', [columnLabel.value]),
 )
 
 function drag(evt) {

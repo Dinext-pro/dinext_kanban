@@ -25,7 +25,7 @@
       :class="{ 'values-only': !config.show_labels }"
     >
       <template v-for="field in displayFields" :key="field.fieldname">
-        <dt v-if="config.show_labels">{{ field.label }}</dt>
+        <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
         <dd
           :class="{ 'field-without-label': !config.show_labels }"
           :data-fieldtype="field.fieldtype"
@@ -78,10 +78,10 @@
               v-show="index !== columnIndex"
               type="button"
               class="dropdown-item"
-              :aria-label="__('Move {0} to {1}', [title, column.column_name])"
+              :aria-label="__('Move {0} to {1}', [title, getColumnLabel(column)])"
               @click="moveCard(index)"
             >
-              {{ column.column_name }}
+              {{ getColumnLabel(column) }}
             </button>
           </div>
         </Teleport>
@@ -100,7 +100,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { useStore } from 'vuex'
 import Assignments from '../Assignments.vue'
-import { formatCardField } from '../../utils/kanban'
+import { formatCardField, getCardFieldDisplayValue, translateFieldLabel } from '../../utils/kanban'
 import { useDismissibleMenu } from '../../utils/menu'
 
 const props = defineProps({
@@ -125,17 +125,27 @@ useDismissibleMenu({
 const columns = computed(() => store.state.columns)
 const pending = computed(() => store.getters.isMovePending(props.card.name))
 const title = computed(() =>
-  props.card[props.config.title_field] || props.card.name,
+  getCardFieldDisplayValue(
+    props.card[props.config.title_field] || props.card.name,
+    props.config.title_field_meta,
+  ) || props.card.name,
 )
 const displayFields = computed(() => props.config.display_fields || [])
-const highlightValue = computed(() =>
+const highlightValue = computed(() => {
+  if (!props.config.highlighted_field) return ''
+  return getCardFieldDisplayValue(
+    props.card[props.config.highlighted_field],
+    props.config.highlighted_field_meta,
+  )
+})
+const highlightRawValue = computed(() =>
   props.config.highlighted_field
     ? props.card[props.config.highlighted_field]
     : '',
 )
 const highlightStyle = computed(() => {
   const configured = props.config.highlight_table.find(
-    ({ tag }) => tag === highlightValue.value,
+    ({ tag }) => tag === highlightRawValue.value,
   )
   const color = configured?.color || 'gray'
   return {
@@ -143,6 +153,10 @@ const highlightStyle = computed(() => {
     color: `var(--${color}-800, var(--gray-800))`,
   }
 })
+
+function getColumnLabel(column) {
+  return column.display_name || column.column_name
+}
 
 function formatValue(field) {
   return formatCardField(props.card[field.fieldname], field, frappe.format, props.card)

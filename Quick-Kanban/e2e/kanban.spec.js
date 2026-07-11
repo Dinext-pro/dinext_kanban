@@ -758,6 +758,93 @@ test('cards have 8px horizontal gutter from column edge', async ({ page }) => {
   expect(colBox.x + colBox.width - (cardBox.x + cardBox.width)).toBeCloseTo(8, 0)
 })
 
+test('shows translated metadata labels and column names while keeping raw API values', async ({ page }) => {
+  await page.evaluate(async () => {
+    window.__translationMap = {
+      'Expected End Date': 'Ожидаемая дата окончания',
+      'Project': 'Проект',
+      'Priority': 'Приоритет',
+      Open: 'Открыто',
+      Done: 'Готово',
+      High: 'Высокий',
+      Low: 'Низкий',
+    }
+    window.__moveCalls = []
+    window.__ = (message, values = [], context) => {
+      const contextualKey = context ? `${message}::${context}` : message
+      const translated = window.__translationMap[contextualKey]
+        || window.__translationMap[message]
+        || message
+      return (values || []).reduce(
+        (result, value, index) => result.replace(`{${index}}`, value),
+        translated,
+      )
+    }
+    const originalCall = window.frappe.call
+    window.frappe.call = async (request) => {
+      if (request.method === 'quick_kanban.api.move_card') {
+        window.__moveCalls.push(request.args)
+      }
+      return originalCall(request)
+    }
+    await window.hydrateQuickKanban({
+      board: {
+        name: 'Browser Board',
+        reference_doctype: 'Task',
+        field_name: 'status',
+        fields: ['name', 'subject', 'priority', 'expected_end_date', 'project'],
+        custom_highlighted_field: 'priority',
+        custom_highlight_table: [{ tag: 'High', color: 'red' }],
+        show_labels: 1,
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'gray' },
+          { name: 'done', column_name: 'Done', indicator: 'green' },
+        ],
+      },
+      cards: [
+        {
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+          priority: 'High',
+          expected_end_date: '2026-07-10',
+          project: 'TEST-PROJECT',
+          modified: '2026-07-10 10:00:00',
+        },
+      ],
+      args: { doctype: 'Task', page_length: 100 },
+    })
+  })
+
+  await expect(page.getByRole('heading', { name: 'Открыто' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Готово' })).toBeVisible()
+
+  const card = page.locator('.kanban-card').first()
+  await expect(card.getByText('Ожидаемая дата окончания')).toBeVisible()
+  await expect(card.locator('.kanban-highlight')).toHaveText('Высокий')
+
+  await openWithoutAutoScroll(page.getByLabel('Move First task'))
+  await expect(page.getByLabel('Move First task to Готово')).toBeVisible()
+  await page.getByLabel('Move First task to Готово').click()
+
+  await expect.poll(() =>
+    page.evaluate(() => window.__quickKanbanAlerts.at(-1)?.message),
+  ).toContain('Готово')
+  await expect.poll(() =>
+    page.evaluate(() => window.__moveCalls.at(-1)?.value),
+  ).toBe('Done')
+
+  await page.evaluate(() => {
+    document.querySelector('[aria-label="Add Task to Открыто"]')?.click()
+  })
+  await expect.poll(() =>
+    page.evaluate(() => window.__lastNewDoc),
+  ).toEqual({
+    doctype: 'Task',
+    defaults: { status: 'Open' },
+  })
+})
+
 test('vertical gap between cards stays 8px', async ({ page }) => {
   await expect(page.locator('.kanban-card').first()).toHaveCSS('margin-bottom', '8px')
 })

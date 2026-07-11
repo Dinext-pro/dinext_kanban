@@ -1,5 +1,6 @@
 import { createStore } from 'vuex'
 import {
+  attachColumnDisplayNames,
   groupCardsByColumn,
   mapAssignments,
   normalizeBoardConfig,
@@ -12,11 +13,18 @@ const emptyConfig = () => ({
   ref_doctype: '',
   field_name: '',
   title_field: 'name',
+  title_field_meta: { fieldname: 'name' },
+  status_field_meta: { fieldname: '' },
+  highlighted_field_meta: null,
   fields: [],
   highlighted_field: '',
   highlight_table: [],
   show_labels: false,
 })
+
+function withColumnDisplayNames(columns, config) {
+  return attachColumnDisplayNames(columns, config.status_field_meta)
+}
 
 const getErrorMessage = (error) =>
   error?.message || __('Unable to load the Kanban board.')
@@ -206,7 +214,10 @@ export function createKanbanStore() {
           board,
           frappe.get_meta(board.reference_doctype),
         )
-        const columns = board.columns.map((column) => ({ ...column, cards: [] }))
+        const columns = withColumnDisplayNames(
+          board.columns.map((column) => ({ ...column, cards: [] })),
+          config,
+        )
         const columnsByName = new Map(
           columns.map((column) => [column.column_name, column]),
         )
@@ -254,7 +265,10 @@ export function createKanbanStore() {
             frappe.get_meta(board.reference_doctype),
           )
 
-          commit('SET_COLUMNS', board.columns.map((column) => ({ ...column, cards: [] })))
+          commit('SET_COLUMNS', withColumnDisplayNames(
+            board.columns.map((column) => ({ ...column, cards: [] })),
+            config,
+          ))
           commit(
             'SET_COLUMN_PAGINATION',
             createColumnPagination(state.columns, true),
@@ -521,13 +535,16 @@ export function createKanbanStore() {
             columnIndex: toColumn,
             delta: 1,
           })
+          const destinationColumn = state.columns[toColumn]
+          const destinationLabel = destinationColumn.display_name
+            || destinationColumn.column_name
           frappe.show_alert({
-            message: __('Card moved to {0}', [state.columns[toColumn].column_name]),
+            message: __('Card moved to {0}', [destinationLabel]),
             indicator: 'green',
           })
           commit(
             'SET_ANNOUNCEMENT',
-            __('Card moved to {0}', [state.columns[toColumn].column_name]),
+            __('Card moved to {0}', [destinationLabel]),
           )
         } catch (error) {
           if (state.boardGeneration === boardGeneration) {

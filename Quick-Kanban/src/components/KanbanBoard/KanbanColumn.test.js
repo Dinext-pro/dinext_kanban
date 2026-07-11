@@ -7,6 +7,7 @@ import KanbanColumn from './KanbanColumn.vue'
 function mountColumn(column = {
   name: 'open',
   column_name: 'Open',
+  display_name: 'Open',
   indicator: 'unknown',
   cards: [],
 }) {
@@ -16,6 +17,7 @@ function mountColumn(column = {
     ref_doctype: 'Task',
     field_name: 'status',
     title_field: 'name',
+    status_field_meta: { fieldname: 'status', fieldtype: 'Select', parent: 'Task' },
     fields: ['name'],
     highlighted_field: '',
     highlight_table: [],
@@ -116,6 +118,34 @@ test('closes the color menu on a non-arrow key without restoring focus', async (
   expect(wrapper.find('[aria-label="Column colors"]').exists()).toBe(false)
   expect(outside).toBe(document.activeElement)
   outside.remove()
+})
+
+test('renders translated column labels while keeping raw values for document creation', async () => {
+  const originalTranslate = globalThis.__
+  globalThis.__ = (message, values = [], context) => {
+    if (context === 'Task' && message === 'Open') return 'Открыто'
+    return values.reduce(
+      (result, value, index) => result.replace(`{${index}}`, value),
+      message,
+    )
+  }
+  frappe.new_doc = vi.fn()
+
+  const wrapper = mountColumn({
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Открыто',
+    indicator: 'gray',
+    cards: [],
+  })
+
+  expect(wrapper.get('h2').text()).toBe('Открыто')
+  expect(wrapper.attributes('aria-label')).toBe('Открыто, 51 records')
+
+  await wrapper.get('[aria-label="Add Task to Открыто"]').trigger('click')
+  expect(frappe.new_doc).toHaveBeenCalledWith('Task', { status: 'Open' })
+
+  globalThis.__ = originalTranslate
 })
 
 test('does not throw for an unknown column indicator', () => {

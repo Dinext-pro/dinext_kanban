@@ -10,10 +10,13 @@ function createStore() {
     ref_doctype: 'Task',
     field_name: 'status',
     title_field: 'subject',
+    title_field_meta: { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+    highlighted_field_meta: { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
+    status_field_meta: { fieldname: 'status', fieldtype: 'Select', parent: 'Task' },
     fields: ['subject', 'priority', 'due_date', 'project'],
     display_fields: [
-      { fieldname: 'due_date', label: 'Due date', fieldtype: 'Date' },
-      { fieldname: 'project', label: 'Project', fieldtype: 'Link' },
+      { fieldname: 'due_date', label: 'Due date', fieldtype: 'Date', parent: 'Task' },
+      { fieldname: 'project', label: 'Project', fieldtype: 'Link', parent: 'Task' },
     ],
     highlighted_field: 'priority',
     highlight_table: [{ tag: 'High', color: 'red' }],
@@ -23,6 +26,7 @@ function createStore() {
     {
       name: 'open',
       column_name: 'Open',
+      display_name: 'Open',
       cards: [{
         name: 'TASK-1',
         subject: 'First task',
@@ -34,6 +38,7 @@ function createStore() {
     {
       name: 'done',
       column_name: 'Done',
+      display_name: 'Done',
       cards: [],
     },
   ])
@@ -275,6 +280,57 @@ test('renders assignment avatars with separate edit and add click targets', asyn
     }),
   )
   expect(frappe.ui.form.AssignmentDialog).not.toHaveBeenCalled()
+})
+
+test('renders translated labels, values, and column names from metadata', async () => {
+  const originalTranslate = globalThis.__
+  globalThis.__ = (message, values = [], context) => {
+    const map = {
+      'Due date::Task': 'Срок',
+      'Project::Task': 'Проект',
+      'High::Task': 'Высокий',
+      'Done::Task': 'Готово',
+    }
+    const translated = context
+      ? map[`${message}::${context}`] || message
+      : map[message] || message
+    return (values || []).reduce(
+      (result, value, index) => result.replace(`{${index}}`, value),
+      translated,
+    )
+  }
+
+  const store = createStore()
+  store.state.columns[1].display_name = 'Готово'
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue()
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.text()).toContain('Срок')
+  expect(wrapper.find('.kanban-highlight').text()).toBe('Высокий')
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  expect(wrapper.get('[aria-label="Move First task to Готово"]').exists()).toBe(true)
+  await wrapper.get('[aria-label="Move First task to Готово"]').trigger('click')
+  expect(dispatch).toHaveBeenCalledWith('moveCard', expect.objectContaining({
+    toColumn: 1,
+  }))
+
+  globalThis.__ = originalTranslate
 })
 
 test('opens the add assignment dialog from the plus action when empty', async () => {

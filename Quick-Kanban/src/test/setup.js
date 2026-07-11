@@ -1,7 +1,10 @@
 import { vi } from 'vitest'
 
 globalThis.__ = (message, values = []) =>
-  values.reduce((result, value, index) => result.replace(`{${index}}`, value), message)
+  (values || []).reduce(
+    (result, value, index) => result.replace(`{${index}}`, value),
+    message,
+  )
 
 globalThis.frappe = {
   boot: { user_info: {} },
