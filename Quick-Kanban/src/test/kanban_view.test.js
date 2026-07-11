@@ -7,12 +7,29 @@ const bridgeSource = readFileSync(
   'utf8',
 )
 
+function createResultContainer(initialHtml = '') {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'list-result'
+  wrapper.innerHTML = initialHtml
+  document.body.appendChild(wrapper)
+  return {
+    wrapper,
+    html: vi.fn((html) => {
+      wrapper.innerHTML = html
+    }),
+    find: vi.fn((selector) => wrapper.querySelectorAll(selector)),
+    empty: vi.fn(() => {
+      wrapper.innerHTML = ''
+    }),
+  }
+}
+
 class NativeKanbanView {
-  constructor() {
+  constructor(options = {}) {
     this.page_length = 0
-    this.board_name = 'Task Board'
+    this.board_name = options.board_name || 'Task Board'
     this.board = {
-      name: 'Task Board',
+      name: options.board_name || 'Task Board',
       reference_doctype: 'Task',
       field_name: 'status',
       fields: ['expected_end_date', 'project'],
@@ -21,16 +38,8 @@ class NativeKanbanView {
     }
     this.card_meta = { title_field: { fieldname: 'subject' } }
     this.fields = []
-    this.data = []
-    this.currentHtml = ''
-    this.$result = {
-      html: vi.fn((html) => {
-        this.currentHtml = html
-      }),
-      find: vi.fn((selector) => ({
-        length: selector === '#kanbanapp' && this.currentHtml.includes('kanbanapp') ? 1 : 0,
-      })),
-    }
+    this.data = options.data || []
+    this.$result = options.$result || createResultContainer()
   }
 
   async setup_defaults() {
@@ -59,8 +68,11 @@ class NativeKanbanView {
 }
 
 beforeEach(() => {
+  document.body.innerHTML = ''
   window.mountQuickKanban = vi.fn()
   window.unmountQuickKanban = vi.fn()
+  window.isQuickKanbanMountedOn = vi.fn(() => false)
+  window.hydrateQuickKanban = vi.fn()
   window.quickKanbanBootstrap = {
     loadConfig: vi.fn().mockResolvedValue({
       kanban_beta: 1,
@@ -271,6 +283,89 @@ test('upgrades an active native Kanban instance created before the bridge loads'
   expect(nativeView.set_fields).toHaveBeenCalledTimes(1)
   expect(nativeView.refresh).toHaveBeenCalledTimes(1)
   expect(Object.getPrototypeOf(nativeView)).toBe(frappeApi.views.KanbanView.prototype)
+})
+
+test('hydrates when Vue is already mounted on the active board container', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: { bundled_asset: vi.fn() },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+
+  const $result = createResultContainer('<div id="kanbanapp"></div>')
+  const mountNode = $result.find('#kanbanapp')[0]
+  window.isQuickKanbanMountedOn = vi.fn((node) => node === mountNode)
+
+  const view = new frappeApi.views.KanbanView({ $result })
+  await view.renderBeta()
+
+  expect(window.hydrateQuickKanban).toHaveBeenCalledTimes(1)
+  expect(window.mountQuickKanban).not.toHaveBeenCalled()
+  expect(window.unmountQuickKanban).not.toHaveBeenCalled()
+})
+
+test('remounts onto the active board container when switching cached Kanban pages', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: { bundled_asset: vi.fn() },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+
+  const firstResult = createResultContainer('<div id="kanbanapp"></div>')
+  const secondResult = createResultContainer('<div id="kanbanapp"></div>')
+  const firstMountNode = firstResult.find('#kanbanapp')[0]
+  const secondMountNode = secondResult.find('#kanbanapp')[0]
+  window.isQuickKanbanMountedOn = vi.fn((node) => node === firstMountNode)
+  window.mountQuickKanban = vi.fn()
+
+  const secondView = new frappeApi.views.KanbanView({
+    board_name: 'Second Board',
+    $result: secondResult,
+    data: [{ name: 'TASK-2', status: 'Open' }],
+  })
+
+  await secondView.renderBeta()
+
+  expect(window.unmountQuickKanban).toHaveBeenCalledTimes(1)
+  expect(window.mountQuickKanban).toHaveBeenCalledWith(secondMountNode)
+  expect(window.hydrateQuickKanban).not.toHaveBeenCalled()
+  expect(window.quickKanbanInitialData).toEqual({
+    board: secondView.board,
+    cards: secondView.data,
+    args: { doctype: 'Task', page_length: 0 },
+  })
 })
 
 test('falls back to native Kanban when bootstrap asset is unavailable', async () => {

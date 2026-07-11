@@ -1,7 +1,12 @@
 (function setupQuickKanbanBootstrap(global) {
   const scriptLoads = new Map()
   const stylesheetLoads = new Map()
-  const KANBAN_VIEW_URL = '/assets/quick_kanban/js/kanban_view.bundle.js'
+  const KANBAN_VIEW_FALLBACK_URL = '/assets/quick_kanban/js/kanban_view.bundle.js'
+
+  function resolveKanbanViewUrl() {
+    return global.frappe?.assets?.bundled_asset?.('kanban_view.bundle.js')
+      || KANBAN_VIEW_FALLBACK_URL
+  }
 
   async function loadConfig(call) {
     const response = await call({
@@ -121,7 +126,7 @@
       await waitForKanbanView()
       if (global.__quickKanbanViewInstalled) return true
 
-      await loadScript(KANBAN_VIEW_URL)
+      await loadScript(resolveKanbanViewUrl())
       global.__quickKanbanViewInstalled = true
       return true
     })().catch(() => false)

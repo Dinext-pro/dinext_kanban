@@ -112,10 +112,14 @@ test('loadStylesheet removes stale quick_kanban bundle links before loading a ne
 })
 
 test('ensureKanbanViewBridge loads the view bridge without waiting for config', async () => {
+  const bridgeUrl = '/assets/quick_kanban/dist/js/kanban_view.bundle.HASH123.js'
   window.frappe = {
     ready: (callback) => callback(),
     call: vi.fn(),
     session: { user: 'user@example.com' },
+    assets: {
+      bundled_asset: vi.fn(() => bridgeUrl),
+    },
     views: {
       KanbanView: class NativeKanbanView {},
     },
@@ -125,25 +129,55 @@ test('ensureKanbanViewBridge loads the view bridge without waiting for config', 
   const promise = window.quickKanbanBootstrap.ensureKanbanViewBridge()
   await vi.waitFor(() => {
     expect(
-      document.querySelector('script[src="/assets/quick_kanban/js/kanban_view.bundle.js"]'),
+      document.querySelector(`script[src="${bridgeUrl}"]`),
     ).not.toBeNull()
   })
-  const script = document.querySelector('script[src="/assets/quick_kanban/js/kanban_view.bundle.js"]')
+  const script = document.querySelector(`script[src="${bridgeUrl}"]`)
   script.dispatchEvent(new Event('load'))
 
   await expect(promise).resolves.toBe(true)
+  expect(window.frappe.assets.bundled_asset).toHaveBeenCalledWith('kanban_view.bundle.js')
   expect(window.frappe.call).not.toHaveBeenCalled()
   await expect(window.quickKanbanBootstrap.ensureKanbanViewBridge()).resolves.toBe(true)
-  expect(document.querySelectorAll('script[src="/assets/quick_kanban/js/kanban_view.bundle.js"]')).toHaveLength(1)
+  expect(document.querySelectorAll(`script[src="${bridgeUrl}"]`)).toHaveLength(1)
+})
+
+test('ensureKanbanViewBridge resolves the bridge URL via frappe.assets.bundled_asset', async () => {
+  const hashedUrl = '/assets/quick_kanban/dist/js/kanban_view.bundle.ABC123.js'
+  const bundled_asset = vi.fn(() => hashedUrl)
+  window.frappe = {
+    ready: (callback) => callback(),
+    assets: { bundled_asset },
+    views: {
+      KanbanView: class NativeKanbanView {},
+    },
+  }
+  installBootstrap({ scheduleBridge: false })
+
+  const promise = window.quickKanbanBootstrap.ensureKanbanViewBridge()
+  await vi.waitFor(() => {
+    expect(document.querySelector(`script[src="${hashedUrl}"]`)).not.toBeNull()
+  })
+
+  expect(bundled_asset).toHaveBeenCalledWith('kanban_view.bundle.js')
+  document.querySelector(`script[src="${hashedUrl}"]`).dispatchEvent(new Event('load'))
+  await expect(promise).resolves.toBe(true)
+
+  await window.quickKanbanBootstrap.ensureKanbanViewBridge()
+  expect(document.querySelectorAll(`script[src="${hashedUrl}"]`)).toHaveLength(1)
 })
 
 test('ensureKanbanViewBridge still loads when beta config is disabled', async () => {
+  const bridgeUrl = '/assets/quick_kanban/dist/js/kanban_view.bundle.HASH123.js'
   window.frappe = {
     ready: (callback) => callback(),
     call: vi.fn().mockResolvedValue({
       message: { kanban_beta: 0, kanban_beta_users: [] },
     }),
     session: { user: 'user@example.com' },
+    assets: {
+      bundled_asset: vi.fn(() => bridgeUrl),
+    },
     views: {
       KanbanView: class NativeKanbanView {},
     },
@@ -153,10 +187,10 @@ test('ensureKanbanViewBridge still loads when beta config is disabled', async ()
   const promise = window.quickKanbanBootstrap.ensureKanbanViewBridge()
   await vi.waitFor(() => {
     expect(
-      document.querySelector('script[src="/assets/quick_kanban/js/kanban_view.bundle.js"]'),
+      document.querySelector(`script[src="${bridgeUrl}"]`),
     ).not.toBeNull()
   })
-  const script = document.querySelector('script[src="/assets/quick_kanban/js/kanban_view.bundle.js"]')
+  const script = document.querySelector(`script[src="${bridgeUrl}"]`)
   script.dispatchEvent(new Event('load'))
 
   await expect(promise).resolves.toBe(true)
