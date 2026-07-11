@@ -141,8 +141,32 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             cards: this.data,
             args: this.get_args(),
         };
-        if (this.$result.find("#kanbanapp").length && window.hydrateQuickKanban) {
+        const mountNode = this.$result.find("#kanbanapp")[0] || null;
+
+        if (mountNode && window.isQuickKanbanMountedOn?.(mountNode) && window.hydrateQuickKanban) {
             window.hydrateQuickKanban(initialData);
+            return;
+        }
+
+        if (mountNode) {
+            window.unmountQuickKanban?.();
+            window.quickKanbanInitialData = initialData;
+            try {
+                if (!window.mountQuickKanban) {
+                    const cssUrl = frappe.assets.bundled_asset("quick_kanban.bundle.css");
+                    const bundleUrl = frappe.assets.bundled_asset("quick_kanban.bundle.js");
+                    await loadStylesheet(cssUrl);
+                    await loadScript(bundleUrl);
+                }
+                window.mountQuickKanban?.(mountNode);
+            } catch {
+                delete window.quickKanbanInitialData;
+                frappe.show_alert({
+                    message: __("Quick Kanban failed to load. Using the standard Kanban view."),
+                    indicator: "orange",
+                });
+                this.renderOld();
+            }
             return;
         }
 
@@ -154,7 +178,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             const bundleUrl = frappe.assets.bundled_asset("quick_kanban.bundle.js");
             await loadStylesheet(cssUrl);
             await loadScript(bundleUrl);
-            window.mountQuickKanban?.();
+            window.mountQuickKanban?.(this.$result.find("#kanbanapp")[0]);
         } catch {
             delete window.quickKanbanInitialData;
             frappe.show_alert({
