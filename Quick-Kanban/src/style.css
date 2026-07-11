@@ -36,6 +36,7 @@
 
 #kanbanapp {
   min-height: 70vh;
+  --kanban-column-gutter: 8px;
   --amber-200: var(--yellow-200);
   --amber-800: var(--yellow-800);
   --teal-200: var(--cyan-200);
@@ -71,6 +72,7 @@
   flex: 0 0 250px;
   width: 250px;
   max-width: 350px;
+  padding: 0;
   max-height: calc(
     100vh - var(--navbar-height) - var(--page-bottom-margin)
   ) !important;
@@ -82,7 +84,7 @@
   display: flex;
   justify-content: space-between;
   margin-bottom: 10px;
-  padding: 8px 8px 0;
+  padding: 8px var(--kanban-column-gutter) 0;
 }
 
 #kanbanapp .column-dropdown {
@@ -257,12 +259,13 @@
   display: flex;
   position: relative;
   box-sizing: border-box;
-  width: 100%;
+  width: calc(100% - 2 * var(--kanban-column-gutter));
   min-width: 0;
   font-size: var(--text-md);
   gap: 2px;
   flex-direction: column;
   padding: 8px 12px 8px 12px;
+  margin-inline: var(--kanban-column-gutter);
   margin-bottom: 8px;
   background: var(--card-bg);
   color: var(--text-muted);
@@ -469,6 +472,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding-inline: var(--kanban-column-gutter);
   margin-bottom: 4px;
 }
 
@@ -499,7 +503,7 @@
 
 #kanbanapp .kanban-card-list {
   height: 100%;
-  padding: 0 8px;
+  padding: 0;
   overflow-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;

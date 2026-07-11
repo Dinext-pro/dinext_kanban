@@ -744,3 +744,20 @@ test('uses theme-aware assignment ring colors in dark mode', async ({ page }) =>
   )
   expect(shadowAfter).not.toBe('none')
 })
+
+test('cards have 8px horizontal gutter from column edge', async ({ page }) => {
+  const column = page.locator('.kanban-column').first()
+  const card = column.locator('.kanban-card').first()
+  await expect(card).toBeVisible()
+
+  const colBox = await column.boundingBox()
+  const cardBox = await card.boundingBox()
+  if (!colBox || !cardBox) throw new Error('Column or card bounds are unavailable')
+
+  expect(cardBox.x - colBox.x).toBeCloseTo(8, 0)
+  expect(colBox.x + colBox.width - (cardBox.x + cardBox.width)).toBeCloseTo(8, 0)
+})
+
+test('vertical gap between cards stays 8px', async ({ page }) => {
+  await expect(page.locator('.kanban-card').first()).toHaveCSS('margin-bottom', '8px')
+})

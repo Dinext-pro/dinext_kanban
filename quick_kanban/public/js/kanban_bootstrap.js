@@ -47,8 +47,20 @@
     return load
   }
 
+  function removeStaleQuickKanbanStylesheets(href, documentRef = global.document) {
+    documentRef.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+      const linkHref = link.getAttribute('href') || ''
+      if (linkHref.includes('quick_kanban.bundle') && linkHref !== href) {
+        stylesheetLoads.delete(linkHref)
+        link.remove()
+      }
+    })
+  }
+
   function loadStylesheet(href, documentRef = global.document) {
     if (stylesheetLoads.has(href)) return stylesheetLoads.get(href)
+
+    removeStaleQuickKanbanStylesheets(href, documentRef)
 
     const existing = documentRef.querySelector(`link[rel="stylesheet"][href="${href}"]`)
     if (existing?.dataset.loaded === 'true') {
@@ -106,12 +118,6 @@
     }
 
     bridgePromise = (async () => {
-      if (!global.frappe?.call) return false
-
-      const config = await loadConfig(global.frappe.call.bind(global.frappe))
-      const user = global.frappe.session?.user || ''
-      if (!shouldUseBeta(config, user)) return false
-
       await waitForKanbanView()
       if (global.__quickKanbanViewInstalled) return true
 

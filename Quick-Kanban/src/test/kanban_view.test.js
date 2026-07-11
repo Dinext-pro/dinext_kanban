@@ -168,6 +168,111 @@ test('adds configured card fields before the first report request', async () => 
   expect(view.get_fields().filter((field) => field === 'status')).toHaveLength(1)
 })
 
+test('mounts beta assets when bootstrap lacks stylesheet helpers', async () => {
+  window.quickKanbanBootstrap = {
+    loadConfig: vi.fn().mockResolvedValue({
+      kanban_beta: 1,
+      kanban_beta_users: [],
+    }),
+    shouldUseBeta: vi.fn(() => true),
+    loadScript: vi.fn().mockResolvedValue(),
+  }
+  const appendChild = vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+    if (node?.rel === 'stylesheet') {
+      node.dispatchEvent(new Event('load'))
+    }
+    return node
+  })
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+          this._add_field('_assign')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(window.mountQuickKanban).toHaveBeenCalledTimes(1)
+  })
+
+  expect(
+    appendChild.mock.calls.some(([node]) => node?.rel === 'stylesheet'),
+  ).toBe(true)
+  expect(window.quickKanbanBootstrap.loadScript).toHaveBeenCalledWith(
+    '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js',
+  )
+  appendChild.mockRestore()
+})
+
+test('upgrades an active native Kanban instance created before the bridge loads', async () => {
+  const nativeView = new NativeKanbanView()
+  nativeView.render = vi.fn()
+  nativeView.refresh = vi.fn().mockResolvedValue(undefined)
+  nativeView.set_fields = vi.fn().mockResolvedValue(undefined)
+  window.cur_list = nativeView
+
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_route: vi.fn(() => ['List', 'Task', 'Kanban', 'Task Board']),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+          this._add_field('_assign')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+
+  await vi.waitFor(() => {
+    expect(nativeView.__quickKanbanUpgraded).toBe(true)
+  })
+  expect(nativeView.page_length).toBe(100)
+  expect(nativeView.set_fields).toHaveBeenCalledTimes(1)
+  expect(nativeView.refresh).toHaveBeenCalledTimes(1)
+  expect(Object.getPrototypeOf(nativeView)).toBe(frappeApi.views.KanbanView.prototype)
+})
+
 test('falls back to native Kanban when bootstrap asset is unavailable', async () => {
   delete window.quickKanbanBootstrap
   const NativeBoard = vi.fn()
