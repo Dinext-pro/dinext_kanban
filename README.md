@@ -30,36 +30,121 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 
 ## 🚀 Установка
 
-Из корня bench загрузите приложение из центрального репозитория Dinext:
+Репозиторий называется `dinext_kanban`, но в bench приложение клонируется в каталог **`apps/quick_kanban`**, а Frappe app name — **`quick_kanban`**.
+
+### Установка на новый сайт
+
+Выполняйте шаги **строго в этом порядке** из корня bench (`<bench-root>`):
+
+**1. Загрузить приложение**
 
 ```bash
+cd <bench-root>
+
 bench get-app quick_kanban \
-  https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git
+  https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git \
+  --branch <branch-name>
 ```
 
-Установите его на нужный сайт:
+Параметр `--branch` опционален (если не указан — default branch репозитория). Если каталог `apps/quick_kanban` уже существует и нужно заменить исходники, используйте `--overwrite` или вручную переключите remote и checkout нужной ветки в `apps/quick_kanban`.
+
+**2. Установить frontend-зависимости**
 
 ```bash
+cd apps/quick_kanban
+yarn install --frozen-lockfile
+```
+
+**3. Установить приложение на сайт**
+
+```bash
+cd <bench-root>
 bench --site <site-name> install-app quick_kanban
 ```
 
-Соберите assets и очистите cache:
+**4. Собрать frontend (два шага — оба обязательны)**
+
+Frappe Desk отдаёт **хешированные** bundles из `quick_kanban/public/dist/` через `sites/assets/assets.json`. Одной сборки Vite недостаточно.
 
 ```bash
-cd apps/dinext_kanban && yarn workspace quick_kanban build
-cd ../.. && bench build --app quick_kanban
-bench --site <site-name> clear-cache
-```
-
-Для Quick Kanban frontend недостаточно одной сборки Vite: Frappe отдаёт **хешированные** bundles из `quick_kanban/dist/`, поэтому после `yarn workspace quick_kanban build` обязательно запускайте `bench build --app quick_kanban` (или Frappe esbuild):
-
-```bash
+cd apps/quick_kanban
 yarn workspace quick_kanban build
-cd ../frappe && yarn run production --apps quick_kanban
+
+cd <bench-root>
+bench build --app quick_kanban
+```
+
+Альтернатива второму шагу — Frappe esbuild напрямую:
+
+```bash
+cd apps/frappe && yarn run production --apps quick_kanban
+```
+
+**5. Применить изменения на сайте**
+
+```bash
+cd <bench-root>
+bench --site <site-name> migrate
+bench --site <site-name> clear-cache
+bench restart
+```
+
+`migrate` подтягивает переводы из `quick_kanban/translations/`. `bench restart` нужен на production/staging bench с supervisor.
+
+**6. Включить новый Kanban**
+
+Без этого шага используется стандартный Kanban Frappe:
+
+```bash
+bench --site <site-name> set-config kanban_beta 1
 bench --site <site-name> clear-cache
 ```
 
-После обновления frontend в браузере выполните жёсткое обновление страницы Kanban (`Ctrl+Shift+R`), чтобы подтянуть новый bundle.
+Для поэтапного включения см. раздел [Конфигурация](#-конфигурация).
+
+**7. Проверка в браузере**
+
+Откройте Kanban Board и выполните жёсткое обновление страницы (`Ctrl+Shift+R`), чтобы подтянуть новый bundle.
+
+#### Краткий чеклист (новый сайт)
+
+```bash
+# 1–3: загрузка и install-app
+bench get-app quick_kanban https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git --branch <branch-name>
+cd apps/quick_kanban && yarn install --frozen-lockfile && cd ../..
+bench --site <site-name> install-app quick_kanban
+
+# 4–5: сборка assets и применение
+cd apps/quick_kanban && yarn workspace quick_kanban build && cd ../..
+bench build --app quick_kanban
+bench --site <site-name> migrate
+bench --site <site-name> clear-cache
+bench restart
+
+# 6: feature flag
+bench --site <site-name> set-config kanban_beta 1
+bench --site <site-name> clear-cache
+```
+
+### Обновление на существующем сайте
+
+Если `quick_kanban` уже установлен, **`install-app` повторно не нужен** (пока нет новых DocType/patches). Достаточно обновить исходники, пересобрать assets и применить на сайте:
+
+```bash
+cd apps/quick_kanban
+git fetch && git checkout <branch-name> && git pull
+
+yarn install --frozen-lockfile
+yarn workspace quick_kanban build
+
+cd <bench-root>
+bench build --app quick_kanban
+bench --site <site-name> migrate
+bench --site <site-name> clear-cache
+bench restart
+```
+
+`bench restart` **не заменяет** `bench build` — без второго шага Desk продолжит отдавать старые hashed bundles.
 
 ### Если `bench` падает с `ImportError: _check_nested_chain`
 
@@ -85,7 +170,7 @@ print('cache cleared')
 "
 
 # Сборка assets Quick Kanban
-cd apps/dinext_kanban && yarn workspace quick_kanban build
+cd apps/quick_kanban && yarn workspace quick_kanban build
 cd ../frappe && yarn run production --apps quick_kanban
 ```
 
