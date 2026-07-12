@@ -453,3 +453,60 @@ test('opens the add assignment dialog from the plus action when empty', async ()
   expect(frappe.ui.form.AssignToDialog).toHaveBeenCalled()
   expect(frappe.ui.form.AssignmentDialog).not.toHaveBeenCalled()
 })
+
+test('applies card accent class and CSS variable when color is valid', () => {
+  const store = createStore()
+  const config = {
+    ...store.state.config,
+    color_field: 'color',
+    color_field_meta: { fieldname: 'color', fieldtype: 'Color', parent: 'Task' },
+  }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        color: '#FF5733',
+        _assign: {},
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card--has-color')
+  expect(wrapper.attributes('style')).toContain('--card-accent-color: #FF5733')
+})
+
+test('does not apply card accent styling for empty or invalid color values', () => {
+  const store = createStore()
+  const config = {
+    ...store.state.config,
+    color_field: 'color',
+    color_field_meta: { fieldname: 'color', fieldtype: 'Color', parent: 'Task' },
+  }
+
+  for (const color of ['', null, 'not-a-color']) {
+    const wrapper = mount(KanbanCard, {
+      props: {
+        card: {
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+          priority: 'High',
+          color,
+          _assign: {},
+        },
+        config,
+        columnIndex: 0,
+      },
+      global: { plugins: [store], stubs: { Teleport: true } },
+    })
+
+    expect(wrapper.classes()).not.toContain('kanban-card--has-color')
+    expect(wrapper.attributes('style') || '').not.toContain('--card-accent-color')
+  }
+})

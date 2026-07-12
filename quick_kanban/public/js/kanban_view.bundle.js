@@ -138,6 +138,17 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         this._add_field(this.card_meta.title_field);
         (this.board.fields || []).forEach((field) => this._add_field(field));
         this._add_field(this.board.custom_highlighted_field);
+        this._addCardColorField();
+    }
+
+    _addCardColorField() {
+        const meta = frappe.get_meta(this.board.reference_doctype);
+        const colorField = meta?.fields?.find(
+            (field) => field.fieldname === "color" && field.fieldtype === "Color",
+        );
+        if (colorField) {
+            this._add_field("color");
+        }
     }
 
     render() {

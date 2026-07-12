@@ -307,6 +307,20 @@
   overflow: hidden;
 }
 
+#kanbanapp .kanban-card--has-color {
+  --kanban-card-accent: var(--card-accent-color);
+  background: color-mix(in srgb, var(--kanban-card-accent) 10%, var(--card-bg));
+  box-shadow:
+    inset 4px 0 0 var(--kanban-card-accent),
+    0 1px 2px rgb(0 0 0 / 0.1);
+}
+
+@supports not (background: color-mix(in srgb, red 10%, white)) {
+  #kanbanapp .kanban-card--has-color {
+    background: var(--card-bg);
+  }
+}
+
 #kanbanapp .kanban-title-area {
   display: flex;
   align-items: flex-start;

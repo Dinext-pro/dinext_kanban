@@ -20,6 +20,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Подсчёт общего количества карточек в каждой колонке с учётом текущих фильтров.
 - Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски.
 - Настройка цвета колонок и выделение значений выбранного поля.
+- Расцветка карточек по полю `color` (fieldtype `Color`) в целевом DocType: цветная полоска слева и лёгкий tint фона.
 - Просмотр и изменение назначенных пользователей через стандартный Assign To Dialog.
 - Переход из диалога Kanban Settings к записи текущей Kanban Board.
 - Явные состояния загрузки, отсутствия данных и ошибки с повторным запросом.
@@ -94,13 +95,29 @@ cd ../frappe && yarn run production --apps quick_kanban
 2. Выберите целевой DocType и поле типа `Select`, значения которого станут колонками.
 3. Добавьте поля, которые должны отображаться на карточке.
 4. При необходимости задайте `Highlighted Field` и таблицу цветов для его значений.
-5. Откройте Kanban-представление списка.
+5. Для расцветки карточек добавьте в целевой DocType поле **`color`** с типом **`Color`** и заполните его у записей (hex, например `#FF5733`). Поле подтягивается автоматически и не отображается в теле карточки.
+6. Откройте Kanban-представление списка.
 
 Двойной клик по badge с количеством записей в заголовке колонки открывает ListView того же DocType с фильтром по значению колонки (например, `status = Open`) и текущими фильтрами доски из filter bar. Одиночный клик по счётчику ничего не делает.
 
 Карточку можно переместить drag-and-drop или через действие `Move to`. Перед перемещением клиент запрашивает `quick_kanban.api.get_move_options` и локально проверяет обязательные поля (`reqd`, `mandatory_depends_on`) для preview целевого состояния. Запрещённые назначения не показываются в меню и не принимают drop. При нескольких Workflow actions для одной колонки открывается диалог выбора action.
 
 Сохранение выполняется через `quick_kanban.api.move_card` с `board_name`, именем документа, целевой колонкой, `expected_modified` и опциональным `workflow_action`. Сервер повторяет проверки Workflow-прав и mandatory rules, затем либо применяет `apply_workflow`, либо вызывает полный `doc.save()` с lifecycle hooks целевого DocType.
+
+### Расцветка карточек по полю `color`
+
+Quick Kanban автоматически использует поле **`color`** с fieldtype **`Color`** в DocType, для которого создана доска:
+
+- значение hex из Frappe Color применяется как **цветная полоска слева** (4px) и **лёгкий tint фона** (10%);
+- поле добавляется в запрос данных доски автоматически, даже если не указано в `Fields` Kanban Board;
+- hex не показывается среди полей карточки;
+- пустое или невалидное значение — обычная карточка без расцветки.
+
+Требования:
+
+- fieldname строго **`color`**, fieldtype строго **`Color`** (поле с другим именем или типом не используется);
+- у записей должно быть заполнено значение цвета;
+- после изменений frontend выполните сборку (`yarn workspace quick_kanban build`, `bench build --app quick_kanban`, `clear-cache`) и обновите страницу Kanban (`Ctrl+Shift+R`).
 
 ## 📦 Технологии
 
@@ -188,7 +205,7 @@ bench --site <site-name> run-tests --app quick_kanban
 yarn dev
 ```
 
-Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView`, а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/`; `bench build --app quick_kanban` собирает хешированные bundles в `quick_kanban/dist/`, которые Frappe реально отдаёт на сайт. Перед review и деплоем выполняйте обе команды и проверяйте, что изменения попали в `dist/`.
+Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get`), а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/`; `bench build --app quick_kanban` собирает хешированные bundles в `quick_kanban/dist/`, которые Frappe реально отдаёт на сайт. Перед review и деплоем выполняйте обе команды и проверяйте, что изменения попали в `dist/`.
 
 ## Локализация
 

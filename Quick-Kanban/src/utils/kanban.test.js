@@ -9,6 +9,8 @@ import {
   groupCardsByColumn,
   isNearScrollEnd,
   normalizeBoardConfig,
+  parseCardAccentColor,
+  resolveColorField,
   shouldTranslateFieldValue,
   translateFieldLabel,
   translateFieldValue,
@@ -89,6 +91,77 @@ describe('normalizeBoardConfig', () => {
     }, { title_field: 'subject' })
 
     expect(config.fields).toEqual(['name', 'subject'])
+  })
+
+  test('auto-includes color field and excludes it from display_fields', () => {
+    const config = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+    }, {
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+        { fieldname: 'color', label: 'Color', fieldtype: 'Color', parent: 'Task' },
+        { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+      ],
+    })
+
+    expect(config.fields).toEqual(['name', 'subject', 'color'])
+    expect(config.color_field).toBe('color')
+    expect(config.color_field_meta).toMatchObject({
+      fieldname: 'color',
+      fieldtype: 'Color',
+    })
+    expect(config.display_fields.map((field) => field.fieldname)).toEqual([])
+  })
+
+  test('ignores color fieldname when fieldtype is not Color', () => {
+    const config = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject', 'color'],
+    }, {
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+        { fieldname: 'color', label: 'Color', fieldtype: 'Data', parent: 'Task' },
+      ],
+    })
+
+    expect(config.color_field).toBe('')
+    expect(config.color_field_meta).toBeNull()
+    expect(config.display_fields.map((field) => field.fieldname)).toEqual(['color'])
+  })
+})
+
+describe('parseCardAccentColor', () => {
+  test('accepts valid hex colors', () => {
+    expect(parseCardAccentColor('#FF5733')).toBe('#FF5733')
+    expect(parseCardAccentColor('#fff')).toBe('#fff')
+    expect(parseCardAccentColor('#11223344')).toBe('#11223344')
+  })
+
+  test('rejects empty and unsafe values', () => {
+    expect(parseCardAccentColor('')).toBeNull()
+    expect(parseCardAccentColor(null)).toBeNull()
+    expect(parseCardAccentColor('red')).toBeNull()
+    expect(parseCardAccentColor('#12')).toBeNull()
+    expect(parseCardAccentColor('javascript:alert(1)')).toBeNull()
+  })
+})
+
+describe('resolveColorField', () => {
+  test('returns color field only when fieldtype is Color', () => {
+    expect(resolveColorField({
+      color: { fieldname: 'color', fieldtype: 'Color' },
+    })).toMatchObject({ fieldname: 'color', fieldtype: 'Color' })
+    expect(resolveColorField({
+      color: { fieldname: 'color', fieldtype: 'Data' },
+    })).toBeNull()
+    expect(resolveColorField({})).toBeNull()
   })
 })
 

@@ -1,7 +1,8 @@
 <template>
   <article
     class="kanban-card"
-    :class="moveFlashClasses"
+    :class="[moveFlashClasses, cardColorClass]"
+    :style="cardAccentStyle"
     role="listitem"
     :aria-busy="pending"
     :data-card-name="card.name"
@@ -113,7 +114,7 @@
 import { computed, inject, nextTick, ref } from 'vue'
 import { useStore } from 'vuex'
 import Assignments from '../Assignments.vue'
-import { formatCardField, getCardFieldDisplayValue, translateFieldLabel } from '../../utils/kanban'
+import { formatCardField, getCardFieldDisplayValue, parseCardAccentColor, translateFieldLabel } from '../../utils/kanban'
 import { useDismissibleMenu } from '../../utils/menu'
 import { flashMovedCard } from '../../utils/cardMoveFlash'
 
@@ -181,6 +182,22 @@ const highlightStyle = computed(() => {
     color: `var(--${color}-800, var(--gray-800))`,
   }
 })
+const cardAccentColor = computed(() => {
+  const colorField = props.config.color_field
+  if (!colorField) {
+    return null
+  }
+  return parseCardAccentColor(props.card[colorField])
+})
+const cardAccentStyle = computed(() => {
+  if (!cardAccentColor.value) {
+    return {}
+  }
+  return { '--card-accent-color': cardAccentColor.value }
+})
+const cardColorClass = computed(() =>
+  cardAccentColor.value ? 'kanban-card--has-color' : '',
+)
 const moveFlashClasses = computed(() => {
   const flash = store.state.cardMoveFlash[props.card.name]
   if (!flash) {

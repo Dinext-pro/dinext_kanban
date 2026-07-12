@@ -2,6 +2,8 @@ import { getIndicatorDefinition } from './colors'
 import DOMPurify from 'dompurify'
 
 const DEFAULT_FIELDS = ['name']
+const CARD_COLOR_FIELDNAME = 'color'
+const CARD_ACCENT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?([0-9A-Fa-f]{2})?$/
 
 const ALWAYS_TRANSLATED_VALUE_TYPES = new Set(['Select', 'Autocomplete'])
 
@@ -101,6 +103,22 @@ export function getColumnDisplayName(
   return columnName
 }
 
+export function resolveColorField(metaByField = {}) {
+  const field = metaByField[CARD_COLOR_FIELDNAME]
+  if (field && normalizeFieldtype(field) === 'Color') {
+    return field
+  }
+  return null
+}
+
+export function parseCardAccentColor(value) {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const normalized = String(value).trim()
+  return CARD_ACCENT_COLOR_PATTERN.test(normalized) ? normalized : null
+}
+
 export function attachColumnDisplayNames(
   columns,
   statusFieldMeta,
@@ -139,6 +157,11 @@ export function normalizeBoardConfig(board, meta = {}) {
   const metaByField = Object.fromEntries(
     (meta.fields || []).map((field) => [field.fieldname, field]),
   )
+  const colorFieldMeta = resolveColorField(metaByField)
+  const colorField = colorFieldMeta?.fieldname || ''
+  if (colorField && !fields.includes(colorField)) {
+    fields = [...fields, colorField]
+  }
   const titleField = meta.title_field || 'name'
   const statusFieldMeta = metaByField[board.field_name] || {
     fieldname: board.field_name,
@@ -151,6 +174,7 @@ export function normalizeBoardConfig(board, meta = {}) {
     .filter((field) =>
       field !== titleField &&
       field !== highlightedField &&
+      field !== colorField &&
       field !== 'name',
     )
     .map((field) => metaByField[field] || { fieldname: field, label: field })
@@ -166,6 +190,8 @@ export function normalizeBoardConfig(board, meta = {}) {
     fields,
     display_fields: displayFields,
     highlighted_field: highlightedField,
+    color_field: colorField,
+    color_field_meta: colorFieldMeta,
     highlight_table: Array.isArray(board.custom_highlight_table)
       ? board.custom_highlight_table
       : [],
