@@ -1,6 +1,7 @@
 <template>
   <article
     class="kanban-card"
+    :class="moveFlashClasses"
     role="listitem"
     :aria-busy="pending"
     :data-card-name="card.name"
@@ -114,6 +115,7 @@ import { useStore } from 'vuex'
 import Assignments from '../Assignments.vue'
 import { formatCardField, getCardFieldDisplayValue, translateFieldLabel } from '../../utils/kanban'
 import { useDismissibleMenu } from '../../utils/menu'
+import { flashMovedCard } from '../../utils/cardMoveFlash'
 
 const props = defineProps({
   card: { type: Object, required: true },
@@ -179,6 +181,17 @@ const highlightStyle = computed(() => {
     color: `var(--${color}-800, var(--gray-800))`,
   }
 })
+const moveFlashClasses = computed(() => {
+  const flash = store.state.cardMoveFlash[props.card.name]
+  if (!flash) {
+    return {}
+  }
+  return {
+    [`kanban-card-move-flash--${flash.outcome}`]: true,
+    'kanban-card-move-flash--instant': flash.instant,
+    'kanban-card-move-flash': !flash.instant,
+  }
+})
 
 function getColumnLabel(column) {
   return column.display_name || column.column_name
@@ -203,8 +216,9 @@ async function moveCard(toColumn) {
   closeMoveMenu()
   if (toColumn === props.columnIndex || fromIndex < 0) return
 
+  let moved = false
   try {
-    const moved = await store.dispatch('moveCard', {
+    moved = await store.dispatch('moveCard', {
       cardName: props.card.name,
       fromColumn: props.columnIndex,
       toColumn,
@@ -220,6 +234,10 @@ async function moveCard(toColumn) {
     }
   } catch {
     // The store restores the card and exposes the error to the user.
+  } finally {
+    await flashMovedCard(props.card.name, {
+      outcome: moved ? 'success' : 'failure',
+    })
   }
 }
 

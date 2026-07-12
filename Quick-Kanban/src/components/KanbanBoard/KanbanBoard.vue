@@ -51,6 +51,7 @@ import {
   animateCardRollback,
   captureCardRect,
 } from "../../utils/cardRollbackAnimation";
+import { flashMovedCard } from "../../utils/cardMoveFlash";
 import {
   revealCardInColumn,
   resolveScrollBehavior,
@@ -260,9 +261,16 @@ async function drop(event) {
     globalThis.__lastKanbanDrop = { context, toColumn, fromColumn, result }
   }
 
+  await nextTick()
+
   if (result?.needsAnimatedRollback) {
     await playRollbackAnimation(context.cardName, destinationRect)
   }
+
+  await nextTick()
+  await flashMovedCard(context.cardName, {
+    outcome: result?.ok ? 'success' : 'failure',
+  })
 }
 
 const bindClickDrag = () => {

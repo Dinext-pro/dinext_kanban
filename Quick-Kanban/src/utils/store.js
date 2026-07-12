@@ -323,6 +323,7 @@ export function createKanbanStore() {
       pendingCreate: null,
       recentCreatedCards: {},
       boardPerms: { write: false },
+      cardMoveFlash: {},
     }),
     mutations: {
       SET_COLUMNS(state, columns) {
@@ -471,6 +472,20 @@ export function createKanbanStore() {
       },
       SET_ACTIVE_DRAG(state, activeDrag) {
         state.activeDrag = activeDrag
+      },
+      SET_CARD_MOVE_FLASH(state, { cardName, outcome, instant }) {
+        state.cardMoveFlash = {
+          ...state.cardMoveFlash,
+          [cardName]: { outcome, instant: Boolean(instant) },
+        }
+      },
+      CLEAR_CARD_MOVE_FLASH(state, cardName) {
+        if (!state.cardMoveFlash[cardName]) {
+          return
+        }
+        const cardMoveFlash = { ...state.cardMoveFlash }
+        delete cardMoveFlash[cardName]
+        state.cardMoveFlash = cardMoveFlash
       },
       MOVE_CARD(state, { cardName, fromColumn, toColumn, fromIndex, toIndex }) {
         const source = state.columns[fromColumn]?.cards || []
