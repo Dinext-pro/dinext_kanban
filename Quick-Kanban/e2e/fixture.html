@@ -74,7 +74,9 @@
       window.__reportviewCalls = []
       window.__countCalls = []
       window.__columnPages = {}
-      window.__columnTotals = { Open: 51, Done: 12 }
+      window.__columnTotals = { Open: 51, Done: 12, Overdue: 0 }
+      window.__moveOptionsCalls = []
+      window.__quickKanbanPermissiveMoves = true
       window.__assignDialogOpened = false
       window.__assignDialogShown = false
       window.__assignmentDialogOpened = false
@@ -96,15 +98,97 @@
         )
         return column ? getComputedStyle(column).backgroundColor : ''
       }
+      window.__getQuickKanbanDropStyles = (columnName = 'Open') => {
+        const column = [...document.querySelectorAll('.kanban-column')].find((node) =>
+          node.querySelector('.column-title')?.textContent === columnName,
+        )
+        if (!column) {
+          return null
+        }
+        const overlay = column.querySelector('.kanban-column-drop-overlay')
+        return {
+          allowed: column.classList.contains('kanban-column-drop-allowed'),
+          forbidden: column.classList.contains('kanban-column-drop-forbidden'),
+          overlayVisible: Boolean(overlay),
+          overlayBackground: overlay
+            ? getComputedStyle(overlay).backgroundColor
+            : '',
+          outlineColor: getComputedStyle(column).outlineColor,
+        }
+      }
+      window.__configureQuickKanbanMovePolicy = ({
+        permissive = false,
+        forbiddenColumns = ['Done'],
+        reason = 'workflow_denied',
+      } = {}) => {
+        window.__quickKanbanPermissiveMoves = permissive
+        window.__moveOptionsByCard = (names) => Object.fromEntries(
+          names.map((name) => [
+            name,
+            {
+              can_drag: true,
+              destinations: Object.fromEntries(
+                ['Open', 'Done'].map((column) => [
+                  column,
+                  forbiddenColumns.includes(column)
+                    ? {
+                      allowed: false,
+                      reason,
+                      mode: 'field_update',
+                      actions: [],
+                      missing_mandatory: [],
+                    }
+                    : {
+                      allowed: true,
+                      mode: 'field_update',
+                      actions: [],
+                      missing_mandatory: [],
+                    },
+                ]),
+              ),
+            },
+          ]),
+        )
+      }
+      if (window.__configureQuickKanbanMovePolicyOnLoad) {
+        window.__configureQuickKanbanMovePolicy(window.__configureQuickKanbanMovePolicyOnLoad)
+      }
       window.frappe = {
         boot: { user_info: {} },
         call: async ({ method, args }) => {
+          if (method === 'quick_kanban.api.get_move_options') {
+            const names = args.names || []
+            if (typeof window.__moveOptionsByCard === 'function') {
+              return { message: window.__moveOptionsByCard(names) }
+            }
+            const destinations = Object.fromEntries(
+              ['Open', 'Done'].map((column) => [
+                column,
+                {
+                  allowed: true,
+                  mode: 'field_update',
+                  actions: [],
+                  missing_mandatory: [],
+                },
+              ]),
+            )
+            return {
+              message: Object.fromEntries(
+                names.map((name) => [name, { can_drag: true, destinations }]),
+              ),
+            }
+          }
           if (method === 'quick_kanban.api.move_card') {
             if (window.__failNextMove) {
               window.__failNextMove = false
               throw new Error('Move rejected by fixture')
             }
-            return { message: { modified: '2026-07-10 10:01:00' } }
+            return {
+              message: {
+                status: args.value,
+                modified: '2026-07-10 10:01:00',
+              },
+            }
           }
           if (method === 'frappe.desk.reportview.get') {
             window.__reportviewCalls.push(args)
@@ -136,6 +220,21 @@
               ),
             }
           }
+          if (method === 'quick_kanban.api.get_create_options') {
+            return {
+              message: Object.fromEntries(
+                ['Open', 'Done', 'Overdue'].map((column) => [
+                  column,
+                  {
+                    allowed: true,
+                    form_mode: 'quick_entry',
+                    missing_mandatory: [],
+                    missing_fieldnames: [],
+                  },
+                ]),
+              ),
+            }
+          }
           return { message: {} }
         },
         format: (value, field) =>
@@ -143,10 +242,12 @@
             ? `<a href="/app/project/${value}">${value}</a>`
             : String(value),
         get_meta: () => ({
+          name: 'Task',
+          quick_entry: 1,
           title_field: 'subject',
           fields: [
-            { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
-            { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+            { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', reqd: 1, parent: 'Task' },
+            { fieldname: 'status', label: 'Status', fieldtype: 'Select', reqd: 1, no_copy: 1, parent: 'Task' },
             { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
             { fieldname: 'expected_end_date', label: 'Expected End Date', fieldtype: 'Date', parent: 'Task' },
             { fieldname: 'project', label: 'Project', fieldtype: 'Link', parent: 'Task' },
@@ -154,8 +255,41 @@
         }),
         get_palette: () => ['--blue-100', '--blue-800'],
         get_route: () => ['List', 'Task', 'Kanban', 'Browser Board'],
+        route_options: {},
+        route_hooks: {},
+        model: {
+          can_create: () => true,
+          with_doctype: (doctype, callback) => Promise.resolve(callback?.()),
+          get_new_doc: (doctype) => {
+            const doc = {
+              doctype,
+              name: `new-${doctype}-1`,
+            }
+            const fields = window.frappe.get_meta().fields || []
+            const noCopyFields = new Set(
+              fields.filter((field) => field.no_copy).map((field) => field.fieldname),
+            )
+            Object.entries(window.frappe.route_options || {}).forEach(([fieldname, value]) => {
+              if (!noCopyFields.has(fieldname)) {
+                doc[fieldname] = value
+              }
+            })
+            window.frappe.route_options = {}
+            return doc
+          },
+        },
         new_doc: (doctype, defaults = {}) => {
-          window.__lastNewDoc = { doctype, defaults }
+          window.__lastNewDoc = { doctype, defaults, mode: 'quick_entry' }
+          return Promise.resolve()
+        },
+        set_route: (...args) => {
+          window.__lastNewDoc = {
+            doctype: args[1],
+            defaults: { ...window.frappe.route_options },
+            mode: 'full_form',
+            route: args,
+          }
+          return Promise.resolve()
         },
         show_alert: (alert) => window.__quickKanbanAlerts.push(alert),
         update_user_info: (userInfo = {}) => {
@@ -234,9 +368,41 @@
         },
         utils: {
           get_form_link: (doctype, name) => `/app/${doctype}/${name}`,
+          eval: (expression, context) => {
+            if (expression.includes('status == "Done"')) {
+              return context.doc.status === 'Done'
+            }
+            return false
+          },
+        },
+        msgprint: () => {},
+        workflow: {
+          workflows: {},
+          setup() {},
+        },
+        meta: {
+          docfield_list: {},
+          has_field: (doctype, fieldname) => {
+            const field = window.frappe.get_meta().fields.find(
+              (row) => row.fieldname === fieldname,
+            )
+            return field || null
+          },
         },
         ui: {
           form: {
+            on: () => {},
+            off: () => {},
+            make_quick_entry: (doctype, afterInsert, initCallback, doc) => {
+              window.__lastNewDoc = {
+                doctype,
+                doc,
+                defaults: doc ? { status: doc.status } : {},
+                mode: 'quick_entry',
+              }
+              window.__lastQuickEntryAfterInsert = afterInsert
+              return Promise.resolve({})
+            },
             AssignToDialog: class {
               constructor() {
                 window.__assignDialogOpened = true
@@ -272,7 +438,7 @@
             { name: 'done', column_name: 'Done', indicator: 'green' },
           ],
         },
-        cards: [
+        cards: window.__customQuickKanbanCards || [
           {
             name: 'TASK-1',
             subject: 'First task',

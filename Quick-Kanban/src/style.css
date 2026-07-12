@@ -17,6 +17,9 @@
   --kanban-column-cyan: var(--cyan-100);
   --kanban-assignment-ring-inner: var(--control-bg, var(--gray-100));
   --kanban-assignment-ring-outer: var(--primary, var(--blue-500));
+  --kanban-drop-allowed-outline: var(--primary, var(--blue-500, #2491ef));
+  --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #2491ef) 12%, transparent);
+  --kanban-drop-forbidden-overlay: rgb(23 23 23 / 0.28);
 }
 
 [data-theme="dark"] {
@@ -32,6 +35,9 @@
   --kanban-column-cyan: var(--cyan-900);
   --kanban-assignment-ring-inner: var(--gray-600, #525252);
   --kanban-assignment-ring-outer: var(--primary, var(--blue-400, #7ec1ff));
+  --kanban-drop-allowed-outline: var(--primary, var(--blue-400, #7ec1ff));
+  --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #7ec1ff) 18%, transparent);
+  --kanban-drop-forbidden-overlay: rgb(0 0 0 / 0.42);
 }
 
 #kanbanapp {
@@ -78,6 +84,7 @@
   ) !important;
   border-radius: 12px;
   min-height: 70vh;
+  position: relative;
 }
 
 #kanbanapp .kanban-column-header {
@@ -546,6 +553,40 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+#kanbanapp .drag-handle-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+#kanbanapp .kanban-column-drop-allowed {
+  outline: 2px solid var(--kanban-drop-allowed-outline);
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    var(--kanban-drop-allowed-bg),
+    var(--kanban-drop-allowed-bg)
+  );
+}
+
+#kanbanapp .kanban-column-drop-forbidden {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+#kanbanapp .kanban-column-drop-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--kanban-drop-forbidden-overlay);
+  pointer-events: none;
+  z-index: 1;
+}
+
+#kanbanapp .kanban-card-rollback-animating {
+  position: relative;
+  z-index: 3;
+  will-change: transform;
 }
 
 @media (max-width: 768px) {

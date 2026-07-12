@@ -1,7 +1,22 @@
 import { expect, test, vi } from 'vitest'
+import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
-import VirtualList from 'vue-virtual-draglist'
 import { createKanbanStore } from '../../utils/store'
+
+const scrollToKey = vi.fn()
+const scrollToIndex = vi.fn()
+
+vi.mock('vue-virtual-draglist', () => ({
+  default: defineComponent({
+    name: 'VirtualList',
+    setup(_props, { expose }) {
+      expose({ scrollToKey, scrollToIndex })
+      return () => h('div')
+    },
+  }),
+}))
+
+import VirtualList from 'vue-virtual-draglist'
 import KanbanColumn from './KanbanColumn.vue'
 
 function mountColumn(column = {
@@ -120,7 +135,7 @@ test('closes the color menu on a non-arrow key without restoring focus', async (
   outside.remove()
 })
 
-test('renders translated column labels while keeping raw values for document creation', async () => {
+test('renders translated column labels while dispatching create from the column', async () => {
   const originalTranslate = globalThis.__
   globalThis.__ = (message, values = [], context) => {
     if (context === 'Task' && message === 'Open') return 'Открыто'
@@ -129,7 +144,6 @@ test('renders translated column labels while keeping raw values for document cre
       message,
     )
   }
-  frappe.new_doc = vi.fn()
 
   const wrapper = mountColumn({
     name: 'open',
@@ -138,12 +152,17 @@ test('renders translated column labels while keeping raw values for document cre
     indicator: 'gray',
     cards: [],
   })
+  const store = wrapper.vm.$store
+  const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
 
   expect(wrapper.get('h2').text()).toBe('Открыто')
   expect(wrapper.attributes('aria-label')).toBe('Открыто, 51 records')
 
   await wrapper.get('[aria-label="Add Task to Открыто"]').trigger('click')
-  expect(frappe.new_doc).toHaveBeenCalledWith('Task', { status: 'Open' })
+  expect(dispatchSpy).toHaveBeenCalledWith('startCreateCard', {
+    columnIndex: 0,
+    column: expect.objectContaining({ column_name: 'Open' }),
+  })
 
   globalThis.__ = originalTranslate
 })
@@ -172,6 +191,45 @@ test('forwards the drag origin supplied by the virtual list', async () => {
     fromColumn: 0,
     fromIndex: 0,
   })
+})
+
+test('exposes scrollToCard through the virtual list API', async () => {
+  scrollToKey.mockClear()
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    indicator: 'gray',
+    cards: [{ name: 'TASK-1' }],
+  }
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: {
+        board_name: 'Task Board',
+        ref_doctype: 'Task',
+        field_name: 'status',
+        title_field: 'name',
+        status_field_meta: { fieldname: 'status', fieldtype: 'Select', parent: 'Task' },
+        fields: ['name'],
+        highlighted_field: '',
+        highlight_table: [],
+        show_labels: false,
+      },
+    },
+    global: {
+      plugins: [createKanbanStore()],
+    },
+  })
+
+  await wrapper.vm.$nextTick()
+  wrapper.vm.scrollToCard('TASK-1', 4)
+  expect(scrollToIndex).toHaveBeenCalledWith(4)
+  expect(scrollToKey).not.toHaveBeenCalled()
+
+  scrollToIndex.mockClear()
+  wrapper.vm.scrollToCard('TASK-1')
+  expect(scrollToKey).toHaveBeenCalledWith('TASK-1')
 })
 
 test('loads the next page only when this column reaches the bottom', async () => {

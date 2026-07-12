@@ -21,6 +21,7 @@
       <KanbanColumn
         v-for="(column, columnIndex) in columns"
         :key="column.name"
+        :ref="(el) => setColumnRef(columnIndex, el)"
         :column="column"
         :columnIndex="columnIndex"
         :config="config"
@@ -39,14 +40,24 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, provide } from "vue";
 import { useStore } from "vuex";
 import KanbanColumn from "./KanbanColumn.vue";
+import {
+  animateCardRollback,
+  captureCardRect,
+} from "../../utils/cardRollbackAnimation";
+import {
+  revealCardInColumn,
+  resolveScrollBehavior,
+  scrollColumnIntoView,
+} from "../../utils/menuMoveScroll";
 
 const store = useStore();
 const columns = computed(() => store.getters.getColumns);
 const config = computed(() => store.getters.getConfig);
 const kanbanBoard = ref(null);
+const columnRefs = ref([])
 const loading = computed(() => store.state.loading)
 const error = computed(() => store.state.error)
 const announcement = computed(() => store.state.announcement)
@@ -58,7 +69,57 @@ let onMouseLeave
 let onMouseUp
 let onMouseMove
 
+let onPointerUp
+let onPointerCancel
+
 const currentBoardName = () => frappe.get_route()[3]
+
+function clearActiveDragVisual() {
+  store.commit('SET_ACTIVE_DRAG', null)
+}
+
+async function playRollbackAnimation(cardName, destinationRect) {
+  if (!destinationRect) {
+    return
+  }
+  await nextTick()
+  await animateCardRollback(cardName, destinationRect, {
+    root: kanbanBoard.value || document,
+  })
+}
+
+function setColumnRef(index, el) {
+  if (el) {
+    columnRefs.value[index] = el
+    return
+  }
+  delete columnRefs.value[index]
+}
+
+async function scrollToMovedCard({ columnIndex, cardName, cardIndex }) {
+  await nextTick()
+  await nextTick()
+
+  const board = kanbanBoard.value
+  const columnComponent = columnRefs.value[columnIndex]
+  const columnEl = columnComponent?.$el
+  if (board && columnEl) {
+    scrollColumnIntoView(columnEl, board, {
+      behavior: resolveScrollBehavior(),
+    })
+  }
+
+  const listEl = columnEl?.querySelector?.('.kanban-card-list') || null
+  await revealCardInColumn({
+    cardName,
+    cardIndex,
+    listEl,
+    root: board || document,
+    scrollToCard: columnComponent?.scrollToCard?.bind(columnComponent),
+  })
+}
+
+provide('scrollToMovedCard', scrollToMovedCard)
 
 onMounted(() => {
   window.refreshKanbanBoard = refreshKanbanBoard;
@@ -70,10 +131,20 @@ onMounted(() => {
     refreshKanbanBoard();
   }
   bindClickDrag();
+  onPointerUp = () => clearActiveDragVisual()
+  onPointerCancel = () => clearActiveDragVisual()
+  document.addEventListener('pointerup', onPointerUp)
+  document.addEventListener('pointercancel', onPointerCancel)
 });
 
 onBeforeUnmount(() => {
   unbindClickDrag();
+  if (onPointerUp) {
+    document.removeEventListener('pointerup', onPointerUp)
+  }
+  if (onPointerCancel) {
+    document.removeEventListener('pointercancel', onPointerCancel)
+  }
   delete window.refreshKanbanBoard
   delete window.hydrateQuickKanban
 });
@@ -112,19 +183,47 @@ function retry() {
 
 function rememberDrag(context) {
   dragContext = context
+  store.commit('SET_ACTIVE_DRAG', context)
 }
 
-function drop(event) {
-  if (event.oldIndex !== -1 || !dragContext) return
+async function drop(event) {
+  clearActiveDragVisual()
 
-  const toColumn = Number(event.event.to.id)
-  if (toColumn === dragContext.fromColumn) return
-  store.dispatch("persistMovedCard", {
-    ...dragContext,
+  const context = dragContext
+  dragContext = null
+
+  if (!context) {
+    return
+  }
+
+  const toColumn = Number(event.event?.to?.id)
+  const fromColumn = Number(event.event?.from?.id ?? context.fromColumn)
+
+  if (!Number.isFinite(toColumn) || fromColumn === toColumn) {
+    return
+  }
+
+  const destinationRect = captureCardRect(
+    context.cardName,
+    kanbanBoard.value || document,
+  )
+
+  await nextTick()
+
+  const result = await store.dispatch("persistMovedCard", {
+    ...context,
+    fromColumn,
     toColumn,
     toIndex: event.newIndex,
-  }).catch(() => {})
-  dragContext = null
+  }).catch(() => null)
+
+  if (globalThis.__trackKanbanDrops) {
+    globalThis.__lastKanbanDrop = { context, toColumn, fromColumn, result }
+  }
+
+  if (result?.needsAnimatedRollback) {
+    await playRollbackAnimation(context.cardName, destinationRect)
+  }
 }
 
 const bindClickDrag = () => {

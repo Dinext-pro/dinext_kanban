@@ -5,8 +5,28 @@ import {
   mapAssignments,
   normalizeBoardConfig,
 } from './kanban'
+import {
+  buildMoveFailureAnnouncement,
+  showMoveFailureAlert,
+} from './moveFailure'
+import {
+  openCreateForm,
+  resolveCreateFormMode,
+  showCreateBlockedMessage,
+} from './createValidation'
+import { validateMoveMandatory } from './moveValidation'
 
 const initialColumnCardMinimum = 15
+const moveOptionsDebounceMs = 50
+const moveOptionsBatchSize = 50
+
+function chunkList(items, size) {
+  const chunks = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
 
 const emptyConfig = () => ({
   board_name: '',
@@ -35,6 +55,208 @@ function cacheUserInfo(userInfo) {
   }
 }
 
+function findCard(state, cardName) {
+  for (const column of state.columns) {
+    const card = column.cards.find(({ name }) => name === cardName)
+    if (card) {
+      return card
+    }
+  }
+  return null
+}
+
+function collectVisibleCardNames(state) {
+  const names = new Set()
+  for (const column of state.columns) {
+    for (const card of column.cards || []) {
+      if (card?.name) {
+        names.add(card.name)
+      }
+    }
+  }
+  return [...names]
+}
+
+function defaultDestinationOptions(columnName) {
+  return {
+    allowed: true,
+    mode: 'field_update',
+    actions: [],
+    missing_mandatory: [],
+    reason: null,
+    column_name: columnName,
+  }
+}
+
+export function buildPermissiveMoveOptions(state) {
+  const destinations = Object.fromEntries(
+    state.columns.map((column) => [
+      column.column_name,
+      defaultDestinationOptions(column.column_name),
+    ]),
+  )
+  return { can_drag: state.columns.length > 1, destinations }
+}
+
+let moveOptionsTimer = null
+let pendingMoveOptionNames = new Set()
+
+function getDestinationPolicy(state, cardName, column) {
+  const cardOptions = state.moveOptionsByCard[cardName]
+  const columnName = column.column_name
+  if (!cardOptions) {
+    if (globalThis.__quickKanbanPermissiveMoves) {
+      return defaultDestinationOptions(columnName)
+    }
+    if (!state.moveOptionsLoaded) {
+      return {
+        allowed: false,
+        reason: 'loading',
+        mode: 'field_update',
+        actions: [],
+        missing_mandatory: [],
+      }
+    }
+    return {
+      allowed: false,
+      reason: 'no_permission',
+      mode: 'field_update',
+      actions: [],
+      missing_mandatory: [],
+    }
+  }
+  return cardOptions.destinations?.[columnName] || {
+    allowed: false,
+    reason: 'workflow_denied',
+    mode: 'field_update',
+    actions: [],
+    missing_mandatory: [],
+  }
+}
+
+function isMoveReady(state, cardName) {
+  if (globalThis.__quickKanbanPermissiveMoves) {
+    return true
+  }
+  if (state.moveOptionsByCard[cardName]) {
+    return true
+  }
+  return state.moveOptionsLoaded
+}
+
+function runPreflightMove(state, _commit, payload) {
+  const { cardName, toColumn, workflowAction = null } = payload
+  const column = state.columns[toColumn]
+  if (!column) {
+    return { allowed: false, reason: 'invalid_column' }
+  }
+
+  const card = findCard(state, cardName)
+  if (!card) {
+    return { allowed: false, reason: 'missing_card' }
+  }
+
+  if (!isMoveReady(state, cardName)) {
+    return { allowed: false, reason: 'loading' }
+  }
+
+  const policy = getDestinationPolicy(state, cardName, column)
+  if (!policy.allowed) {
+    return { allowed: false, reason: policy.reason, policy }
+  }
+
+  const validation = validateMoveMandatory(
+    card,
+    { ...column, moveOptions: policy },
+    state.config,
+    workflowAction,
+    policy.missing_mandatory,
+  )
+  if (!validation.valid) {
+    return {
+      allowed: false,
+      reason: 'missing_mandatory',
+      missingLabels: validation.missingLabels,
+    }
+  }
+
+  return { allowed: true, policy, workflowAction }
+}
+
+function reportMoveFailure(commit, preflight, config, error = null) {
+  showMoveFailureAlert(preflight, config, error)
+  commit(
+    'SET_ANNOUNCEMENT',
+    buildMoveFailureAnnouncement(preflight, error),
+  )
+}
+
+function promoteRecentCreatesToTop(columns, recentCreatedCards, fieldName) {
+  if (!recentCreatedCards || !Object.keys(recentCreatedCards).length) {
+    return columns
+  }
+
+  for (const column of columns) {
+    const trackedNames = Object.entries(recentCreatedCards)
+      .filter(([, columnName]) => columnName === column.column_name)
+      .map(([cardName]) => cardName)
+    if (!trackedNames.length) {
+      continue
+    }
+
+    const cards = [...(column.cards || [])]
+    const pinned = []
+    const remaining = []
+
+    for (const card of cards) {
+      if (trackedNames.includes(card.name)) {
+        pinned.push(card)
+      } else {
+        remaining.push(card)
+      }
+    }
+
+    const orderedPinned = trackedNames
+      .map((cardName) => pinned.find((card) => card.name === cardName))
+      .filter(Boolean)
+
+    column.cards = [...orderedPinned, ...remaining]
+  }
+
+  return columns
+}
+
+function docToCard(doc, config) {
+  const card = { name: doc.name, modified: doc.modified }
+  for (const field of config.fields || []) {
+    if (field in doc) {
+      card[field] = doc[field]
+    }
+  }
+  if (config.field_name in doc) {
+    card[config.field_name] = doc[config.field_name]
+  }
+  if (config.title_field in doc) {
+    card[config.title_field] = doc[config.title_field]
+  }
+  card._assign = mapAssignments(doc._assign)
+  return card
+}
+
+function findColumnIndexByName(state, columnName) {
+  return state.columns.findIndex((column) => column.column_name === columnName)
+}
+
+function buildDragMoveFailureResult(payload, preflight = null, error = null) {
+  return {
+    ok: false,
+    needsAnimatedRollback: true,
+    preflight,
+    error,
+    payload,
+  }
+}
+
 export function createKanbanStore() {
   return createStore({
     state: () => ({
@@ -53,6 +275,15 @@ export function createKanbanStore() {
       countRequestGeneration: 0,
       configRequestBoard: '',
       pendingMoves: {},
+      moveOptionsByCard: {},
+      moveOptionsLoading: false,
+      moveOptionsGeneration: 0,
+      moveOptionsLoaded: false,
+      activeDrag: null,
+      dragSyncGeneration: 0,
+      createOptionsByColumn: {},
+      pendingCreate: null,
+      recentCreatedCards: {},
     }),
     mutations: {
       SET_COLUMNS(state, columns) {
@@ -65,6 +296,11 @@ export function createKanbanStore() {
         state.columns[columnIndex].cards = mergeCards(
           state.columns[columnIndex].cards,
           cards,
+        )
+        promoteRecentCreatesToTop(
+          state.columns,
+          state.recentCreatedCards,
+          state.config.field_name,
         )
       },
       SET_COLUMN_PAGINATION(state, pagination) {
@@ -140,6 +376,11 @@ export function createKanbanStore() {
         state.pendingMoves = {}
         state.columnPagination = {}
         state.columnTotals = {}
+        state.moveOptionsByCard = {}
+        state.moveOptionsLoading = false
+        state.moveOptionsGeneration += 1
+        state.moveOptionsLoaded = false
+        state.activeDrag = null
       },
       SET_DATA_REQUEST_ID(state, requestId) {
         state.dataRequestId = requestId
@@ -165,6 +406,27 @@ export function createKanbanStore() {
           state.pendingMoves = pendingMoves
         }
       },
+      SET_MOVE_OPTIONS_LOADING(state, loading) {
+        state.moveOptionsLoading = loading
+      },
+      SET_MOVE_OPTIONS_BATCH(state, { options, generation }) {
+        if (generation !== state.moveOptionsGeneration) {
+          return
+        }
+        state.moveOptionsByCard = {
+          ...state.moveOptionsByCard,
+          ...options,
+        }
+        state.moveOptionsLoaded = true
+      },
+      CLEAR_CARD_MOVE_OPTIONS(state, cardName) {
+        const moveOptionsByCard = { ...state.moveOptionsByCard }
+        delete moveOptionsByCard[cardName]
+        state.moveOptionsByCard = moveOptionsByCard
+      },
+      SET_ACTIVE_DRAG(state, activeDrag) {
+        state.activeDrag = activeDrag
+      },
       MOVE_CARD(state, { cardName, fromColumn, toColumn, fromIndex, toIndex }) {
         const source = state.columns[fromColumn]?.cards || []
         const sourceIndex = source.findIndex(({ name }) => name === cardName)
@@ -173,15 +435,39 @@ export function createKanbanStore() {
 
         card[state.config.field_name] = state.columns[toColumn].column_name
         state.columns[toColumn].cards.splice(toIndex ?? state.columns[toColumn].cards.length, 0, card)
+        state.columns[fromColumn].cards = [...state.columns[fromColumn].cards]
+        state.columns[toColumn].cards = [...state.columns[toColumn].cards]
+        state.dragSyncGeneration += 1
       },
       ROLLBACK_CARD_MOVE(state, { cardName, fromColumn, toColumn, fromIndex }) {
-        const destination = state.columns[toColumn]?.cards || []
-        const destinationIndex = destination.findIndex(({ name }) => name === cardName)
-        if (destinationIndex < 0) return
-        const [card] = destination.splice(destinationIndex, 1)
+        let destinationColumnIndex = toColumn
+        let destination = state.columns[toColumn]?.cards || []
+        let destinationIndex = destination.findIndex(({ name }) => name === cardName)
 
+        if (destinationIndex < 0) {
+          destinationColumnIndex = state.columns.findIndex((column) =>
+            column.cards.some(({ name }) => name === cardName),
+          )
+          if (destinationColumnIndex < 0) {
+            return
+          }
+          if (destinationColumnIndex === fromColumn) {
+            state.dragSyncGeneration += 1
+            return
+          }
+          destination = state.columns[destinationColumnIndex].cards
+          destinationIndex = destination.findIndex(({ name }) => name === cardName)
+          if (destinationIndex < 0) {
+            return
+          }
+        }
+
+        const [card] = destination.splice(destinationIndex, 1)
         card[state.config.field_name] = state.columns[fromColumn].column_name
         state.columns[fromColumn].cards.splice(fromIndex, 0, card)
+        state.columns[fromColumn].cards = [...state.columns[fromColumn].cards]
+        state.columns[destinationColumnIndex].cards = [...destination]
+        state.dragSyncGeneration += 1
       },
       UPDATE_COLUMN_INDICATOR(state, { columnIndex, indicator }) {
         state.columns[columnIndex].indicator = indicator
@@ -204,9 +490,48 @@ export function createKanbanStore() {
           }
         }
       },
+      SET_CREATE_OPTIONS_BY_COLUMN(state, options) {
+        state.createOptionsByColumn = options || {}
+      },
+      SET_PENDING_CREATE(state, pendingCreate) {
+        state.pendingCreate = pendingCreate
+      },
+      CLEAR_PENDING_CREATE(state) {
+        state.pendingCreate = null
+      },
+      TRACK_RECENT_CREATED_CARD(state, { cardName, columnName }) {
+        state.recentCreatedCards = {
+          ...state.recentCreatedCards,
+          [cardName]: columnName,
+        }
+      },
+      CLEAR_RECENT_CREATED_CARDS(state) {
+        state.recentCreatedCards = {}
+      },
+      PREPEND_CREATED_CARD(state, { columnIndex, card, incrementTotal = true }) {
+        const column = state.columns[columnIndex]
+        if (!column) return
+
+        const cards = [...(column.cards || [])]
+        const existingIndex = cards.findIndex(({ name }) => name === card.name)
+        if (existingIndex >= 0) {
+          cards.splice(existingIndex, 1)
+        } else if (incrementTotal) {
+          const key = getColumnKey(column)
+          if (Number.isFinite(state.columnTotals[key])) {
+            state.columnTotals = {
+              ...state.columnTotals,
+              [key]: state.columnTotals[key] + 1,
+            }
+          }
+        }
+        cards.unshift(card)
+        column.cards = cards
+        state.dragSyncGeneration += 1
+      },
     },
     actions: {
-      hydrateFromList({ commit, state }, { board, cards = [], args = {} }) {
+      hydrateFromList({ commit, dispatch, state }, { board, cards = [], args = {} }) {
         commit('BEGIN_BOARD_CONTEXT')
         commit('SET_CONFIG_REQUEST_BOARD', '')
         commit('SET_LOADING', false)
@@ -230,16 +555,32 @@ export function createKanbanStore() {
           column.cards.push(card)
         }
 
+        promoteRecentCreatesToTop(
+          columns,
+          state.recentCreatedCards,
+          config.field_name,
+        )
+
         const pageSize = Number(args.page_length) || state.pageSize
         commit('SET_KANBAN_CONFIG', config)
+        if (globalThis.frappe?.workflow?.setup) {
+          frappe.workflow.setup(board.reference_doctype)
+        }
         commit('SET_COLUMNS', columns)
         commit(
           'SET_COLUMN_PAGINATION',
           createColumnPagination(columns, cards.length >= pageSize),
         )
         commit('SET_ERROR', '')
+        dispatch('fetchCreateOptions', { board_name: config.board_name })
+        dispatch('scheduleMoveOptionsRefresh')
+        dispatch('fetchMoveOptions', { names: collectVisibleCardNames({
+          ...state,
+          columns,
+          config,
+        }) })
       },
-      async ensureBoard({ commit, state }, { board_name }) {
+      async ensureBoard({ commit, dispatch, state }, { board_name }) {
         if (
           state.config.board_name === board_name &&
           state.columns.length &&
@@ -274,6 +615,11 @@ export function createKanbanStore() {
             createColumnPagination(state.columns, true),
           )
           commit('SET_KANBAN_CONFIG', config)
+          if (globalThis.frappe?.workflow?.setup) {
+            frappe.workflow.setup(board.reference_doctype)
+          }
+          dispatch('fetchCreateOptions', { board_name })
+          dispatch('scheduleMoveOptionsRefresh')
           return true
         } catch (error) {
           if (state.boardGeneration !== boardGeneration) return false
@@ -286,7 +632,7 @@ export function createKanbanStore() {
           }
         }
       },
-      async fetchKanban({ commit, state }, { args } = {}) {
+      async fetchKanban({ commit, dispatch, state }, { args } = {}) {
         commit('INVALIDATE_COLUMN_REQUESTS')
         commit('BEGIN_COUNT_REQUEST')
         const sourceArgs = args || window.cur_list.get_args()
@@ -325,7 +671,11 @@ export function createKanbanStore() {
             statusField: state.config.field_name,
             userInfo: board.user_info,
           })
-          const columns = pageColumns
+          const columns = promoteRecentCreatesToTop(
+            pageColumns,
+            state.recentCreatedCards,
+            state.config.field_name,
+          )
           const resultCount = board.values?.length || 0
 
           commit('SET_COLUMNS', columns)
@@ -333,6 +683,7 @@ export function createKanbanStore() {
             'SET_COLUMN_PAGINATION',
             createColumnPagination(columns, resultCount >= pageSize),
           )
+          dispatch('scheduleMoveOptionsRefresh')
           return true
         } catch (error) {
           if (
@@ -414,7 +765,7 @@ export function createKanbanStore() {
         return Promise.allSettled(requests)
       },
       async loadColumnPage(
-        { commit, state },
+        { commit, dispatch, state },
         { columnIndex, args, pageSize = state.columnPageSize } = {},
       ) {
         const column = state.columns[columnIndex]
@@ -475,6 +826,7 @@ export function createKanbanStore() {
                 (!Number.isFinite(total) || nextOffset < total),
             },
           })
+          dispatch('scheduleMoveOptionsRefresh')
         } catch (error) {
           if (
             state.boardGeneration === boardGeneration &&
@@ -496,10 +848,207 @@ export function createKanbanStore() {
         commit('SET_COLUMNS', [])
         commit('SET_KANBAN_CONFIG', emptyConfig())
         commit('SET_COLUMN_PAGINATION', {})
+        commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
+        commit('CLEAR_PENDING_CREATE')
+        commit('CLEAR_RECENT_CREATED_CARDS')
+      },
+      async fetchCreateOptions({ commit, state }, { board_name } = {}) {
+        const targetBoard = board_name || state.config.board_name
+        if (!targetBoard) {
+          return
+        }
+
+        try {
+          const response = await frappe.call({
+            method: 'quick_kanban.api.get_create_options',
+            args: { board_name: targetBoard },
+          })
+          commit('SET_CREATE_OPTIONS_BY_COLUMN', response.message || {})
+        } catch {
+          commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
+        }
+      },
+      startCreateCard({ commit, dispatch, state }, { columnIndex, column }) {
+        const formMode = resolveCreateFormMode(
+          column,
+          state.config,
+          state.createOptionsByColumn,
+        )
+        if (formMode.mode === 'blocked') {
+          showCreateBlockedMessage(
+            formMode.reason,
+            state.config.ref_doctype,
+            formMode.missingLabels,
+          )
+          return false
+        }
+
+        const defaults = {
+          [state.config.field_name]: column.column_name,
+        }
+        commit('SET_PENDING_CREATE', {
+          column_name: column.column_name,
+          columnIndex,
+          board_name: state.config.board_name,
+          form_mode: formMode.mode,
+        })
+
+        return openCreateForm({
+          doctype: state.config.ref_doctype,
+          defaults,
+          mode: formMode.mode,
+          onCreated: (doc) => {
+            dispatch('handleCardCreated', { doc })
+          },
+        })
+      },
+      handleCardCreated({ commit, dispatch, state }, { doc }) {
+        if (!doc?.name || !state.config?.field_name) {
+          return false
+        }
+
+        const pending = state.pendingCreate
+        const statusValue = doc[state.config.field_name]
+        const targetColumnName = pending?.column_name
+        const matchesInitiatedColumn = !targetColumnName || statusValue === targetColumnName
+        if (!matchesInitiatedColumn) {
+          commit('CLEAR_PENDING_CREATE')
+          return false
+        }
+
+        if (pending?.board_name && pending.board_name !== state.config.board_name) {
+          return false
+        }
+
+        const columnIndex = Number.isFinite(pending?.columnIndex)
+          ? pending.columnIndex
+          : findColumnIndexByName(state, statusValue)
+        if (columnIndex < 0) {
+          commit('CLEAR_PENDING_CREATE')
+          return false
+        }
+
+        const card = docToCard(doc, state.config)
+        commit('PREPEND_CREATED_CARD', { columnIndex, card })
+        commit('TRACK_RECENT_CREATED_CARD', {
+          cardName: card.name,
+          columnName: state.columns[columnIndex]?.column_name || statusValue,
+        })
+        commit('CLEAR_PENDING_CREATE')
+        dispatch('scheduleMoveOptionsRefresh')
+        return true
+      },
+      scheduleMoveOptionsRefresh({ dispatch, state }) {
+        if (!state.config.board_name) {
+          return
+        }
+        const names = collectVisibleCardNames(state)
+        for (const name of names) {
+          pendingMoveOptionNames.add(name)
+        }
+        if (moveOptionsTimer) {
+          clearTimeout(moveOptionsTimer)
+        }
+        moveOptionsTimer = setTimeout(() => {
+          const batch = [...pendingMoveOptionNames]
+          pendingMoveOptionNames = new Set()
+          moveOptionsTimer = null
+          if (batch.length) {
+            dispatch('fetchMoveOptions', { names: batch })
+          }
+        }, moveOptionsDebounceMs)
+      },
+      async fetchMoveOptions({ commit, state }, { names } = {}) {
+        const requestedNames = (names || collectVisibleCardNames(state))
+          .filter((name) => name && !state.moveOptionsByCard[name])
+        if (!requestedNames.length || !state.config.board_name) {
+          return
+        }
+
+        const generation = state.moveOptionsGeneration
+        const boardGeneration = state.boardGeneration
+        commit('SET_MOVE_OPTIONS_LOADING', true)
+        try {
+          for (const batch of chunkList(requestedNames, moveOptionsBatchSize)) {
+            if (
+              state.boardGeneration !== boardGeneration ||
+              state.moveOptionsGeneration !== generation
+            ) {
+              return
+            }
+            const response = await frappe.call({
+              method: 'quick_kanban.api.get_move_options',
+              args: {
+                board_name: state.config.board_name,
+                names: batch,
+              },
+            })
+            if (
+              state.boardGeneration !== boardGeneration ||
+              state.moveOptionsGeneration !== generation
+            ) {
+              return
+            }
+            commit('SET_MOVE_OPTIONS_BATCH', {
+              options: response.message || {},
+              generation,
+            })
+          }
+        } catch (error) {
+          if (state.boardGeneration === boardGeneration) {
+            commit('SET_MOVE_OPTIONS_LOADING', false)
+            frappe.show_alert({
+              message: getErrorMessage(error),
+              indicator: 'red',
+            })
+          }
+        } finally {
+          if (
+            state.boardGeneration === boardGeneration &&
+            state.moveOptionsGeneration === generation
+          ) {
+            commit('SET_MOVE_OPTIONS_LOADING', false)
+          }
+        }
+      },
+      getDestinationPolicy({ state }, { cardName, column }) {
+        return getDestinationPolicy(state, cardName, column)
+      },
+      resolveWorkflowAction({ state }, { cardName, column }) {
+        const policy = state.moveOptionsByCard[cardName]
+          ?.destinations?.[column.column_name]
+        const actions = policy?.actions || []
+        if (actions.length <= 1) {
+          return actions[0]?.action || null
+        }
+        return new Promise((resolve, reject) => {
+          const dialog = new frappe.ui.Dialog({
+            title: __('Select Workflow Action'),
+            fields: [{
+              fieldtype: 'Select',
+              fieldname: 'action',
+              label: __('Action'),
+              options: actions.map((row) => row.action),
+              reqd: 1,
+            }],
+            primary_action_label: __('Apply'),
+            primary_action(values) {
+              dialog.hide()
+              resolve(values.action)
+            },
+          })
+          dialog.show()
+          dialog.$wrapper.on('hide.bs.modal', () => {
+            reject(new Error('cancelled'))
+          })
+        })
+      },
+      preflightMove({ commit, state }, payload) {
+        return runPreflightMove(state, commit, payload)
       },
       async persistMove(
-        { commit, state },
-        { cardName, fromColumn, toColumn, fromIndex },
+        { commit, dispatch, state },
+        { cardName, fromColumn, toColumn, fromIndex, workflowAction = null },
       ) {
         const boardGeneration = state.boardGeneration
         commit('SET_MOVE_PENDING', { cardName, pending: true })
@@ -508,11 +1057,11 @@ export function createKanbanStore() {
           const response = await frappe.call({
             method: 'quick_kanban.api.move_card',
             args: {
-              doctype: state.config.ref_doctype,
+              board_name: state.config.board_name,
               name: cardName,
-              fieldname: state.config.field_name,
               value: state.columns[toColumn].column_name,
               expected_modified: card?.modified,
+              workflow_action: workflowAction || undefined,
             },
           })
           if (state.boardGeneration !== boardGeneration) return
@@ -522,10 +1071,15 @@ export function createKanbanStore() {
               modified: response.message.modified,
             })
           }
+          commit('CLEAR_CARD_MOVE_OPTIONS', cardName)
           commit('INVALIDATE_COUNT_RESPONSES')
           commit('ADJUST_COLUMN_OFFSET', {
             columnIndex: fromColumn,
             delta: -1,
+          })
+          commit('ADJUST_COLUMN_OFFSET', {
+            columnIndex: toColumn,
+            delta: 1,
           })
           commit('ADJUST_COLUMN_TOTAL', {
             columnIndex: fromColumn,
@@ -546,6 +1100,7 @@ export function createKanbanStore() {
             'SET_ANNOUNCEMENT',
             __('Card moved to {0}', [destinationLabel]),
           )
+          dispatch('scheduleMoveOptionsRefresh')
         } catch (error) {
           if (state.boardGeneration === boardGeneration) {
             commit('ROLLBACK_CARD_MOVE', {
@@ -554,14 +1109,7 @@ export function createKanbanStore() {
               toColumn,
               fromIndex,
             })
-            frappe.show_alert({
-              message: __('Could not move card: {0}', [getErrorMessage(error)]),
-              indicator: 'red',
-            })
-            commit(
-              'SET_ANNOUNCEMENT',
-              __('Card move failed. The previous position was restored.'),
-            )
+            reportMoveFailure(commit, null, state.config, error)
           }
           throw error
         } finally {
@@ -576,22 +1124,94 @@ export function createKanbanStore() {
           isColumnLoading(state, payload.fromColumn) ||
           isColumnLoading(state, payload.toColumn)
         ) return false
-        commit('MOVE_CARD', payload)
-        await dispatch('persistMove', payload)
+
+        const preflight = runPreflightMove(state, commit, payload)
+        if (!preflight.allowed) {
+          reportMoveFailure(commit, preflight, state.config)
+          return false
+        }
+
+        let workflowAction = payload.workflowAction || null
+        const policy = preflight.policy
+        if (policy?.mode === 'workflow' && (policy.actions?.length || 0) > 1) {
+          try {
+            workflowAction = await dispatch('resolveWorkflowAction', {
+              cardName: payload.cardName,
+              column: state.columns[payload.toColumn],
+            })
+          } catch {
+            return false
+          }
+        } else if (policy?.actions?.length === 1) {
+          workflowAction = policy.actions[0].action
+        }
+
+        const movePayload = { ...payload, workflowAction }
+        const recheck = runPreflightMove(state, commit, movePayload)
+        if (!recheck.allowed) {
+          reportMoveFailure(commit, recheck, state.config)
+          return false
+        }
+
+        commit('MOVE_CARD', movePayload)
+        await dispatch('persistMove', movePayload)
+        return true
       },
       async persistMovedCard({ commit, dispatch, state }, payload) {
         if (state.pendingMoves[payload.cardName]) {
           commit('ROLLBACK_CARD_MOVE', payload)
-          return false
+          return buildDragMoveFailureResult(payload)
         }
         if (
           isColumnLoading(state, payload.fromColumn) ||
           isColumnLoading(state, payload.toColumn)
         ) {
           commit('ROLLBACK_CARD_MOVE', payload)
-          return false
+          return buildDragMoveFailureResult(payload, { reason: 'loading' })
         }
-        await dispatch('persistMove', payload)
+
+        const preflight = runPreflightMove(state, commit, payload)
+        if (!preflight.allowed) {
+          commit('ROLLBACK_CARD_MOVE', payload)
+          reportMoveFailure(commit, preflight, state.config)
+          return buildDragMoveFailureResult(payload, preflight)
+        }
+
+        let workflowAction = payload.workflowAction || null
+        const policy = preflight.policy
+        if (policy?.mode === 'workflow' && (policy.actions?.length || 0) > 1) {
+          try {
+            workflowAction = await dispatch('resolveWorkflowAction', {
+              cardName: payload.cardName,
+              column: state.columns[payload.toColumn],
+            })
+          } catch {
+            commit('ROLLBACK_CARD_MOVE', payload)
+            return {
+              ok: false,
+              cancelled: true,
+              needsAnimatedRollback: true,
+              payload,
+            }
+          }
+        } else if (policy?.actions?.length === 1) {
+          workflowAction = policy.actions[0].action
+        }
+
+        const movePayload = { ...payload, workflowAction }
+        const recheck = runPreflightMove(state, commit, movePayload)
+        if (!recheck.allowed) {
+          commit('ROLLBACK_CARD_MOVE', movePayload)
+          reportMoveFailure(commit, recheck, state.config)
+          return buildDragMoveFailureResult(movePayload, recheck)
+        }
+
+        try {
+          await dispatch('persistMove', movePayload)
+          return { ok: true }
+        } catch (error) {
+          return buildDragMoveFailureResult(movePayload, null, error)
+        }
       },
       async refreshCard({ commit, state }, { cardName }) {
         const response = await frappe.call({
@@ -642,6 +1262,65 @@ export function createKanbanStore() {
       getColumns: (state) => state.columns,
       getConfig: (state) => state.config,
       isMovePending: (state) => (cardName) => Boolean(state.pendingMoves[cardName]),
+      isMoveOptionsLoading: (state) => state.moveOptionsLoading,
+      getCardMoveOptions: (state) => (cardName) => state.moveOptionsByCard[cardName],
+      getAllowedDestinations: (state) => (cardName) => {
+        if (
+          !state.moveOptionsByCard[cardName] &&
+          !state.moveOptionsLoaded &&
+          !globalThis.__quickKanbanPermissiveMoves
+        ) {
+          return []
+        }
+        return state.columns
+          .map((column, columnIndex) => {
+            const policy = getDestinationPolicy(state, cardName, column)
+            const card = findCard(state, cardName)
+            if (!card || !policy.allowed) {
+              return null
+            }
+            const validation = validateMoveMandatory(
+              card,
+              { ...column, moveOptions: policy },
+              state.config,
+              null,
+              policy.missing_mandatory,
+            )
+            if (!validation.valid) {
+              return null
+            }
+            return { columnIndex, column, policy }
+          })
+          .filter(Boolean)
+      },
+      canDragCard: (state, getters) => (cardName) => {
+        if (!isMoveReady(state, cardName)) {
+          return false
+        }
+        return getters.getAllowedDestinations(cardName).length > 0
+      },
+      isDropAllowed: (state) => ({ cardName, columnIndex }) => {
+        const column = state.columns[columnIndex]
+        if (!column || !cardName) {
+          return false
+        }
+        const policy = getDestinationPolicy(state, cardName, column)
+        if (!policy.allowed) {
+          return false
+        }
+        const card = findCard(state, cardName)
+        if (!card) {
+          return false
+        }
+        return validateMoveMandatory(
+          card,
+          { ...column, moveOptions: policy },
+          state.config,
+          null,
+          policy.missing_mandatory,
+        ).valid
+      },
+      activeDragCard: (state) => state.activeDrag,
     },
   })
 }

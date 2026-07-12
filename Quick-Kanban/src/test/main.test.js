@@ -43,3 +43,23 @@ test('remounts when the active board container changes', async () => {
   expect(firstBoard.__vue_app__).toBeUndefined()
   expect(secondBoard.__vue_app__).toBeDefined()
 })
+
+test('binds persistent create form hooks for the configured doctype', async () => {
+  await import('../main.js')
+  window.__quickKanbanStore.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'subject',
+    fields: ['name', 'subject', 'status'],
+    highlight_table: [],
+  })
+
+  expect(frappe.ui.form.on).toHaveBeenCalledWith(
+    'Task',
+    expect.objectContaining({
+      after_save: expect.any(Function),
+      after_cancel: expect.any(Function),
+    }),
+  )
+})

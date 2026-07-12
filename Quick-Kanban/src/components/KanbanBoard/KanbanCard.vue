@@ -3,14 +3,26 @@
     class="kanban-card"
     role="listitem"
     :aria-busy="pending"
+    :data-card-name="card.name"
   >
     <header class="kanban-title-area">
       <a :href="getUrl()" draggable="false" class="card-title" :title="title">
         {{ title }}
       </a>
       <span
+        v-if="canDrag"
         class="drag-handle drag"
         :aria-label="__('Drag {0}', [title])"
+        role="img"
+      >
+        <svg class="icon icon-sm" aria-hidden="true">
+          <use href="#icon-drag"></use>
+        </svg>
+      </span>
+      <span
+        v-else
+        class="drag-handle drag-handle-disabled"
+        :aria-label="moveBlockedLabel"
         role="img"
       >
         <svg class="icon icon-sm" aria-hidden="true">
@@ -54,7 +66,8 @@
             class="card-action-button"
             :aria-label="__('Move {0}', [title])"
             :aria-expanded="String(moveMenuOpen)"
-            :disabled="pending"
+            :disabled="pending || !canMove"
+            :aria-busy="String(moveOptionsLoading)"
             @click="toggleMoveMenu"
           >
             <svg class="icon icon-sm" aria-hidden="true">
@@ -73,15 +86,14 @@
               @keydown.esc.prevent="closeMoveMenu"
             >
             <button
-            v-for="(column, index) in columns"
-            :key="column.name"
-              v-show="index !== columnIndex"
+            v-for="destination in allowedDestinations"
+            :key="destination.column.name"
               type="button"
               class="dropdown-item"
-              :aria-label="__('Move {0} to {1}', [title, getColumnLabel(column)])"
-              @click="moveCard(index)"
+              :aria-label="__('Move {0} to {1}', [title, getColumnLabel(destination.column)])"
+              @click="moveCard(destination.columnIndex)"
             >
-              {{ getColumnLabel(column) }}
+              {{ getColumnLabel(destination.column) }}
             </button>
           </div>
         </Teleport>
@@ -97,7 +109,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, inject, nextTick, ref } from 'vue'
 import { useStore } from 'vuex'
 import Assignments from '../Assignments.vue'
 import { formatCardField, getCardFieldDisplayValue, translateFieldLabel } from '../../utils/kanban'
@@ -109,6 +121,7 @@ const props = defineProps({
   columnIndex: { type: Number, required: true },
 })
 const store = useStore()
+const scrollToMovedCard = inject('scrollToMovedCard', null)
 const __ = globalThis.__
 const moveMenuButton = ref(null)
 const moveMenuPanel = ref(null)
@@ -124,12 +137,25 @@ useDismissibleMenu({
 
 const columns = computed(() => store.state.columns)
 const pending = computed(() => store.getters.isMovePending(props.card.name))
+const moveOptionsLoading = computed(() => store.getters.isMoveOptionsLoading)
 const title = computed(() =>
   getCardFieldDisplayValue(
     props.card[props.config.title_field] || props.card.name,
     props.config.title_field_meta,
   ) || props.card.name,
 )
+const canDrag = computed(() => store.getters.canDragCard(props.card.name))
+const canMove = computed(() => store.getters.getAllowedDestinations(props.card.name).length > 0)
+const allowedDestinations = computed(() =>
+  store.getters.getAllowedDestinations(props.card.name)
+    .filter((destination) => destination.columnIndex !== props.columnIndex),
+)
+const moveBlockedLabel = computed(() => {
+  if (moveOptionsLoading.value) {
+    return __('Move permissions are loading for {0}', [title.value])
+  }
+  return __('Move is not available for {0}', [title.value])
+})
 const displayFields = computed(() => props.config.display_fields || [])
 const highlightValue = computed(() => {
   if (!props.config.highlighted_field) return ''
@@ -173,17 +199,25 @@ async function moveCard(toColumn) {
   const fromIndex = columns.value[props.columnIndex].cards.findIndex(
     ({ name }) => name === props.card.name,
   )
+  const toIndex = columns.value[toColumn].cards.length
   closeMoveMenu()
   if (toColumn === props.columnIndex || fromIndex < 0) return
 
   try {
-    await store.dispatch('moveCard', {
+    const moved = await store.dispatch('moveCard', {
       cardName: props.card.name,
       fromColumn: props.columnIndex,
       toColumn,
       fromIndex,
-      toIndex: columns.value[toColumn].cards.length,
+      toIndex,
     })
+    if (moved && scrollToMovedCard) {
+      await scrollToMovedCard({
+        columnIndex: toColumn,
+        cardName: props.card.name,
+        cardIndex: toIndex,
+      })
+    }
   } catch {
     // The store restores the card and exposes the error to the user.
   }
@@ -195,6 +229,9 @@ function closeMoveMenu({ restoreFocus = true } = {}) {
 }
 
 function toggleMoveMenu() {
+  if (!canMove.value) {
+    return
+  }
   if (moveMenuOpen.value) {
     closeMoveMenu()
     return

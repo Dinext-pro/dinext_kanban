@@ -1,10 +1,16 @@
 <template>
   <section
     class="kanban-column"
+    :class="columnDropClasses"
     role="region"
     :aria-label="columnAriaLabel"
     :style="getColumnStyle(column.indicator)"
   >
+    <div
+      v-if="showForbiddenOverlay"
+      class="kanban-column-drop-overlay"
+      aria-hidden="true"
+    />
     <header class="kanban-column-header">
       <div class="column-heading">
         <span
@@ -63,7 +69,7 @@
           type="button"
           class="header-item"
           :aria-label="__('Add {0} to {1}', [config.ref_doctype, columnLabel])"
-          @click="newDoc(column.column_name)"
+          @click="startCreate"
         >
           <svg class="icon icon-sm" aria-hidden="true">
             <use href="#icon-add"></use>
@@ -73,7 +79,9 @@
     </header>
 
     <VirtualList
+      ref="virtualListRef"
       v-model="cards"
+      :key="`${column.name || column.column_name}-${dragSyncGeneration}`"
       role="list"
       tabindex="0"
       :aria-label="__('Cards in {0}', [columnLabel])"
@@ -84,10 +92,10 @@
       :dataKey="'name'"
       :id="columnIndex"
       class="kanban-card-list"
-      :handle="'.drag-handle'"
+      :handle="'.drag-handle.drag'"
       :disabled="dragDisabled"
       :keeps="cardsLimit"
-      group="kanban"
+      :group="dragGroup"
       chosenClass="chosen-card"
       ghostClass="ghost-card"
     >
@@ -109,7 +117,7 @@
         <div class="addcard">
           <button
             type="button"
-            @click="newDoc(column.column_name)"
+            @click="startCreate"
             class="btn btn-default btn-sm w-100"
           >
             <svg class="icon icon-xs" aria-hidden="true">
@@ -135,6 +143,7 @@ import IndicatorPill from "../IndicatorPill.vue";
 
 const store = useStore();
 const cardsLimit = ref(30);
+const virtualListRef = ref(null)
 const colorMenuButton = ref(null)
 const colorMenuPanel = ref(null)
 const colorMenuOpen = ref(false)
@@ -170,6 +179,54 @@ const cards = computed({
 const dragDisabled = computed(
   () => Object.keys(store.state.pendingMoves).length > 0,
 )
+const activeDrag = computed(() => store.getters.activeDragCard)
+const dragSyncGeneration = computed(() => store.state.dragSyncGeneration)
+const dragGroup = computed(() => {
+  if (globalThis.__quickKanbanPermissiveMoves) {
+    return 'kanban'
+  }
+  return {
+    name: 'kanban',
+    pull: true,
+    put: (to, from, dragEl) => {
+      const cardName = dragEl?.dataset?.key
+        || dragEl?.getAttribute?.('data-key')
+        || dragEl?.closest?.('[data-key]')?.getAttribute?.('data-key')
+      if (!cardName) {
+        return false
+      }
+      if (store.getters.activeDragCard?.cardName) {
+        return true
+      }
+      return store.getters.isDropAllowed({
+        cardName,
+        columnIndex: props.columnIndex,
+      })
+    },
+  }
+})
+const columnDropClasses = computed(() => {
+  if (!activeDrag.value?.cardName) {
+    return {}
+  }
+  const allowed = store.getters.isDropAllowed({
+    cardName: activeDrag.value.cardName,
+    columnIndex: props.columnIndex,
+  })
+  return {
+    'kanban-column-drop-allowed': allowed,
+    'kanban-column-drop-forbidden': !allowed,
+  }
+})
+const showForbiddenOverlay = computed(() => {
+  if (!activeDrag.value?.cardName) {
+    return false
+  }
+  return !store.getters.isDropAllowed({
+    cardName: activeDrag.value.cardName,
+    columnIndex: props.columnIndex,
+  })
+})
 const pagination = computed(
   () => store.state.columnPagination[props.column.name || props.column.column_name] || {
     loading: false,
@@ -185,11 +242,21 @@ const totalDisplay = computed(
 const columnLabel = computed(
   () => props.column.display_name || props.column.column_name,
 )
-const columnAriaLabel = computed(
-  () => Number.isFinite(columnTotal.value)
+const columnAriaLabel = computed(() => {
+  if (activeDrag.value?.cardName) {
+    const allowed = store.getters.isDropAllowed({
+      cardName: activeDrag.value.cardName,
+      columnIndex: props.columnIndex,
+    })
+    if (allowed) {
+      return __('{0}, drop allowed', [columnLabel.value])
+    }
+    return __('{0}, drop not allowed', [columnLabel.value])
+  }
+  return Number.isFinite(columnTotal.value)
     ? __('{0}, {1} records', [columnLabel.value, columnTotal.value])
-    : __('{0}, total loading', [columnLabel.value]),
-)
+    : __('{0}, total loading', [columnLabel.value])
+})
 
 function drag(evt) {
   emits("dragstart", {
@@ -215,10 +282,11 @@ function handleNativeScroll(event) {
   }
 }
 
-function newDoc(field) {
-  frappe.new_doc(props.config.ref_doctype, {
-    [props.config.field_name]: field,
-  });
+function startCreate(columnName) {
+  store.dispatch('startCreateCard', {
+    columnIndex: props.columnIndex,
+    column: props.column,
+  })
 }
 
 function getColumnStyle(columnIndicator) {
@@ -241,4 +309,16 @@ function closeColorMenu({ restoreFocus = true } = {}) {
   colorMenuOpen.value = false
   if (restoreFocus) nextTick(() => colorMenuButton.value?.focus())
 }
+
+function scrollToCard(cardName, cardIndex) {
+  if (Number.isFinite(cardIndex)) {
+    virtualListRef.value?.scrollToIndex?.(cardIndex)
+    return
+  }
+  virtualListRef.value?.scrollToKey?.(cardName)
+}
+
+defineExpose({
+  scrollToCard,
+})
 </script>

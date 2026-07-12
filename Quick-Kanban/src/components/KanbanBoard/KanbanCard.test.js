@@ -1,7 +1,16 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { createKanbanStore } from '../../utils/store'
+import { createKanbanStore, buildPermissiveMoveOptions } from '../../utils/store'
 import KanbanCard from './KanbanCard.vue'
+
+function seedMoveOptions(store) {
+  store.commit('SET_MOVE_OPTIONS_BATCH', {
+    options: {
+      'TASK-1': buildPermissiveMoveOptions(store.state),
+    },
+    generation: store.state.moveOptionsGeneration,
+  })
+}
 
 function createStore() {
   const store = createKanbanStore()
@@ -42,6 +51,7 @@ function createStore() {
       cards: [],
     },
   ])
+  seedMoveOptions(store)
   return store
 }
 

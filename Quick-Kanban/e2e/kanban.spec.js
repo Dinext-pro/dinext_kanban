@@ -3,6 +3,10 @@ import { expect, test } from '@playwright/test'
 const openWithoutAutoScroll = (trigger) =>
   trigger.evaluate((element) => element.click())
 
+const waitUntilMoveReady = async (page) => {
+  await expect(page.getByLabel('Move First task')).toBeEnabled({ timeout: 10000 })
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/e2e/fixture.html')
   await expect(page.getByRole('heading', { name: /Open/ })).toBeVisible()
@@ -84,6 +88,7 @@ test('dismisses the color palette on external interactions but not arrows', asyn
 })
 
 test('moves a card with the keyboard control', async ({ page }) => {
+  await waitUntilMoveReady(page)
   const card = page.locator('.kanban-card').first()
   const list = page.getByLabel('Cards in Open')
   const beforeBox = await card.boundingBox()
@@ -98,6 +103,8 @@ test('moves a card with the keyboard control', async ({ page }) => {
   expect(afterBox?.width).toBe(beforeBox?.width)
   await page.getByLabel('Move First task to Done').click()
 
+  await expect(page.getByLabel('Cards in Open')).not.toContainText('First task')
+  await expect(page.getByLabel('Cards in Done')).toContainText('First task')
   await expect(page.locator('.column-count').nth(0)).toHaveText('50')
   await expect(page.locator('.column-count').nth(1)).toHaveText('13')
   await expect.poll(() =>
@@ -105,7 +112,129 @@ test('moves a card with the keyboard control', async ({ page }) => {
   ).toBe('green')
 })
 
+test('menu move scrolls horizontally to the destination column', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 })
+  await page.goto('/e2e/fixture.html')
+  await waitUntilMoveReady(page)
+
+  const board = page.locator('.kanban')
+  await board.evaluate((element) => {
+    element.scrollLeft = 0
+  })
+  const beforeScrollLeft = await board.evaluate((element) => element.scrollLeft)
+
+  await openWithoutAutoScroll(page.getByLabel('Move First task'))
+  await page.getByLabel('Move First task to Done').click()
+
+  await expect(page.getByLabel('Cards in Done')).toContainText('First task')
+  await expect.poll(() => board.evaluate((element) => element.scrollLeft))
+    .toBeGreaterThan(beforeScrollLeft)
+
+  const doneListBox = await page.getByLabel('Cards in Done').boundingBox()
+  const boardBox = await board.boundingBox()
+  if (!doneListBox || !boardBox) throw new Error('Scroll target bounds are unavailable')
+  expect(doneListBox.x).toBeGreaterThanOrEqual(boardBox.x)
+  expect(doneListBox.x).toBeLessThan(boardBox.x + boardBox.width)
+})
+
+test('menu move scrolls vertically to the card position', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__customQuickKanbanCards = [
+      {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        expected_end_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        modified: '2026-07-10 10:00:00',
+      },
+      ...Array.from({ length: 35 }, (_, index) => ({
+        name: `DONE-${index + 1}`,
+        subject: `Done task ${index + 1}`,
+        status: 'Done',
+        priority: 'Low',
+        expected_end_date: '2026-07-11',
+        project: 'SECOND-PROJECT',
+        modified: '2026-07-10 10:00:00',
+      })),
+    ]
+  })
+  await page.goto('/e2e/fixture.html')
+  await waitUntilMoveReady(page)
+
+  const doneList = page.getByLabel('Cards in Done')
+  await doneList.evaluate((element) => {
+    element.scrollTop = 0
+  })
+
+  await openWithoutAutoScroll(page.getByLabel('Move First task'))
+  await page.getByLabel('Move First task to Done').click()
+
+  await expect(doneList).toContainText('First task')
+  await expect.poll(() => doneList.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0)
+})
+
+test('menu move scrolls to the card in a paginated destination column', async ({ page }) => {
+  await page.evaluate(async () => {
+    window.__columnTotals = { Open: 1, Done: 40 }
+    window.__columnPages = {
+      Done: [window.__makeColumnPage('Done', 0, 15)],
+    }
+    await window.hydrateQuickKanban({
+      board: {
+        name: 'Paginated Board',
+        reference_doctype: 'Task',
+        field_name: 'status',
+        fields: ['name', 'subject'],
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'blue' },
+          { name: 'done', column_name: 'Done', indicator: 'green' },
+        ],
+      },
+      cards: [{
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        modified: '2026-07-10 10:00:00',
+      }],
+      args: { doctype: 'Task', page_length: 100 },
+    })
+  })
+
+  await waitUntilMoveReady(page)
+  const doneList = page.getByLabel('Cards in Done')
+  await expect(doneList.locator('.kanban-card')).toHaveCount(15)
+
+  await doneList.evaluate((element) => {
+    element.scrollTop = 0
+  })
+
+  await openWithoutAutoScroll(page.getByLabel('Move First task'))
+  await page.getByLabel('Move First task to Done').click()
+
+  await expect(doneList).toContainText('First task')
+  await expect.poll(() => doneList.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0)
+
+  const visible = await page.evaluate(() => {
+    const list = document.querySelector('[aria-label="Cards in Done"]')
+    const card = list?.querySelector('article.kanban-card[data-card-name="TASK-1"]')
+      || list?.querySelector('[data-key="TASK-1"] .kanban-card')
+    if (!list || !card) {
+      return false
+    }
+    const listRect = list.getBoundingClientRect()
+    const cardRect = card.getBoundingClientRect()
+    return cardRect.bottom > listRect.top + 8 && cardRect.top < listRect.bottom - 8
+  })
+  expect(visible).toBe(true)
+})
+
 test('restores a card after a rejected move', async ({ page }) => {
+  await waitUntilMoveReady(page)
   await page.evaluate(() => {
     window.__failNextMove = true
   })
@@ -120,6 +249,7 @@ test('restores a card after a rejected move', async ({ page }) => {
 })
 
 test('keeps the move disclosure inside the viewport and restores focus on Escape', async ({ page }) => {
+  await waitUntilMoveReady(page)
   const trigger = page.getByLabel('Move First task')
   await openWithoutAutoScroll(trigger)
   const menu = page.getByLabel('Move First task to column')
@@ -138,6 +268,7 @@ test('keeps the move disclosure inside the viewport and restores focus on Escape
 })
 
 test('dismisses the move menu on external interactions but not arrows', async ({ page }) => {
+  await waitUntilMoveReady(page)
   const trigger = page.getByLabel('Move First task')
   const menu = page.getByLabel('Move First task to column')
   const list = page.getByLabel('Cards in Open')
@@ -163,6 +294,7 @@ test('dismisses the move menu on external interactions but not arrows', async ({
 })
 
 test('activates menu actions with native keyboard input before closing', async ({ page }) => {
+  await waitUntilMoveReady(page)
   const colorTrigger = page.getByLabel('Change Open column color')
   const palette = page.getByLabel('Column colors')
   await colorTrigger.click()
@@ -181,11 +313,14 @@ test('activates menu actions with native keyboard input before closing', async (
   await page.keyboard.press('Space')
 
   await expect(moveAction).toHaveCount(0)
+  await expect(page.getByLabel('Cards in Open')).not.toContainText('First task')
+  await expect(page.getByLabel('Cards in Done')).toContainText('First task')
   await expect(page.locator('.column-count').nth(0)).toHaveText('50')
   await expect(page.locator('.column-count').nth(1)).toHaveText('13')
 })
 
 test('uses the real drag list contract for a cross-column move', async ({ page }) => {
+  await waitUntilMoveReady(page)
   const source = await page.getByLabel('Drag First task').boundingBox()
   const target = await page.getByText('Second task').boundingBox()
   if (!source || !target) throw new Error('Drag coordinates are unavailable')
@@ -374,6 +509,11 @@ test('loads the next page only for the scrolled column without a global banner',
       args: { doctype: 'Task', page_length: 100 },
     })
   })
+
+  await page.waitForFunction(() => {
+    const button = document.querySelector('.card-action-button')
+    return !button || !button.disabled
+  }, { timeout: 10000 })
 
   const list = page.getByLabel('Cards in Open')
   await expect(page.locator('.column-count').nth(0)).toHaveText('150')
@@ -823,6 +963,7 @@ test('shows translated metadata labels and column names while keeping raw API va
   await expect(card.getByText('Ожидаемая дата окончания')).toBeVisible()
   await expect(card.locator('.kanban-highlight')).toHaveText('Высокий')
 
+  await waitUntilMoveReady(page)
   await openWithoutAutoScroll(page.getByLabel('Move First task'))
   await expect(page.getByLabel('Move First task to Готово')).toBeVisible()
   await page.getByLabel('Move First task to Готово').click()
@@ -841,10 +982,209 @@ test('shows translated metadata labels and column names while keeping raw API va
     page.evaluate(() => window.__lastNewDoc),
   ).toEqual({
     doctype: 'Task',
+    doc: expect.objectContaining({ status: 'Open' }),
     defaults: { status: 'Open' },
+    mode: 'quick_entry',
   })
+})
+
+test('prepends a newly created Overdue card after quick entry save', async ({ page }) => {
+  await page.goto('/e2e/fixture.html')
+  await expect(page.getByLabel('Cards in Open').getByText('First task')).toBeVisible()
+  await page.evaluate(async () => {
+    await window.hydrateQuickKanban({
+      board: {
+        name: 'Browser Board',
+        reference_doctype: 'Task',
+        field_name: 'status',
+        fields: ['name', 'subject', 'status'],
+        custom_highlighted_field: null,
+        custom_highlight_table: [],
+        show_labels: 0,
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'gray' },
+          { name: 'overdue', column_name: 'Overdue', indicator: 'red' },
+          { name: 'done', column_name: 'Done', indicator: 'green' },
+        ],
+      },
+      cards: [
+        {
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+          modified: '2026-07-10 10:00:00',
+        },
+      ],
+      args: { doctype: 'Task', page_length: 100 },
+    })
+  })
+
+  await page.evaluate(() => {
+    document.querySelector('[aria-label="Add Task to Overdue"]')?.click()
+  })
+  await expect.poll(() =>
+    page.evaluate(() => window.__lastNewDoc?.doc?.status),
+  ).toBe('Overdue')
+
+  await page.evaluate(() => {
+    window.__lastQuickEntryAfterInsert({
+      name: 'TASK-OVERDUE',
+      subject: 'Late task',
+      status: 'Overdue',
+      modified: '2026-07-12 12:00:00',
+    })
+  })
+
+  await expect(page.getByLabel('Cards in Overdue').locator('.kanban-card').first())
+    .toContainText('Late task')
+  await expect(page.getByLabel('Cards in Open').getByText('First task')).toBeVisible()
+})
+
+test('prepends a newly created card to the top of the initiating column', async ({ page }) => {
+  await page.goto('/e2e/fixture.html')
+  await expect(page.getByLabel('Cards in Open').getByText('First task')).toBeVisible()
+
+  await page.evaluate(() => {
+    window.__quickKanbanStore.commit('SET_PENDING_CREATE', {
+      column_name: 'Open',
+      columnIndex: 0,
+      board_name: 'Browser Board',
+      form_mode: 'quick_entry',
+    })
+    window.__quickKanbanStore.dispatch('handleCardCreated', {
+      doc: {
+        name: 'TASK-NEW',
+        subject: 'Fresh task',
+        status: 'Open',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+  })
+
+  await expect(page.getByLabel('Cards in Open').locator('.kanban-card').first())
+    .toContainText('Fresh task')
+  await expect(page.getByLabel('Cards in Open').getByText('First task')).toBeVisible()
 })
 
 test('vertical gap between cards stays 8px', async ({ page }) => {
   await expect(page.locator('.kanban-card').first()).toHaveCSS('margin-bottom', '8px')
+})
+
+const loadRestrictedMoveFixture = async (page, policy = {}) => {
+  await page.addInitScript((config) => {
+    window.__configureQuickKanbanMovePolicyOnLoad = config
+  }, {
+    permissive: false,
+    forbiddenColumns: ['Done'],
+    reason: 'workflow_denied',
+    ...policy,
+  })
+  await page.goto('/e2e/fixture.html')
+  await expect(page.getByRole('heading', { name: /Open/ })).toBeVisible()
+  await waitUntilMoveReady(page)
+}
+
+test('returns a forbidden drag drop with rollback and a specific reason', async ({ page }) => {
+  await loadRestrictedMoveFixture(page)
+
+  const openCountBefore = await page.locator('.column-count').nth(0).innerText()
+  const source = await page.getByLabel('Drag First task').boundingBox()
+  const target = await page.getByText('Second task').boundingBox()
+  if (!source || !target) throw new Error('Drag coordinates are unavailable')
+
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(source.x + source.width / 2 + 8, source.y + source.height / 2 + 8, {
+    steps: 4,
+  })
+  await expect.poll(async () =>
+    page.evaluate(() => window.__getQuickKanbanDropStyles('Done')),
+  ).toMatchObject({
+    forbidden: true,
+    overlayVisible: true,
+  })
+  await expect.poll(async () =>
+    page.evaluate(() => window.__getQuickKanbanDropStyles('Open')),
+  ).toMatchObject({
+    allowed: true,
+    overlayVisible: false,
+  })
+
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 20 })
+  await page.mouse.up()
+
+  await expect(page.locator('.column-count').nth(0)).toHaveText(openCountBefore)
+  await expect(page.getByLabel('Cards in Open').getByText('First task')).toBeVisible()
+  await expect(page.getByLabel('Cards in Done').getByText('First task')).toHaveCount(0)
+  await expect.poll(() =>
+    page.evaluate(() => window.__quickKanbanAlerts.at(-1)?.indicator),
+  ).toBe('red')
+  await expect.poll(() =>
+    page.evaluate(() => window.__quickKanbanAlerts.at(-1)?.message),
+  ).toContain('Workflow State')
+  await expect.poll(async () =>
+    page.evaluate(() => window.__getQuickKanbanDropStyles('Done')),
+  ).toMatchObject({
+    forbidden: false,
+    overlayVisible: false,
+  })
+})
+
+test('shows readable drop highlights in light and dark themes', async ({ page }) => {
+  await loadRestrictedMoveFixture(page, { reason: 'workflow_denied' })
+
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => window.__setQuickKanbanTheme(value), theme)
+    const source = await page.getByLabel('Drag First task').boundingBox()
+    if (!source) throw new Error('Drag handle is unavailable')
+
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(source.x + source.width / 2 + 8, source.y + source.height / 2 + 8, {
+      steps: 4,
+    })
+
+    const styles = await page.evaluate(() => ({
+      open: window.__getQuickKanbanDropStyles('Open'),
+      done: window.__getQuickKanbanDropStyles('Done'),
+    }))
+    expect(styles.open.allowed).toBe(true)
+    expect(styles.done.forbidden).toBe(true)
+    expect(styles.done.overlayVisible).toBe(true)
+    expect(styles.done.overlayBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(styles.open.outlineColor).not.toBe('rgba(0, 0, 0, 0)')
+
+    await page.mouse.up()
+    await expect.poll(async () =>
+      page.evaluate(() => window.__getQuickKanbanDropStyles('Done')),
+    ).toMatchObject({
+      forbidden: false,
+      overlayVisible: false,
+    })
+  }
+})
+
+test('clears drop highlights after releasing without a cross-column move', async ({ page }) => {
+  await loadRestrictedMoveFixture(page, { reason: 'workflow_denied' })
+
+  const source = await page.getByLabel('Drag First task').boundingBox()
+  if (!source) throw new Error('Drag handle is unavailable')
+
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(source.x + source.width / 2 + 8, source.y + source.height / 2 + 8, {
+    steps: 4,
+  })
+  await expect.poll(async () =>
+    page.evaluate(() => window.__getQuickKanbanDropStyles('Open')?.allowed),
+  ).toBe(true)
+
+  await page.mouse.up()
+  await expect.poll(async () =>
+    page.evaluate(() => {
+      const open = window.__getQuickKanbanDropStyles('Open')
+      const done = window.__getQuickKanbanDropStyles('Done')
+      return !open?.allowed && !open?.forbidden && !done?.allowed && !done?.forbidden
+    }),
+  ).toBe(true)
 })

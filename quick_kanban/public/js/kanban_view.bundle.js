@@ -84,6 +84,32 @@ const getConfig = () => {
     return configPromise;
 };
 
+function normalizeBoardDoc(board) {
+    if (!board) {
+        return;
+    }
+
+    if (typeof board.fields === "string") {
+        try {
+            board.fields = JSON.parse(board.fields || "[]");
+        } catch {
+            board.fields = [];
+        }
+    }
+
+    if (!Array.isArray(board.fields)) {
+        board.fields = [];
+    }
+
+    if (typeof board.filters === "string") {
+        try {
+            board.filters_array = JSON.parse(board.filters || "[]");
+        } catch {
+            board.filters_array = [];
+        }
+    }
+}
+
 const QuickKanbanView = class KanbanView extends NativeKanbanView {
     async setup_defaults() {
         await super.setup_defaults();
@@ -107,6 +133,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         }
         if (!useBeta) return super.set_fields();
 
+        normalizeBoardDoc(this.board);
         await frappe.views.ListView.prototype.set_fields.call(this);
         this._add_field(this.card_meta.title_field);
         (this.board.fields || []).forEach((field) => this._add_field(field));
@@ -208,6 +235,30 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         } else if (board_name === this.kanban.board_name) {
             this.kanban.update(this.data);
         }
+    }
+
+    show_kanban_settings() {
+        normalizeBoardDoc(this.board);
+
+        const board_name = this.board_name;
+        const attachOpenBoardAction = () => {
+            const dialog = window.cur_dialog;
+            if (!dialog?.fields?.some?.((field) => field.fieldname === "show_labels")) {
+                return;
+            }
+
+            dialog.set_secondary_action_label(__("Open Kanban Board"));
+            dialog.set_secondary_action(() => {
+                dialog.hide();
+                frappe.set_route("Form", "Kanban Board", board_name);
+            });
+        };
+
+        if (typeof $ !== "undefined") {
+            $(document).one("frappe.ui.Dialog:shown", attachOpenBoardAction);
+        }
+
+        return super.show_kanban_settings();
     }
 };
 
