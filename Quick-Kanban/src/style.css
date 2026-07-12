@@ -398,6 +398,18 @@
   white-space: nowrap;
 }
 
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Percent"] {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Percent"] .progress {
+  height: 10px;
+  margin: 0;
+  width: 100%;
+}
+
 #kanbanapp .kanban-card-fields dd a {
   display: block;
   overflow: hidden;

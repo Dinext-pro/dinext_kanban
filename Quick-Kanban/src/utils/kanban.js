@@ -238,6 +238,46 @@ export function isNearScrollEnd(element, threshold = 48) {
   )
 }
 
+const CARD_FIELD_SANITIZE_CONFIG = {
+  ALLOWED_TAGS: ['a', 'span', 'strong', 'em', 'small', 'br', 'div'],
+  ALLOWED_ATTR: [
+    'href',
+    'title',
+    'class',
+    'target',
+    'rel',
+    'data-doctype',
+    'data-name',
+  ],
+}
+
+const PERCENT_PROGRESS_SANITIZE_CONFIG = {
+  ALLOWED_TAGS: ['div'],
+  ALLOWED_ATTR: [
+    'class',
+    'style',
+    'role',
+    'aria-valuenow',
+    'aria-valuemin',
+    'aria-valuemax',
+  ],
+}
+
+export function formatPercentProgress(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) {
+    return null
+  }
+
+  const pct = Math.min(100, Math.max(0, Math.round(numeric)))
+  return `<div class="progress" style="margin: 0px;">
+    <div class="progress-bar progress-bar-success" role="progressbar"
+      aria-valuenow="${pct}"
+      aria-valuemin="0" aria-valuemax="100" style="width: ${pct}%;">
+    </div>
+  </div>`
+}
+
 export function formatCardField(
   value,
   fieldMeta,
@@ -249,6 +289,14 @@ export function formatCardField(
     return '—'
   }
 
+  if (fieldMeta && normalizeFieldtype(fieldMeta) === 'Percent') {
+    const progressHtml = formatPercentProgress(value)
+    if (!progressHtml) {
+      return '—'
+    }
+    return DOMPurify.sanitize(progressHtml, PERCENT_PROGRESS_SANITIZE_CONFIG)
+  }
+
   const formatValue = fieldMeta && needsPreFormatTranslation(fieldMeta)
     ? translate(String(value), null, fieldMeta.parent)
     : value
@@ -256,16 +304,5 @@ export function formatCardField(
   const formatted = fieldMeta && formatter
     ? formatter(formatValue, fieldMeta, {}, card)
     : String(formatValue)
-  return DOMPurify.sanitize(String(formatted), {
-    ALLOWED_TAGS: ['a', 'span', 'strong', 'em', 'small', 'br', 'div'],
-    ALLOWED_ATTR: [
-      'href',
-      'title',
-      'class',
-      'target',
-      'rel',
-      'data-doctype',
-      'data-name',
-    ],
-  })
+  return DOMPurify.sanitize(String(formatted), CARD_FIELD_SANITIZE_CONFIG)
 }
