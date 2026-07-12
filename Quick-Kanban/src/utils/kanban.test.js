@@ -204,6 +204,34 @@ describe('formatCardField', () => {
     expect(formatCardField(null, null)).toBe('—')
   })
 
+  test('renders Percent fields as a Frappe progress bar', () => {
+    const meta = { fieldtype: 'Percent', fieldname: 'progress' }
+    const formatter = vi.fn()
+
+    const result = formatCardField(75, meta, formatter, {})
+
+    expect(formatter).not.toHaveBeenCalled()
+    expect(result).toContain('class="progress"')
+    expect(result).toContain('progress-bar-success')
+    expect(result).toContain('width: 75%')
+    expect(result).toContain('aria-valuenow="75"')
+  })
+
+  test('clamps Percent progress bar width between 0 and 100', () => {
+    const meta = { fieldtype: 'Percent', fieldname: 'progress' }
+
+    expect(formatCardField(150, meta, vi.fn(), {})).toContain('width: 100%')
+    expect(formatCardField(-5, meta, vi.fn(), {})).toContain('width: 0%')
+  })
+
+  test('returns an em dash for invalid Percent values', () => {
+    const meta = { fieldtype: 'Percent', fieldname: 'progress' }
+
+    expect(formatCardField('not-a-number', meta, vi.fn(), {})).toBe('—')
+    expect(formatCardField(null, meta, vi.fn(), {})).toBe('—')
+    expect(formatCardField('', meta, vi.fn(), {})).toBe('—')
+  })
+
   test('sanitizes hostile formatter output while preserving safe Frappe markup', () => {
     const formatter = () => [
       '<a href="javascript:alert(1)" onclick="alert(1)">Unsafe</a>',
