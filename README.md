@@ -18,6 +18,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Оптимистичное обновление с откатом при недостаточных правах, ошибке валидации или конкурентном изменении документа.
 - Проверка прав чтения и записи на уровне DocType и поля.
 - Подсчёт общего количества карточек в каждой колонке с учётом текущих фильтров.
+- Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски.
 - Настройка цвета колонок и выделение значений выбранного поля.
 - Просмотр и изменение назначенных пользователей через стандартный Assign To Dialog.
 - Переход из диалога Kanban Settings к записи текущей Kanban Board.
@@ -44,16 +45,20 @@ bench --site <site-name> install-app quick_kanban
 Соберите assets и очистите cache:
 
 ```bash
-bench build --app quick_kanban
+cd apps/dinext_kanban && yarn workspace quick_kanban build
+cd ../.. && bench build --app quick_kanban
 bench --site <site-name> clear-cache
 ```
 
-Для Quick Kanban frontend сначала соберите Vue bundle, затем запустите `bench build` (или Frappe esbuild):
+Для Quick Kanban frontend недостаточно одной сборки Vite: Frappe отдаёт **хешированные** bundles из `quick_kanban/dist/`, поэтому после `yarn workspace quick_kanban build` обязательно запускайте `bench build --app quick_kanban` (или Frappe esbuild):
 
 ```bash
 yarn workspace quick_kanban build
 cd ../frappe && yarn run production --apps quick_kanban
+bench --site <site-name> clear-cache
 ```
+
+После обновления frontend в браузере выполните жёсткое обновление страницы Kanban (`Ctrl+Shift+R`), чтобы подтянуть новый bundle.
 
 ### Если `bench` падает с `ImportError: _check_nested_chain`
 
@@ -90,6 +95,8 @@ cd ../frappe && yarn run production --apps quick_kanban
 3. Добавьте поля, которые должны отображаться на карточке.
 4. При необходимости задайте `Highlighted Field` и таблицу цветов для его значений.
 5. Откройте Kanban-представление списка.
+
+Двойной клик по badge с количеством записей в заголовке колонки открывает ListView того же DocType с фильтром по значению колонки (например, `status = Open`) и текущими фильтрами доски из filter bar. Одиночный клик по счётчику ничего не делает.
 
 Карточку можно переместить drag-and-drop или через действие `Move to`. Перед перемещением клиент запрашивает `quick_kanban.api.get_move_options` и локально проверяет обязательные поля (`reqd`, `mandatory_depends_on`) для preview целевого состояния. Запрещённые назначения не показываются в меню и не принимают drop. При нескольких Workflow actions для одной колонки открывается диалог выбора action.
 
@@ -181,7 +188,7 @@ bench --site <site-name> run-tests --app quick_kanban
 yarn dev
 ```
 
-Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView`, а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда сборки копирует JavaScript и CSS в `quick_kanban/public/`; сгенерированные bundles должны соответствовать исходникам перед передачей изменений на проверку.
+Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView`, а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/`; `bench build --app quick_kanban` собирает хешированные bundles в `quick_kanban/dist/`, которые Frappe реально отдаёт на сайт. Перед review и деплоем выполняйте обе команды и проверяйте, что изменения попали в `dist/`.
 
 ## Локализация
 
@@ -266,6 +273,8 @@ flowchart LR
     Store --> Board[Vue-компоненты доски]
     Store --> ListAPI[frappe.desk.reportview.get]
     Store --> Totals[get_column_totals]
+    User --> ListNav[Двойной клик по счётчику колонки]
+    ListNav --> ListView[ListView с фильтром колонки]
     User --> Move[Перемещение карточки]
     Move --> Optimistic[Оптимистичное обновление Vuex]
     Optimistic --> MoveAPI[move_card]

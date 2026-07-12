@@ -19,6 +19,8 @@
           :class="Number.isFinite(columnTotal)
             ? getIndicatorClass(column.indicator)
             : 'loading'"
+          :title="__('Double-click to open filtered list')"
+          @dblclick.prevent="openListForColumn"
         >
           {{ totalDisplay }}
         </span>
@@ -143,6 +145,7 @@ import { useStore } from "vuex";
 import VirtualList from "vue-virtual-draglist";
 import { getIndicators } from "../../utils/colors";
 import { getColumnKey, getIndicatorClass, isNearScrollEnd } from "../../utils/kanban";
+import { openColumnListView } from "../../utils/listNavigation";
 import { useDismissibleMenu } from "../../utils/menu";
 import KanbanCard from "./KanbanCard.vue";
 import IndicatorPill from "../IndicatorPill.vue";
@@ -295,6 +298,10 @@ function startCreate(columnName) {
     columnIndex: props.columnIndex,
     column: props.column,
   })
+}
+
+function openListForColumn() {
+  openColumnListView(props.config, props.column)
 }
 
 function getColumnStyle(columnIndicator) {

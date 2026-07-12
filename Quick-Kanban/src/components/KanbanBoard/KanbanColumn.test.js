@@ -72,8 +72,18 @@ test('renders a labelled region with a card count and empty state', () => {
   expect(wrapper.get('h2').text()).toBe('Open')
   expect(wrapper.get('.column-count').text()).toBe('51')
   expect(wrapper.get('.column-count').classes()).toContain('gray')
+  expect(wrapper.get('.column-count').attributes('title')).toBe('Double-click to open filtered list')
   expect(wrapper.find('.kanban-column-header .quick-kanban-indicator-swatch').exists()).toBe(false)
   expect(wrapper.text()).toContain('No cards')
+})
+
+test('opens the filtered list view when the column count is double-clicked', async () => {
+  const { wrapper } = mountColumn()
+
+  await wrapper.get('.column-count').trigger('dblclick')
+
+  expect(frappe.route_options).toEqual({ status: 'Open' })
+  expect(frappe.set_route).toHaveBeenCalledWith('List', 'Task', 'List')
 })
 
 test('marks the column title draggable when board write access is granted', () => {

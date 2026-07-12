@@ -150,6 +150,10 @@
   font-weight: 600;
 }
 
+#kanbanapp .column-count:not(.loading) {
+  cursor: pointer;
+}
+
 #kanbanapp .column-count.loading {
   color: var(--text-muted);
   background: var(--control-bg);

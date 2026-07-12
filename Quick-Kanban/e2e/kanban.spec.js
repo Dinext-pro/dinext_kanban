@@ -38,6 +38,20 @@ test('shows the filtered server total before the column name', async ({ page }) 
   })
 })
 
+test('opens the filtered list view when the column count is double-clicked', async ({ page }) => {
+  const badge = page.locator('.kanban-column-header').first().locator('.column-count')
+  await badge.dispatchEvent('dblclick')
+
+  const navigation = await page.evaluate(() => window.__lastListRoute)
+  expect(navigation).toEqual({
+    route: ['List', 'Task', 'List'],
+    routeOptions: {
+      priority: 'High',
+      status: 'Open',
+    },
+  })
+})
+
 test('keeps column color palettes hidden until opened', async ({ page }) => {
   const grayOption = page.getByLabel('Set Open color to Gray')
   await expect(grayOption).toBeHidden()

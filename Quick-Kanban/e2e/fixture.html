@@ -310,6 +310,13 @@
           return Promise.resolve()
         },
         set_route: (...args) => {
+          if (args[0] === 'List' && args[2] === 'List') {
+            window.__lastListRoute = {
+              route: args,
+              routeOptions: { ...window.frappe.route_options },
+            }
+            return Promise.resolve()
+          }
           window.__lastNewDoc = {
             doctype: args[1],
             defaults: { ...window.frappe.route_options },
@@ -450,6 +457,7 @@
       }
       window.cur_list = {
         get_args: () => ({ doctype: 'Task', page_length: 100 }),
+        get_search_params: () => new URLSearchParams([['priority', 'High']]),
         board_perms: { write: true },
       }
       window.quickKanbanInitialData = {
