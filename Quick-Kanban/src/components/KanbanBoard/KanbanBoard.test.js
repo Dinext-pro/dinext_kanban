@@ -12,10 +12,15 @@ vi.mock('../../utils/cardRollbackAnimation', () => ({
     height: 96,
   })),
 }))
+vi.mock('../../utils/columnSortable', () => ({
+  createColumnSortable: vi.fn(() => ({ destroy: vi.fn() })),
+  destroyColumnSortable: vi.fn(),
+}))
 import {
   animateCardRollback,
   captureCardRect,
 } from '../../utils/cardRollbackAnimation'
+import { createColumnSortable } from '../../utils/columnSortable'
 
 function mountBoard() {
   const store = createKanbanStore()
@@ -27,7 +32,7 @@ function mountBoard() {
         KanbanColumn: {
           name: 'KanbanColumn',
           props: ['column'],
-          template: '<section class="column-stub">{{ column.column_name }}</section>',
+          template: '<section class="kanban-column column-stub" :data-column-value="column.column_name">{{ column.column_name }}</section>',
         },
       },
     },
@@ -43,6 +48,7 @@ beforeEach(() => {
   frappe.realtime.off.mockReset()
   animateCardRollback.mockClear()
   captureCardRect.mockClear()
+  createColumnSortable.mockClear()
 })
 
 afterEach(() => {
@@ -309,5 +315,72 @@ test('plays rollback animation after a failed drag drop', async () => {
     expect.objectContaining({ left: 420, top: 240 }),
     expect.objectContaining({ root: expect.anything() }),
   )
+  wrapper.unmount()
+})
+
+test('enables column reordering when board write access is granted', async () => {
+  window.quickKanbanInitialData = {
+    board: {
+      name: 'Task Board',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      columns: [
+        { name: 'open', column_name: 'Open' },
+        { name: 'done', column_name: 'Done' },
+      ],
+    },
+    cards: [],
+    args: { page_length: 100 },
+    board_perms: { write: true },
+  }
+  frappe.call.mockResolvedValue({ message: {} })
+  const store = createKanbanStore()
+  const wrapper = mount(KanbanBoard, {
+    global: {
+      plugins: [store],
+      stubs: {
+        KanbanColumn: {
+          name: 'KanbanColumn',
+          props: ['column'],
+          template: '<section class="kanban-column column-stub" :data-column-value="column.column_name">{{ column.column_name }}</section>',
+        },
+      },
+    },
+  })
+  await vi.waitFor(() => expect(createColumnSortable).toHaveBeenCalled())
+  wrapper.unmount()
+})
+
+test('does not enable column reordering without board write access', async () => {
+  window.quickKanbanInitialData = {
+    board: {
+      name: 'Task Board',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      columns: [
+        { name: 'open', column_name: 'Open' },
+        { name: 'done', column_name: 'Done' },
+      ],
+    },
+    cards: [],
+    args: { page_length: 100 },
+    board_perms: { write: false },
+  }
+  frappe.call.mockResolvedValue({ message: {} })
+  const store = createKanbanStore()
+  const wrapper = mount(KanbanBoard, {
+    global: {
+      plugins: [store],
+      stubs: {
+        KanbanColumn: {
+          name: 'KanbanColumn',
+          props: ['column'],
+          template: '<section class="kanban-column column-stub" :data-column-value="column.column_name">{{ column.column_name }}</section>',
+        },
+      },
+    },
+  })
+  await vi.waitFor(() => expect(store.state.columns.length).toBe(2))
+  expect(createColumnSortable).not.toHaveBeenCalled()
   wrapper.unmount()
 })

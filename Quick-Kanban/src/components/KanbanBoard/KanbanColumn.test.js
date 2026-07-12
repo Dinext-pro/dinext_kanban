@@ -25,7 +25,7 @@ function mountColumn(column = {
   display_name: 'Open',
   indicator: 'unknown',
   cards: [],
-}) {
+}, { boardPerms } = {}) {
   const store = createKanbanStore()
   store.commit('SET_KANBAN_CONFIG', {
     board_name: 'Task Board',
@@ -40,9 +40,12 @@ function mountColumn(column = {
   })
   store.commit('SET_COLUMNS', [column])
   store.commit('SET_COLUMN_TOTALS', {
-    [column.name || column.column_name]: 51,
+    [column.column_name]: 51,
   })
-  return mount(KanbanColumn, {
+  if (boardPerms !== undefined) {
+    store.commit('SET_BOARD_PERMS', boardPerms)
+  }
+  const wrapper = mount(KanbanColumn, {
     props: {
       column,
       columnIndex: 0,
@@ -58,10 +61,11 @@ function mountColumn(column = {
       },
     },
   })
+  return { wrapper, store }
 }
 
 test('renders a labelled region with a card count and empty state', () => {
-  const wrapper = mountColumn()
+  const { wrapper } = mountColumn()
 
   expect(wrapper.attributes('role')).toBe('region')
   expect(wrapper.attributes('aria-label')).toBe('Open, 51 records')
@@ -72,8 +76,23 @@ test('renders a labelled region with a card count and empty state', () => {
   expect(wrapper.text()).toContain('No cards')
 })
 
+test('marks the column title draggable when board write access is granted', () => {
+  const { wrapper } = mountColumn(undefined, { boardPerms: { write: true } })
+
+  expect(wrapper.attributes('data-column-value')).toBe('Open')
+  expect(wrapper.get('h2.column-title').classes()).toContain('column-title--draggable')
+  expect(wrapper.get('h2.column-title').attributes('title')).toBe('Drag to reorder column')
+})
+
+test('does not mark the column title draggable without board write access', () => {
+  const { wrapper } = mountColumn(undefined, { boardPerms: { write: false } })
+
+  expect(wrapper.get('h2.column-title').classes()).not.toContain('column-title--draggable')
+  expect(wrapper.get('h2.column-title').attributes('title')).toBeUndefined()
+})
+
 test('uses labelled buttons for adding cards and choosing colors', async () => {
-  const wrapper = mountColumn()
+  const { wrapper } = mountColumn()
 
   const addButton = wrapper.get('[aria-label="Add Task to Open"]')
   expect(addButton.element.tagName).toBe('BUTTON')
@@ -85,7 +104,7 @@ test('uses labelled buttons for adding cards and choosing colors', async () => {
 })
 
 test('synchronizes expanded state and closes the color menu with Escape', async () => {
-  const wrapper = mountColumn()
+  const { wrapper } = mountColumn()
   const trigger = wrapper.get('[aria-label="Change Open column color"]')
 
   expect(trigger.attributes('aria-expanded')).toBe('false')
@@ -101,7 +120,7 @@ test('synchronizes expanded state and closes the color menu with Escape', async 
 })
 
 test('keeps the color menu open for arrows and closes it on scroll', async () => {
-  const wrapper = mountColumn()
+  const { wrapper } = mountColumn()
   const trigger = wrapper.get('[aria-label="Change Open column color"]')
   await trigger.trigger('click')
 
@@ -118,7 +137,7 @@ test('keeps the color menu open for arrows and closes it on scroll', async () =>
 })
 
 test('closes the color menu on a non-arrow key without restoring focus', async () => {
-  const wrapper = mountColumn()
+  const { wrapper } = mountColumn()
   const outside = document.createElement('button')
   document.body.append(outside)
   await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
@@ -145,7 +164,7 @@ test('renders translated column labels while dispatching create from the column'
     )
   }
 
-  const wrapper = mountColumn({
+  const { wrapper } = mountColumn({
     name: 'open',
     column_name: 'Open',
     display_name: 'Открыто',
@@ -178,7 +197,7 @@ test('forwards the drag origin supplied by the virtual list', async () => {
     indicator: 'gray',
     cards: [{ name: 'TASK-1' }],
   }
-  const wrapper = mountColumn(column)
+  const { wrapper } = mountColumn(column)
 
   wrapper.findComponent(VirtualList).vm.$emit('drag', {
     key: 'TASK-1',
@@ -239,10 +258,10 @@ test('loads the next page only when this column reaches the bottom', async () =>
     indicator: 'gray',
     cards: [{ name: 'TASK-1' }],
   }
-  const wrapper = mountColumn(column)
+  const { wrapper } = mountColumn(column)
   const store = wrapper.vm.$store
   store.commit('SET_COLUMN_PAGINATION', {
-    open: { offset: 1, loading: false, hasMore: true },
+    Open: { offset: 1, loading: false, hasMore: true },
   })
   const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue()
 

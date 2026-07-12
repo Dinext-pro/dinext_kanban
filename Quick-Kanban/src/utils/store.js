@@ -2,6 +2,7 @@ import { createStore } from 'vuex'
 import {
   attachColumnDisplayNames,
   groupCardsByColumn,
+  getColumnKey,
   mapAssignments,
   normalizeBoardConfig,
 } from './kanban'
@@ -44,6 +45,43 @@ const emptyConfig = () => ({
 
 function withColumnDisplayNames(columns, config) {
   return attachColumnDisplayNames(columns, config.status_field_meta)
+}
+
+function resolveBoardPerms(overrides) {
+  if (overrides && typeof overrides === 'object') {
+    return { ...overrides, write: Boolean(overrides.write) }
+  }
+  const curListPerms = globalThis.window?.cur_list?.board_perms
+  if (curListPerms && typeof curListPerms === 'object') {
+    return { ...curListPerms, write: Boolean(curListPerms.write) }
+  }
+  return { write: false }
+}
+
+function mergeColumnsPreservingCards(savedColumns, currentColumns, config) {
+  const cardsByName = new Map(
+    currentColumns.map((column) => [column.column_name, column.cards || []]),
+  )
+  return withColumnDisplayNames(
+    savedColumns.map((column) => ({
+      ...column,
+      cards: cardsByName.get(column.column_name) || [],
+    })),
+    config,
+  )
+}
+
+function reorderColumnsByName(columns, columnNames) {
+  const byName = new Map(columns.map((column) => [column.column_name, column]))
+  const reordered = columnNames
+    .map((name) => byName.get(name))
+    .filter(Boolean)
+  for (const column of columns) {
+    if (!reordered.includes(column)) {
+      reordered.push(column)
+    }
+  }
+  return reordered
 }
 
 const getErrorMessage = (error) =>
@@ -284,10 +322,17 @@ export function createKanbanStore() {
       createOptionsByColumn: {},
       pendingCreate: null,
       recentCreatedCards: {},
+      boardPerms: { write: false },
     }),
     mutations: {
       SET_COLUMNS(state, columns) {
         state.columns = columns
+      },
+      SET_BOARD_PERMS(state, boardPerms) {
+        state.boardPerms = boardPerms
+      },
+      REORDER_COLUMNS(state, columnNames) {
+        state.columns = reorderColumnsByName(state.columns, columnNames)
       },
       SET_COLUMN_CARDS(state, { columnIndex, cards }) {
         state.columns[columnIndex].cards = cards
@@ -531,10 +576,16 @@ export function createKanbanStore() {
       },
     },
     actions: {
-      hydrateFromList({ commit, dispatch, state }, { board, cards = [], args = {} }) {
+      hydrateFromList({ commit, dispatch, state }, {
+        board,
+        cards = [],
+        args = {},
+        board_perms,
+      }) {
         commit('BEGIN_BOARD_CONTEXT')
         commit('SET_CONFIG_REQUEST_BOARD', '')
         commit('SET_LOADING', false)
+        commit('SET_BOARD_PERMS', resolveBoardPerms(board_perms))
         const config = normalizeBoardConfig(
           board,
           frappe.get_meta(board.reference_doctype),
@@ -615,6 +666,7 @@ export function createKanbanStore() {
             createColumnPagination(state.columns, true),
           )
           commit('SET_KANBAN_CONFIG', config)
+          commit('SET_BOARD_PERMS', resolveBoardPerms())
           if (globalThis.frappe?.workflow?.setup) {
             frappe.workflow.setup(board.reference_doctype)
           }
@@ -1257,10 +1309,50 @@ export function createKanbanStore() {
           throw error
         }
       },
+      async updateColumnOrder({ commit, state }, order) {
+        if (!Array.isArray(order) || order.length < 2) {
+          return
+        }
+
+        const previousOrder = state.columns.map((column) => column.column_name)
+        if (order.join('\0') === previousOrder.join('\0')) {
+          return
+        }
+
+        commit('REORDER_COLUMNS', order)
+        try {
+          const response = await frappe.call({
+            method: 'frappe.desk.doctype.kanban_board.kanban_board.update_column_order',
+            args: {
+              board_name: state.config.board_name,
+              order: JSON.stringify(order),
+            },
+          })
+          const savedBoard = response.message
+          if (savedBoard?.columns) {
+            commit(
+              'SET_COLUMNS',
+              mergeColumnsPreservingCards(
+                savedBoard.columns,
+                state.columns,
+                state.config,
+              ),
+            )
+          }
+        } catch (error) {
+          commit('REORDER_COLUMNS', previousOrder)
+          frappe.show_alert({
+            message: __('Could not reorder the columns.'),
+            indicator: 'red',
+          })
+          throw error
+        }
+      },
     },
     getters: {
       getColumns: (state) => state.columns,
       getConfig: (state) => state.config,
+      canEditBoard: (state) => Boolean(state.boardPerms?.write),
       isMovePending: (state) => (cardName) => Boolean(state.pendingMoves[cardName]),
       isMoveOptionsLoading: (state) => state.moveOptionsLoading,
       getCardMoveOptions: (state) => (cardName) => state.moveOptionsByCard[cardName],
@@ -1331,10 +1423,6 @@ function mergeCards(existingCards, newCards) {
     cards.set(card.name, card)
   }
   return [...cards.values()]
-}
-
-function getColumnKey(column) {
-  return column.name || column.column_name
 }
 
 function createColumnPagination(columns, hasMore) {

@@ -1188,3 +1188,18 @@ test('clears drop highlights after releasing without a cross-column move', async
     }),
   ).toBe(true)
 })
+
+test('persists column order when the board is reordered with write access', async ({ page }) => {
+  await expect(page.locator('.column-title--draggable')).toHaveCount(2)
+
+  await page.evaluate(async () => {
+    await window.__reorderQuickKanbanColumns(['Done', 'Open'])
+  })
+
+  await expect.poll(() => page.evaluate(() => window.__columnOrderCalls?.length || 0))
+    .toBeGreaterThan(0)
+
+  const lastCall = await page.evaluate(() => window.__columnOrderCalls.at(-1))
+  expect(lastCall.board_name).toBe('Browser Board')
+  expect(lastCall.order).toBe(JSON.stringify(['Done', 'Open']))
+})

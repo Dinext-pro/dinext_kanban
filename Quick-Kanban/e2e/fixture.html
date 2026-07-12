@@ -89,6 +89,9 @@
         ]),
         user_info: {},
       })
+      window.__columnOrderCalls = []
+      window.__quickKanbanForceColumnSortableFallback = true
+      window.__quickKanbanExposeColumnReorder = true
       window.__setQuickKanbanTheme = (theme) => {
         document.documentElement.dataset.theme = theme
       }
@@ -233,6 +236,30 @@
                   },
                 ]),
               ),
+            }
+          }
+          if (method === 'frappe.desk.doctype.kanban_board.kanban_board.update_column_order') {
+            window.__columnOrderCalls = window.__columnOrderCalls || []
+            window.__columnOrderCalls.push(args)
+            if (window.__failNextColumnReorder) {
+              window.__failNextColumnReorder = false
+              throw new Error('Column reorder rejected by fixture')
+            }
+            const order = JSON.parse(args.order)
+            const board = window.quickKanbanInitialData?.board
+            if (board?.columns) {
+              const byName = Object.fromEntries(
+                board.columns.map((column) => [column.column_name, column]),
+              )
+              board.columns = order
+                .map((name) => byName[name])
+                .filter(Boolean)
+            }
+            return {
+              message: {
+                name: args.board_name,
+                columns: board?.columns || [],
+              },
             }
           }
           return { message: {} }
@@ -423,6 +450,7 @@
       }
       window.cur_list = {
         get_args: () => ({ doctype: 'Task', page_length: 100 }),
+        board_perms: { write: true },
       }
       window.quickKanbanInitialData = {
         board: {
@@ -459,6 +487,7 @@
           },
         ],
         args: { doctype: 'Task', page_length: 100 },
+        board_perms: { write: true },
       }
 
       await import('/src/main.js')

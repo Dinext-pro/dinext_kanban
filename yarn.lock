@@ -1849,6 +1849,11 @@ sortable-dnd@latest:
   resolved "https://registry.yarnpkg.com/sortable-dnd/-/sortable-dnd-0.6.16.tgz#b446c5f83485435b5a6e34497d47200a2293e711"
   integrity sha512-oXrWO9ItzbpFQBqK5TnTdRzbuvFHqfweYizJ6rBV7XyZ99w9/7XeCvzouIMiIAOA2qhYENPxmCUVX45Hwr6WuA==
 
+sortablejs@^1.15.7:
+  version "1.15.7"
+  resolved "https://registry.yarnpkg.com/sortablejs/-/sortablejs-1.15.7.tgz#83a0bddc472117ee328dea20b2e6f490fed20f86"
+  integrity sha512-Kk8wLQPlS+yi1ZEf48a4+fzHa4yxjC30M/Sr2AnQu+f/MPwvvX9XjZ6OWejiz8crBsLwSq8GHqaxaET7u6ux0A==
+
 source-map-js@^1.2.0:
   version "1.2.0"
   resolved "https://registry.yarnpkg.com/source-map-js/-/source-map-js-1.2.0.tgz#16b809c162517b5b8c3e7dcd315a2a5c2612b2af"

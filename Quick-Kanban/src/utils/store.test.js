@@ -103,7 +103,7 @@ describe('board loading', () => {
     expect(store.state.columns[0].cards[0]._assign).toEqual({
       'one@example.com': 'one@example.com',
     })
-    expect(store.state.columnPagination.open.offset).toBe(1)
+    expect(store.state.columnPagination.Open.offset).toBe(1)
   })
 
   test('tracks independent server offsets for hydrated columns', async () => {
@@ -120,12 +120,12 @@ describe('board loading', () => {
       args: { page_length: 3 },
     })
 
-    expect(store.state.columnPagination.open).toEqual({
+    expect(store.state.columnPagination.Open).toEqual({
       offset: 2,
       loading: false,
       hasMore: true,
     })
-    expect(store.state.columnPagination.done).toEqual({
+    expect(store.state.columnPagination.Done).toEqual({
       offset: 1,
       loading: false,
       hasMore: true,
@@ -143,7 +143,7 @@ describe('board loading', () => {
       ],
       args: { page_length: 2 },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 31, done: 1 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 31, Done: 1 })
     frappe.call.mockResolvedValue({
       message: {
         keys: ['name', 'subject', 'status'],
@@ -179,12 +179,12 @@ describe('board loading', () => {
     expect(store.state.columns[1].cards.map(({ name }) => name)).toEqual([
       'TASK-2',
     ])
-    expect(store.state.columnPagination.open).toEqual({
+    expect(store.state.columnPagination.Open).toEqual({
       offset: 3,
       loading: false,
       hasMore: false,
     })
-    expect(store.state.columnTotals).toEqual({ open: 31, done: 1 })
+    expect(store.state.columnTotals).toEqual({ Open: 31, Done: 1 })
     expect(frappe.update_user_info).toHaveBeenCalledWith({})
   })
 
@@ -219,7 +219,7 @@ describe('board loading', () => {
       },
     })
     expect(frappe.call).toHaveBeenCalledTimes(1)
-    expect(store.state.columnTotals).toEqual({ open: 51, done: 12 })
+    expect(store.state.columnTotals).toEqual({ Open: 51, Done: 12 })
   })
 
   test('enables pagination when totals reveal more cards in a hydrated column', async () => {
@@ -230,10 +230,10 @@ describe('board loading', () => {
       args: { page_length: 100 },
     })
 
-    store.commit('SET_COLUMN_TOTALS', { open: 51, done: 0 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 51, Done: 0 })
 
-    expect(store.state.columnPagination.open.hasMore).toBe(true)
-    expect(store.state.columnPagination.done.hasMore).toBe(false)
+    expect(store.state.columnPagination.Open.hasMore).toBe(true)
+    expect(store.state.columnPagination.Done.hasMore).toBe(false)
   })
 
   test('tops up every underfilled column to its filtered minimum', async () => {
@@ -253,7 +253,7 @@ describe('board loading', () => {
       cards: [...openCards, ...doneCards],
       args: { page_length: 100 },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 40, done: 18 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 40, Done: 18 })
     frappe.call.mockClear()
     frappe.call.mockResolvedValue({
       message: {
@@ -300,7 +300,7 @@ describe('board loading', () => {
       cards: [],
       args: { page_length: 100 },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 3, done: 0 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 3, Done: 0 })
     frappe.call.mockResolvedValue({
       message: {
         keys: ['name', 'subject', 'status'],
@@ -336,7 +336,7 @@ describe('board loading', () => {
       cards: initialCards,
       args: { page_length: 100 },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 20, done: 20 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 20, Done: 20 })
     frappe.call
       .mockRejectedValueOnce(new Error('Open unavailable'))
       .mockResolvedValueOnce({
@@ -361,7 +361,7 @@ describe('board loading', () => {
     ])
     expect(store.state.columns[0].cards).toHaveLength(5)
     expect(store.state.columns[1].cards).toHaveLength(15)
-    expect(store.state.columnPagination.open.hasMore).toBe(true)
+    expect(store.state.columnPagination.Open.hasMore).toBe(true)
   })
 
   test('disables pagination immediately when the known total is loaded', async () => {
@@ -382,7 +382,7 @@ describe('board loading', () => {
 
     await store.dispatch('fetchColumnTotals', { args: { doctype: 'Task' } })
 
-    expect(store.state.columnPagination.open.hasMore).toBe(false)
+    expect(store.state.columnPagination.Open.hasMore).toBe(false)
   })
 
   test('discards totals returned for obsolete filters', async () => {
@@ -408,7 +408,7 @@ describe('board loading', () => {
     oldCounts.resolve({ message: { Open: 99, Done: 88 } })
     await expect(oldRequest).resolves.toBe(false)
 
-    expect(store.state.columnTotals).toEqual({ open: 7, done: 3 })
+    expect(store.state.columnTotals).toEqual({ Open: 7, Done: 3 })
   })
 
   test('does not let pre-move count responses overwrite adjusted totals', async () => {
@@ -424,7 +424,7 @@ describe('board loading', () => {
       }],
       args: { page_length: 100 },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 51, done: 10 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 51, Done: 10 })
     seedMoveOptions(store)
     const oldCounts = deferred()
     frappe.call
@@ -442,7 +442,7 @@ describe('board loading', () => {
     oldCounts.resolve({ message: { Open: 99, Done: 88 } })
     await counting
 
-    expect(store.state.columnTotals).toEqual({ open: 50, done: 11 })
+    expect(store.state.columnTotals).toEqual({ Open: 50, Done: 11 })
   })
 
   test('stops on an exact final page when the server total is reached', async () => {
@@ -458,7 +458,7 @@ describe('board loading', () => {
       cards: initialCards,
       args: { page_length: 30 },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 60, done: 0 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 60, Done: 0 })
     frappe.call.mockResolvedValue({
       message: {
         keys: ['name', 'subject', 'status'],
@@ -473,7 +473,7 @@ describe('board loading', () => {
 
     await store.dispatch('loadColumnPage', { columnIndex: 0, args: {} })
 
-    expect(store.state.columnPagination.open).toEqual({
+    expect(store.state.columnPagination.Open).toEqual({
       offset: 60,
       loading: false,
       hasMore: false,
@@ -498,7 +498,7 @@ describe('board loading', () => {
       cards: [...openCards, ...doneCards],
       args: { page_length: 100 },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 150, done: 49 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 150, Done: 49 })
     frappe.call.mockClear()
     const makePage = (start, length) => ({
       message: {
@@ -519,13 +519,13 @@ describe('board loading', () => {
 
     for (const expectedOffset of [81, 111, 141, 150]) {
       await store.dispatch('loadColumnPage', { columnIndex: 0, args: {} })
-      expect(store.state.columnPagination.open.offset).toBe(expectedOffset)
+      expect(store.state.columnPagination.Open.offset).toBe(expectedOffset)
     }
     await store.dispatch('loadColumnPage', { columnIndex: 0, args: {} })
 
     expect(store.state.columns[0].cards).toHaveLength(150)
     expect(new Set(store.state.columns[0].cards.map(({ name }) => name)).size).toBe(150)
-    expect(store.state.columnPagination.open.hasMore).toBe(false)
+    expect(store.state.columnPagination.Open.hasMore).toBe(false)
     expect(frappe.call).toHaveBeenCalledTimes(4)
     expect(frappe.call.mock.calls.map(([request]) => request.args.start)).toEqual([
       51,
@@ -759,7 +759,7 @@ describe('board loading', () => {
     })
 
     expect(store.state.columns[0].cards[0].name).toBe('TASK-1')
-    expect(store.state.columnPagination.open).toEqual({
+    expect(store.state.columnPagination.Open).toEqual({
       offset: 100,
       loading: false,
       hasMore: true,
@@ -920,10 +920,10 @@ describe('card moves', () => {
     frappe.call.mockResolvedValue({ message: { status: 'Done' } })
     const store = hydratedStore()
     store.commit('SET_COLUMN_PAGINATION', {
-      open: { offset: 30, loading: false, hasMore: true },
-      done: { offset: 10, loading: false, hasMore: true },
+      Open: { offset: 30, loading: false, hasMore: true },
+      Done: { offset: 10, loading: false, hasMore: true },
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 51, done: 10 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 51, Done: 10 })
     seedMoveOptions(store)
 
     await store.dispatch('moveCard', {
@@ -936,9 +936,9 @@ describe('card moves', () => {
 
     expect(store.state.columns[0].cards).toEqual([])
     expect(store.state.columns[1].cards[0].status).toBe('Done')
-    expect(store.state.columnPagination.open.offset).toBe(29)
-    expect(store.state.columnPagination.done.offset).toBe(11)
-    expect(store.state.columnTotals).toEqual({ open: 50, done: 11 })
+    expect(store.state.columnPagination.Open.offset).toBe(29)
+    expect(store.state.columnPagination.Done.offset).toBe(11)
+    expect(store.state.columnTotals).toEqual({ Open: 50, Done: 11 })
     expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
       method: 'quick_kanban.api.move_card',
       args: expect.objectContaining({
@@ -1238,8 +1238,8 @@ describe('card moves', () => {
   test('does not move a card while either affected column is loading', async () => {
     const store = hydratedStore()
     store.commit('SET_COLUMN_PAGINATION', {
-      open: { offset: 1, loading: true, hasMore: true },
-      done: { offset: 0, loading: false, hasMore: true },
+      Open: { offset: 1, loading: true, hasMore: true },
+      Done: { offset: 0, loading: false, hasMore: true },
     })
 
     const result = await store.dispatch('moveCard', {
@@ -1341,7 +1341,7 @@ describe('card creation', () => {
       board_name: 'Task Board',
       form_mode: 'quick_entry',
     })
-    store.commit('SET_COLUMN_TOTALS', { open: 1, done: 0 })
+    store.commit('SET_COLUMN_TOTALS', { Open: 1, Done: 0 })
 
     const created = await store.dispatch('handleCardCreated', {
       doc: {
@@ -1467,5 +1467,106 @@ describe('card creation', () => {
 
     expect(store.state.columns[0].cards[0].name).toBe('TASK-NEW')
     expect(store.state.columns[0].cards[1].name).toBe('TASK-1')
+  })
+})
+
+describe('column reorder', () => {
+  function boardStore() {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [{ name: 'C1' }] },
+      { name: 'done', column_name: 'Done', cards: [{ name: 'C2' }] },
+      { name: 'review', column_name: 'Review', cards: [] },
+    ])
+    return store
+  }
+
+  test('reorders columns optimistically and persists through Frappe API', async () => {
+    frappe.call.mockResolvedValue({
+      message: {
+        columns: [
+          { name: 'done', column_name: 'Done' },
+          { name: 'open', column_name: 'Open' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+    })
+    const store = boardStore()
+
+    await store.dispatch('updateColumnOrder', ['Done', 'Open', 'Review'])
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+    expect(store.state.columns[0].cards[0].name).toBe('C2')
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.update_column_order',
+      args: {
+        board_name: 'Task Board',
+        order: JSON.stringify(['Done', 'Open', 'Review']),
+      },
+    }))
+  })
+
+  test('rolls back when column reorder fails', async () => {
+    frappe.call.mockRejectedValue(new Error('No write access'))
+    const store = boardStore()
+
+    await expect(
+      store.dispatch('updateColumnOrder', ['Review', 'Open', 'Done']),
+    ).rejects.toThrow('No write access')
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Open',
+      'Done',
+      'Review',
+    ])
+    expect(frappe.show_alert).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Could not reorder the columns.',
+    }))
+  })
+
+  test('hydrateFromList stores board permissions', async () => {
+    const store = createStore()
+
+    await store.dispatch('hydrateFromList', {
+      board: {
+        name: 'Task Board',
+        reference_doctype: 'Task',
+        field_name: 'status',
+        columns: [{ name: 'open', column_name: 'Open' }],
+      },
+      board_perms: { write: true },
+    })
+
+    expect(store.getters.canEditBoard).toBe(true)
+  })
+
+  test('keeps column totals after reorder when child row names change', async () => {
+    frappe.call.mockResolvedValue({
+      message: {
+        columns: [
+          { name: 'new-done-row', column_name: 'Done' },
+          { name: 'new-open-row', column_name: 'Open' },
+          { name: 'new-review-row', column_name: 'Review' },
+        ],
+      },
+    })
+    const store = boardStore()
+    store.commit('SET_COLUMN_TOTALS', { Open: 12, Done: 34, Review: 5 })
+
+    await store.dispatch('updateColumnOrder', ['Done', 'Open', 'Review'])
+
+    expect(store.state.columnTotals).toEqual({ Open: 12, Done: 34, Review: 5 })
   })
 })
