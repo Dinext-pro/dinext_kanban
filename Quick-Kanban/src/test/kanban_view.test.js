@@ -126,6 +126,7 @@ test('caps the native query and mounts once with its initial data', async () => 
     },
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: vi.fn(),
@@ -178,6 +179,7 @@ test('adds configured card fields before the first report request', async () => 
     },
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: vi.fn(),
@@ -210,6 +212,42 @@ test('adds configured card fields before the first report request', async () => 
   expect(view.get_fields().filter((field) => field === 'status')).toHaveLength(1)
 })
 
+test('adds color field when DocType defines color with fieldtype Color', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: {
+      bundled_asset: vi.fn(),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({
+      fields: [{ fieldname: 'color', fieldtype: 'Color', label: 'Color' }],
+    })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+          this._add_field('_assign')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+
+  await view.setup_defaults()
+  await view.set_fields()
+
+  expect(view.fields).toContain('color')
+})
+
 test('mounts beta assets when bootstrap lacks stylesheet helpers', async () => {
   window.quickKanbanBootstrap = {
     loadConfig: vi.fn().mockResolvedValue({
@@ -237,6 +275,7 @@ test('mounts beta assets when bootstrap lacks stylesheet helpers', async () => {
     },
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: vi.fn(),
@@ -322,6 +361,7 @@ test('hydrates when Vue is already mounted on the active board container', async
     assets: { bundled_asset: vi.fn() },
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: vi.fn(),
@@ -357,6 +397,7 @@ test('remounts onto the active board container when switching cached Kanban page
     assets: { bundled_asset: vi.fn() },
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: vi.fn(),
@@ -410,6 +451,7 @@ test('falls back to native Kanban when bootstrap asset is unavailable', async ()
     },
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: NativeBoard,

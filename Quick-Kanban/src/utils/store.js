@@ -39,6 +39,8 @@ const emptyConfig = () => ({
   highlighted_field_meta: null,
   fields: [],
   highlighted_field: '',
+  color_field: '',
+  color_field_meta: null,
   highlight_table: [],
   show_labels: false,
 })
