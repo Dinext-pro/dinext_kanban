@@ -121,6 +121,18 @@
   margin: 0;
 }
 
+#kanbanapp .column-title--draggable {
+  cursor: grab;
+}
+
+#kanbanapp .column-title--draggable:active {
+  cursor: grabbing;
+}
+
+#kanbanapp .sortable-column-ghost {
+  opacity: 0.4;
+}
+
 #kanbanapp .column-heading {
   display: flex;
   align-items: center;

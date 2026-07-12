@@ -156,6 +156,7 @@ test('caps the native query and mounts once with its initial data', async () => 
     board: view.board,
     cards: view.data,
     args: { doctype: 'Task', page_length: 100 },
+    board_perms: {},
   })
   expect(window.quickKanbanBootstrap.loadConfig).toHaveBeenCalledTimes(1)
   expect(frappeApi.assets.bundled_asset).toHaveBeenCalledWith('quick_kanban.bundle.js')
@@ -394,6 +395,7 @@ test('remounts onto the active board container when switching cached Kanban page
     board: secondView.board,
     cards: secondView.data,
     args: { doctype: 'Task', page_length: 0 },
+    board_perms: {},
   })
 })
 

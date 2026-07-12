@@ -19,6 +19,10 @@ function normalizeFieldtype(fieldMeta) {
   return fieldMeta?.fieldtype?.replace(/ /g, '') || ''
 }
 
+export function getColumnKey(column) {
+  return column?.column_name || column?.name
+}
+
 export function translateFieldLabel(fieldMeta, translate = globalThis.__) {
   if (!fieldMeta?.label) {
     return fieldMeta?.fieldname || ''

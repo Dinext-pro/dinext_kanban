@@ -167,6 +167,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             board: this.board,
             cards: this.data,
             args: this.get_args(),
+            board_perms: this.board_perms || {},
         };
         const mountNode = this.$result.find("#kanbanapp")[0] || null;
 

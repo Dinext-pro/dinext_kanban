@@ -20,7 +20,7 @@
     >
       <KanbanColumn
         v-for="(column, columnIndex) in columns"
-        :key="column.name"
+        :key="column.column_name"
         :ref="(el) => setColumnRef(columnIndex, el)"
         :column="column"
         :columnIndex="columnIndex"
@@ -40,9 +40,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, provide } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, provide, watch } from "vue";
 import { useStore } from "vuex";
 import KanbanColumn from "./KanbanColumn.vue";
+import {
+  createColumnSortable,
+  destroyColumnSortable,
+} from "../../utils/columnSortable";
 import {
   animateCardRollback,
   captureCardRect,
@@ -56,6 +60,7 @@ import {
 const store = useStore();
 const columns = computed(() => store.getters.getColumns);
 const config = computed(() => store.getters.getConfig);
+const canEditBoard = computed(() => store.getters.canEditBoard);
 const kanbanBoard = ref(null);
 const columnRefs = ref([])
 const loading = computed(() => store.state.loading)
@@ -64,6 +69,7 @@ const announcement = computed(() => store.state.announcement)
 const __ = globalThis.__
 let dragContext = null
 let hydrationToken = 0
+let columnSortable = null
 let onMouseDown
 let onMouseLeave
 let onMouseUp
@@ -121,6 +127,32 @@ async function scrollToMovedCard({ columnIndex, cardName, cardIndex }) {
 
 provide('scrollToMovedCard', scrollToMovedCard)
 
+function teardownColumnSortable() {
+  destroyColumnSortable(columnSortable)
+  columnSortable = null
+}
+
+function setupColumnSortable() {
+  teardownColumnSortable()
+  const board = kanbanBoard.value
+  if (!board || !canEditBoard.value || columns.value.length < 2) {
+    return
+  }
+  columnSortable = createColumnSortable(board, {
+    onReorder(order) {
+      store.dispatch('updateColumnOrder', order)
+    },
+  })
+}
+
+watch(
+  [canEditBoard, () => columns.value.length, () => config.value.board_name],
+  async () => {
+    await nextTick()
+    setupColumnSortable()
+  },
+)
+
 onMounted(() => {
   window.refreshKanbanBoard = refreshKanbanBoard;
   window.hydrateQuickKanban = hydrateQuickKanban;
@@ -131,6 +163,11 @@ onMounted(() => {
     refreshKanbanBoard();
   }
   bindClickDrag();
+  nextTick(() => setupColumnSortable())
+  if (globalThis.__quickKanbanExposeColumnReorder) {
+    globalThis.__reorderQuickKanbanColumns = (order) =>
+      store.dispatch('updateColumnOrder', order)
+  }
   onPointerUp = () => clearActiveDragVisual()
   onPointerCancel = () => clearActiveDragVisual()
   document.addEventListener('pointerup', onPointerUp)
@@ -138,6 +175,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  teardownColumnSortable()
   unbindClickDrag();
   if (onPointerUp) {
     document.removeEventListener('pointerup', onPointerUp)
@@ -147,6 +185,7 @@ onBeforeUnmount(() => {
   }
   delete window.refreshKanbanBoard
   delete window.hydrateQuickKanban
+  delete globalThis.__reorderQuickKanbanColumns
 });
 
 const refreshKanbanBoard = async (args, forceConfig = false) => {

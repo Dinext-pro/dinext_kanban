@@ -4,6 +4,7 @@
     :class="columnDropClasses"
     role="region"
     :aria-label="columnAriaLabel"
+    :data-column-value="column.column_name"
     :style="getColumnStyle(column.indicator)"
   >
     <div
@@ -21,7 +22,12 @@
         >
           {{ totalDisplay }}
         </span>
-        <h2 :id="headingId" class="column-title">
+        <h2
+          :id="headingId"
+          class="column-title"
+          :class="{ 'column-title--draggable': canEditBoard }"
+          :title="canEditBoard ? __('Drag to reorder column') : undefined"
+        >
           {{ columnLabel }}
         </h2>
       </div>
@@ -136,12 +142,13 @@ import { computed, nextTick, ref } from "vue";
 import { useStore } from "vuex";
 import VirtualList from "vue-virtual-draglist";
 import { getIndicators } from "../../utils/colors";
-import { getIndicatorClass, isNearScrollEnd } from "../../utils/kanban";
+import { getColumnKey, getIndicatorClass, isNearScrollEnd } from "../../utils/kanban";
 import { useDismissibleMenu } from "../../utils/menu";
 import KanbanCard from "./KanbanCard.vue";
 import IndicatorPill from "../IndicatorPill.vue";
 
 const store = useStore();
+const canEditBoard = computed(() => store.getters.canEditBoard)
 const cardsLimit = ref(30);
 const virtualListRef = ref(null)
 const colorMenuButton = ref(null)
@@ -227,14 +234,15 @@ const showForbiddenOverlay = computed(() => {
     columnIndex: props.columnIndex,
   })
 })
+const columnKey = computed(() => getColumnKey(props.column))
 const pagination = computed(
-  () => store.state.columnPagination[props.column.name || props.column.column_name] || {
+  () => store.state.columnPagination[columnKey.value] || {
     loading: false,
     hasMore: false,
   },
 )
 const columnTotal = computed(
-  () => store.state.columnTotals[props.column.name || props.column.column_name],
+  () => store.state.columnTotals[columnKey.value],
 )
 const totalDisplay = computed(
   () => Number.isFinite(columnTotal.value) ? columnTotal.value : '…',

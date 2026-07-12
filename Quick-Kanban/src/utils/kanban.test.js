@@ -4,6 +4,7 @@ import {
   formatCardField,
   getCardFieldDisplayValue,
   getColumnDisplayName,
+  getColumnKey,
   getIndicatorClass,
   groupCardsByColumn,
   isNearScrollEnd,
@@ -26,6 +27,13 @@ function mockTranslate(message, _values, context) {
   const key = context ? `${message}::${context}` : message
   return translationMap[key] || translationMap[message] || message
 }
+
+describe('getColumnKey', () => {
+  test('prefers column_name over child row name', () => {
+    expect(getColumnKey({ name: 'abc123', column_name: 'Open' })).toBe('Open')
+    expect(getColumnKey({ name: 'xyz789', column_name: 'Done' })).toBe('Done')
+  })
+})
 
 describe('normalizeBoardConfig', () => {
   test('normalizes missing optional values and includes the highlighted field', () => {
