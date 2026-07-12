@@ -12,6 +12,9 @@ vi.mock('../../utils/cardRollbackAnimation', () => ({
     height: 96,
   })),
 }))
+vi.mock('../../utils/cardMoveFlash', () => ({
+  flashMovedCard: vi.fn(() => Promise.resolve(true)),
+}))
 vi.mock('../../utils/columnSortable', () => ({
   createColumnSortable: vi.fn(() => ({ destroy: vi.fn() })),
   destroyColumnSortable: vi.fn(),
@@ -20,6 +23,7 @@ import {
   animateCardRollback,
   captureCardRect,
 } from '../../utils/cardRollbackAnimation'
+import { flashMovedCard } from '../../utils/cardMoveFlash'
 import { createColumnSortable } from '../../utils/columnSortable'
 
 function mountBoard() {
@@ -48,6 +52,7 @@ beforeEach(() => {
   frappe.realtime.off.mockReset()
   animateCardRollback.mockClear()
   captureCardRect.mockClear()
+  flashMovedCard.mockClear()
   createColumnSortable.mockClear()
 })
 
@@ -315,6 +320,43 @@ test('plays rollback animation after a failed drag drop', async () => {
     expect.objectContaining({ left: 420, top: 240 }),
     expect.objectContaining({ root: expect.anything() }),
   )
+  await vi.waitFor(() => expect(flashMovedCard).toHaveBeenCalledWith(
+    'TASK-1',
+    { outcome: 'failure' },
+  ))
+  wrapper.unmount()
+})
+
+test('flashes the card after a successful drag drop', async () => {
+  const { store, dispatch, wrapper } = mountBoard()
+  dispatch.mockImplementation((action) => {
+    if (action === 'persistMovedCard') {
+      return Promise.resolve({ ok: true })
+    }
+    return Promise.resolve()
+  })
+  store.commit('SET_COLUMNS', [
+    { name: 'open', column_name: 'Open', cards: [{ name: 'TASK-1' }] },
+    { name: 'done', column_name: 'Done', cards: [] },
+  ])
+  await wrapper.vm.$nextTick()
+  const columns = wrapper.findAllComponents({ name: 'KanbanColumn' })
+
+  columns[0].vm.$emit('dragstart', {
+    cardName: 'TASK-1',
+    fromColumn: 0,
+    fromIndex: 0,
+  })
+  columns[1].vm.$emit('drop', {
+    oldIndex: 0,
+    newIndex: 0,
+    event: { from: { id: '0' }, to: { id: '1' } },
+  })
+  await vi.waitFor(() => expect(flashMovedCard).toHaveBeenCalledWith(
+    'TASK-1',
+    { outcome: 'success' },
+  ))
+  expect(animateCardRollback).not.toHaveBeenCalled()
   wrapper.unmount()
 })
 

@@ -20,6 +20,10 @@
   --kanban-drop-allowed-outline: var(--primary, var(--blue-500, #2491ef));
   --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #2491ef) 12%, transparent);
   --kanban-drop-forbidden-overlay: rgb(23 23 23 / 0.28);
+  --kanban-move-flash-success-outline: var(--gray-400, #a3a3a3);
+  --kanban-move-flash-success-glow: color-mix(in srgb, var(--gray-400, #a3a3a3) 22%, transparent);
+  --kanban-move-flash-failure-outline: var(--orange-500, #f97316);
+  --kanban-move-flash-failure-glow: color-mix(in srgb, var(--orange-500, #f97316) 30%, transparent);
 }
 
 [data-theme="dark"] {
@@ -38,6 +42,10 @@
   --kanban-drop-allowed-outline: var(--primary, var(--blue-400, #7ec1ff));
   --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #7ec1ff) 18%, transparent);
   --kanban-drop-forbidden-overlay: rgb(0 0 0 / 0.42);
+  --kanban-move-flash-success-outline: var(--gray-500, #737373);
+  --kanban-move-flash-success-glow: color-mix(in srgb, var(--gray-500, #737373) 28%, transparent);
+  --kanban-move-flash-failure-outline: var(--orange-400, #fb923c);
+  --kanban-move-flash-failure-glow: color-mix(in srgb, var(--orange-400, #fb923c) 35%, transparent);
 }
 
 #kanbanapp {
@@ -603,6 +611,56 @@
   position: relative;
   z-index: 3;
   will-change: transform;
+}
+
+@keyframes kanban-card-move-flash {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 0 var(--kanban-move-flash-current-outline),
+      inset 0 0 0 0 var(--kanban-move-flash-current-glow),
+      0 1px 2px rgb(0 0 0 / 0.1);
+  }
+
+  25%,
+  75% {
+    box-shadow:
+      inset 0 0 0 2px var(--kanban-move-flash-current-outline),
+      inset 0 0 0 5px var(--kanban-move-flash-current-glow),
+      0 1px 2px rgb(0 0 0 / 0.1);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 0 0 0 var(--kanban-move-flash-current-outline),
+      inset 0 0 0 0 var(--kanban-move-flash-current-glow),
+      0 1px 2px rgb(0 0 0 / 0.1);
+  }
+}
+
+#kanbanapp .kanban-card-move-flash {
+  position: relative;
+  z-index: 2;
+  animation: kanban-card-move-flash 2.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#kanbanapp .kanban-card-move-flash--success {
+  --kanban-move-flash-current-outline: var(--kanban-move-flash-success-outline);
+  --kanban-move-flash-current-glow: var(--kanban-move-flash-success-glow);
+}
+
+#kanbanapp .kanban-card-move-flash--failure {
+  --kanban-move-flash-current-outline: var(--kanban-move-flash-failure-outline);
+  --kanban-move-flash-current-glow: var(--kanban-move-flash-failure-glow);
+}
+
+#kanbanapp .kanban-card-move-flash--instant {
+  position: relative;
+  z-index: 2;
+  box-shadow:
+    inset 0 0 0 2px var(--kanban-move-flash-current-outline),
+    inset 0 0 0 5px var(--kanban-move-flash-current-glow),
+    0 1px 2px rgb(0 0 0 / 0.1);
 }
 
 @media (max-width: 768px) {

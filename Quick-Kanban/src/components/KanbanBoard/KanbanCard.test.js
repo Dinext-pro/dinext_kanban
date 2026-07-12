@@ -3,6 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createKanbanStore, buildPermissiveMoveOptions } from '../../utils/store'
 import KanbanCard from './KanbanCard.vue'
 
+vi.mock('../../utils/cardMoveFlash', () => ({
+  flashMovedCard: vi.fn(() => Promise.resolve(true)),
+}))
+
+import { flashMovedCard } from '../../utils/cardMoveFlash'
+
 function seedMoveOptions(store) {
   store.commit('SET_MOVE_OPTIONS_BATCH', {
     options: {
@@ -71,6 +77,7 @@ beforeEach(() => {
   frappe.get_palette = vi.fn(() => ['--blue-100', '--blue-800'])
   frappe.ui.form.AssignToDialog.mockClear()
   frappe.ui.form.AssignmentDialog.mockClear()
+  flashMovedCard.mockClear()
 })
 
 test('renders a semantic card with labels and a dedicated drag handle', () => {
@@ -161,6 +168,87 @@ test('offers a keyboard-operable move control', async () => {
     toColumn: 1,
   }))
   expect(trigger.attributes('aria-expanded')).toBe('false')
+})
+
+test('flashes the card after a successful menu move', async () => {
+  const store = createStore()
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await wrapper.get('[aria-label="Move First task to Done"]').trigger('click')
+  await flushPromises()
+
+  expect(dispatch).toHaveBeenCalledWith('moveCard', expect.objectContaining({
+    cardName: 'TASK-1',
+    toColumn: 1,
+  }))
+  expect(flashMovedCard).toHaveBeenCalledWith('TASK-1', { outcome: 'success' })
+})
+
+test('flashes the card after a failed menu move', async () => {
+  const store = createStore()
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(false)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await wrapper.get('[aria-label="Move First task to Done"]').trigger('click')
+  await flushPromises()
+
+  expect(dispatch).toHaveBeenCalledWith('moveCard', expect.anything())
+  expect(flashMovedCard).toHaveBeenCalledWith('TASK-1', { outcome: 'failure' })
+})
+
+test('applies move flash classes from store state', () => {
+  const store = createStore()
+  store.commit('SET_CARD_MOVE_FLASH', {
+    cardName: 'TASK-1',
+    outcome: 'success',
+    instant: false,
+  })
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card-move-flash')
+  expect(wrapper.classes()).toContain('kanban-card-move-flash--success')
 })
 
 test('closes the move disclosure with Escape and restores trigger state', async () => {
