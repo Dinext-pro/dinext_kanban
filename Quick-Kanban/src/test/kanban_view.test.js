@@ -65,6 +65,19 @@ class NativeKanbanView {
     this.fields.push(this.board.field_name)
     return this.fields
   }
+
+  show_kanban_settings() {
+    window.cur_dialog = {
+      fields: [{ fieldname: 'show_labels' }],
+      set_secondary_action_label: vi.fn(),
+      set_secondary_action: vi.fn(),
+      hide: vi.fn(),
+      show: vi.fn(),
+    }
+    if (typeof globalThis.$ !== 'undefined') {
+      globalThis.$(document).trigger('frappe.ui.Dialog:shown')
+    }
+  }
 }
 
 beforeEach(() => {
@@ -73,6 +86,22 @@ beforeEach(() => {
   window.unmountQuickKanban = vi.fn()
   window.isQuickKanbanMountedOn = vi.fn(() => false)
   window.hydrateQuickKanban = vi.fn()
+  window.cur_dialog = null
+  const documentEventHandlers = {}
+  globalThis.__documentEventHandlers = documentEventHandlers
+  globalThis.$ = vi.fn((target) => {
+    if (target !== document) {
+      return { one: vi.fn(), trigger: vi.fn() }
+    }
+    return {
+      one: vi.fn((event, handler) => {
+        documentEventHandlers[event] = handler
+      }),
+      trigger: vi.fn((event) => {
+        documentEventHandlers[event]?.()
+      }),
+    }
+  })
   window.quickKanbanBootstrap = {
     loadConfig: vi.fn().mockResolvedValue({
       kanban_beta: 1,
@@ -398,4 +427,94 @@ test('falls back to native Kanban when bootstrap asset is unavailable', async ()
 
   expect(() => view.render()).not.toThrow()
   await vi.waitFor(() => expect(NativeBoard).toHaveBeenCalledTimes(1))
+})
+
+function createKanbanSettingsFrappeApi(options = {}) {
+  const boardName = options.board_name || 'Task Board'
+  const setRoute = vi.fn()
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: { bundled_asset: vi.fn() },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    set_route: setRoute,
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView({ board_name: boardName })
+  return { view, setRoute, frappeApi }
+}
+
+test('adds Open Kanban Board secondary action when Kanban Settings opens', () => {
+  const { view } = createKanbanSettingsFrappeApi({ board_name: 'My Task Board' })
+
+  view.show_kanban_settings()
+
+  expect(window.cur_dialog.set_secondary_action_label).toHaveBeenCalledWith('Open Kanban Board')
+  expect(window.cur_dialog.set_secondary_action).toHaveBeenCalledTimes(1)
+})
+
+test('navigates to the current Kanban Board form and closes the settings dialog', () => {
+  const { view, setRoute } = createKanbanSettingsFrappeApi({ board_name: 'My Task Board' })
+
+  view.show_kanban_settings()
+
+  const secondaryAction = window.cur_dialog.set_secondary_action.mock.calls[0][0]
+  secondaryAction()
+
+  expect(window.cur_dialog.hide).toHaveBeenCalledTimes(1)
+  expect(setRoute).toHaveBeenCalledWith('Form', 'Kanban Board', 'My Task Board')
+})
+
+test('parses serialized board.fields before opening Kanban Settings', () => {
+  const { view } = createKanbanSettingsFrappeApi()
+  view.board.fields = '["expected_end_date","project"]'
+
+  view.show_kanban_settings()
+
+  expect(view.board.fields).toEqual(['expected_end_date', 'project'])
+})
+
+test('does not attach Open Kanban Board action to unrelated dialogs', () => {
+  const { view } = createKanbanSettingsFrappeApi()
+  const nativeShow = NativeKanbanView.prototype.show_kanban_settings
+  NativeKanbanView.prototype.show_kanban_settings = vi.fn()
+
+  try {
+    view.show_kanban_settings()
+    const attachHandler = globalThis.__documentEventHandlers['frappe.ui.Dialog:shown']
+
+    window.cur_dialog = {
+      fields: [{ fieldname: 'other_field' }],
+      set_secondary_action_label: vi.fn(),
+      set_secondary_action: vi.fn(),
+    }
+    attachHandler()
+    expect(window.cur_dialog.set_secondary_action_label).not.toHaveBeenCalled()
+    expect(window.cur_dialog.set_secondary_action).not.toHaveBeenCalled()
+
+    window.cur_dialog = {
+      fields: [{ fieldname: 'show_labels' }],
+      set_secondary_action_label: vi.fn(),
+      set_secondary_action: vi.fn(),
+      hide: vi.fn(),
+    }
+    attachHandler()
+    expect(window.cur_dialog.set_secondary_action_label).toHaveBeenCalledWith('Open Kanban Board')
+  } finally {
+    NativeKanbanView.prototype.show_kanban_settings = nativeShow
+  }
 })

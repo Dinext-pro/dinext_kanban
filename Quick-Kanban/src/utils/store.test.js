@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { createKanbanStore } from './store'
+import { createKanbanStore, buildPermissiveMoveOptions } from './store'
 
 const boardDocument = {
   name: 'Task Board',
@@ -22,6 +22,30 @@ function deferred() {
   return { promise, reject, resolve }
 }
 
+function seedMoveOptions(store, names = []) {
+  const cardNames = names.length
+    ? names
+    : collectCardNames(store)
+  store.commit('SET_MOVE_OPTIONS_BATCH', {
+    options: Object.fromEntries(
+      cardNames.map((name) => [name, buildPermissiveMoveOptions(store.state)]),
+    ),
+    generation: store.state.moveOptionsGeneration,
+  })
+}
+
+function collectCardNames(store) {
+  const names = []
+  for (const column of store.state.columns) {
+    for (const card of column.cards || []) {
+      if (card?.name) {
+        names.push(card.name)
+      }
+    }
+  }
+  return names
+}
+
 function createStore() {
   frappe.get_meta.mockReturnValue({ title_field: 'subject' })
   return createKanbanStore()
@@ -34,6 +58,24 @@ beforeEach(() => {
   frappe.update_user_info.mockClear()
   frappe.avatar_group.mockClear()
   frappe.boot.user_info = {}
+  frappe.call.mockImplementation(async ({ method }) => {
+    if (method === 'quick_kanban.api.get_move_options') {
+      return { message: {} }
+    }
+    if (method === 'quick_kanban.api.get_create_options') {
+      return {
+        message: {
+          Open: {
+            allowed: true,
+            form_mode: 'quick_entry',
+            missing_mandatory: [],
+            missing_fieldnames: [],
+          },
+        },
+      }
+    }
+    return { message: {} }
+  })
 })
 
 describe('board loading', () => {
@@ -54,7 +96,9 @@ describe('board loading', () => {
       args: { page_length: 100 },
     })
 
-    expect(frappe.call).not.toHaveBeenCalled()
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'quick_kanban.api.get_move_options',
+    }))
     expect(store.state.config.board_name).toBe('Task Board')
     expect(store.state.columns[0].cards[0]._assign).toEqual({
       'one@example.com': 'one@example.com',
@@ -155,6 +199,7 @@ describe('board loading', () => {
     frappe.call
       .mockResolvedValueOnce({ message: { Open: 51, Done: 12 } })
 
+    frappe.call.mockClear()
     await store.dispatch('fetchColumnTotals', {
       args: {
         doctype: 'Task',
@@ -209,6 +254,7 @@ describe('board loading', () => {
       args: { page_length: 100 },
     })
     store.commit('SET_COLUMN_TOTALS', { open: 40, done: 18 })
+    frappe.call.mockClear()
     frappe.call.mockResolvedValue({
       message: {
         keys: ['name', 'subject', 'status'],
@@ -267,6 +313,7 @@ describe('board loading', () => {
       },
     })
 
+    frappe.call.mockClear()
     await store.dispatch('topUpInitialColumns', { args: { doctype: 'Task' } })
 
     expect(store.state.columns[0].cards).toHaveLength(3)
@@ -378,6 +425,7 @@ describe('board loading', () => {
       args: { page_length: 100 },
     })
     store.commit('SET_COLUMN_TOTALS', { open: 51, done: 10 })
+    seedMoveOptions(store)
     const oldCounts = deferred()
     frappe.call
       .mockImplementationOnce(() => oldCounts.promise)
@@ -451,6 +499,7 @@ describe('board loading', () => {
       args: { page_length: 100 },
     })
     store.commit('SET_COLUMN_TOTALS', { open: 150, done: 49 })
+    frappe.call.mockClear()
     const makePage = (start, length) => ({
       message: {
         keys: ['name', 'subject', 'status'],
@@ -498,6 +547,7 @@ describe('board loading', () => {
       })),
       args: { page_length: 2 },
     })
+    frappe.call.mockClear()
     const page = deferred()
     frappe.call.mockImplementationOnce(() => page.promise)
 
@@ -561,7 +611,7 @@ describe('board loading', () => {
     await store.dispatch('ensureBoard', { board_name: 'Task Board' })
     await store.dispatch('ensureBoard', { board_name: 'Task Board' })
 
-    expect(frappe.call).toHaveBeenCalledTimes(1)
+    expect(frappe.call).toHaveBeenCalledTimes(2)
     expect(store.state.config.board_name).toBe('Task Board')
   })
 
@@ -693,6 +743,7 @@ describe('board loading', () => {
     ])
     frappe.call
       .mockResolvedValueOnce({ message: boardDocument })
+      .mockResolvedValueOnce({ message: { Open: { allowed: true, form_mode: 'quick_entry' } } })
       .mockResolvedValueOnce({
         message: {
           keys: ['name', 'subject', 'status'],
@@ -723,6 +774,7 @@ describe('board loading', () => {
   test('registers user info from reportview before grouping cards', async () => {
     frappe.call
       .mockResolvedValueOnce({ message: boardDocument })
+      .mockResolvedValueOnce({ message: { Open: { allowed: true, form_mode: 'quick_entry' } } })
       .mockResolvedValueOnce({
         message: {
           keys: ['name', 'subject', 'status', '_assign'],
@@ -795,9 +847,20 @@ describe('board loading', () => {
     })
     const boardB = deferred()
     const boardA = deferred()
-    frappe.call
-      .mockImplementationOnce(() => boardB.promise)
-      .mockImplementationOnce(() => boardA.promise)
+    frappe.call.mockClear()
+    frappe.call.mockImplementation(({ method }) => {
+      if (method === 'quick_kanban.api.get_create_options') {
+        return Promise.resolve({ message: { Open: { allowed: true, form_mode: 'quick_entry' } } })
+      }
+      if (method === 'frappe.client.get') {
+        const request = frappe.call.mock.calls.at(-1)?.[0]
+        if (request?.args?.name === 'Board B') {
+          return boardB.promise
+        }
+        return boardA.promise
+      }
+      return Promise.resolve({ message: {} })
+    })
 
     const openingB = store.dispatch('ensureBoard', { board_name: 'Board B' })
     const reopeningA = store.dispatch('ensureBoard', { board_name: 'Task Board' })
@@ -806,7 +869,10 @@ describe('board loading', () => {
     boardB.resolve({ message: { ...boardDocument, name: 'Board B' } })
     await openingB
 
-    expect(frappe.call).toHaveBeenCalledTimes(2)
+    const boardGetCalls = frappe.call.mock.calls.filter(
+      ([{ method }]) => method === 'frappe.client.get',
+    )
+    expect(boardGetCalls).toHaveLength(2)
     expect(store.state.config.board_name).toBe('Task Board')
   })
 
@@ -846,6 +912,7 @@ describe('card moves', () => {
       },
       { name: 'done', column_name: 'Done', cards: [] },
     ])
+    seedMoveOptions(store)
     return store
   }
 
@@ -857,6 +924,7 @@ describe('card moves', () => {
       done: { offset: 10, loading: false, hasMore: true },
     })
     store.commit('SET_COLUMN_TOTALS', { open: 51, done: 10 })
+    seedMoveOptions(store)
 
     await store.dispatch('moveCard', {
       cardName: 'TASK-1',
@@ -869,15 +937,37 @@ describe('card moves', () => {
     expect(store.state.columns[0].cards).toEqual([])
     expect(store.state.columns[1].cards[0].status).toBe('Done')
     expect(store.state.columnPagination.open.offset).toBe(29)
-    expect(store.state.columnPagination.done.offset).toBe(10)
+    expect(store.state.columnPagination.done.offset).toBe(11)
     expect(store.state.columnTotals).toEqual({ open: 50, done: 11 })
     expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
       method: 'quick_kanban.api.move_card',
       args: expect.objectContaining({
+        board_name: 'Task Board',
         value: 'Done',
         expected_modified: '2026-07-10 10:00:00',
       }),
     }))
+  })
+
+  test('resyncs virtual lists after a menu move', async () => {
+    frappe.call.mockResolvedValue({ message: { modified: '2026-07-10 10:01:00' } })
+    const store = hydratedStore()
+    const sourceCardsBefore = store.state.columns[0].cards
+    const destinationCardsBefore = store.state.columns[1].cards
+    const syncGenerationBefore = store.state.dragSyncGeneration
+
+    await store.dispatch('moveCard', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      toColumn: 1,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+
+    expect(store.state.dragSyncGeneration).toBe(syncGenerationBefore + 1)
+    expect(store.state.columns[0].cards).not.toBe(sourceCardsBefore)
+    expect(store.state.columns[1].cards).not.toBe(destinationCardsBefore)
+    expect(store.state.columns[1].cards[0].name).toBe('TASK-1')
   })
 
   test('uses translated column labels in move alerts while preserving raw API values', async () => {
@@ -935,15 +1025,90 @@ describe('card moves', () => {
     const [card] = store.state.columns[0].cards.splice(0, 1)
     store.state.columns[1].cards.push(card)
 
-    await expect(store.dispatch('persistMovedCard', {
+    const result = await store.dispatch('persistMovedCard', {
       cardName: 'TASK-1',
       fromColumn: 0,
       toColumn: 1,
       fromIndex: 0,
-    })).rejects.toThrow('Conflict')
+    })
 
+    expect(result).toMatchObject({
+      ok: false,
+      needsAnimatedRollback: true,
+    })
     expect(store.state.columns[0].cards[0].name).toBe('TASK-1')
     expect(store.state.columns[1].cards).toEqual([])
+    expect(frappe.show_alert).toHaveBeenCalledWith({
+      message: 'Could not move card: Conflict',
+      indicator: 'red',
+    })
+  })
+
+  test('returns structured preflight failure for drag moves with toast', async () => {
+    const store = hydratedStore()
+    store.state.moveOptionsByCard['TASK-1'] = {
+      can_drag: true,
+      destinations: {
+        Open: {
+          allowed: true,
+          mode: 'field_update',
+          actions: [],
+          missing_mandatory: [],
+        },
+        Done: {
+          allowed: false,
+          reason: 'workflow_denied',
+          mode: 'field_update',
+          actions: [],
+          missing_mandatory: [],
+        },
+      },
+    }
+    const [card] = store.state.columns[0].cards.splice(0, 1)
+    store.state.columns[1].cards.push(card)
+
+    const result = await store.dispatch('persistMovedCard', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      toColumn: 1,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      needsAnimatedRollback: true,
+      preflight: { reason: 'workflow_denied' },
+    })
+    expect(store.state.columns[0].cards[0].name).toBe('TASK-1')
+    expect(frappe.show_alert).toHaveBeenCalledWith(expect.objectContaining({
+      indicator: 'red',
+    }))
+    expect(frappe.call).not.toHaveBeenCalledWith(expect.objectContaining({
+      method: 'quick_kanban.api.move_card',
+    }))
+  })
+
+  test('shows mandatory field toast once for menu moves', async () => {
+    const store = hydratedStore()
+    store.state.moveOptionsByCard['TASK-1'].destinations.Done.missing_mandatory = [
+      'Priority',
+    ]
+
+    const result = await store.dispatch('moveCard', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      toColumn: 1,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+
+    expect(result).toBe(false)
+    expect(frappe.show_alert).toHaveBeenCalledTimes(1)
+    expect(frappe.show_alert).toHaveBeenCalledWith({
+      message: 'Mandatory fields required: Priority',
+      indicator: 'red',
+    })
   })
 
   test('refreshes assignments for one card without refetching the board', async () => {
@@ -992,6 +1157,29 @@ describe('card moves', () => {
     })
 
     expect(store.state.columns[1].cards.map(({ name }) => name)).toEqual(['TASK-2'])
+  })
+
+  test('blocks move when mandatory fields are missing', async () => {
+    const store = hydratedStore()
+    store.state.moveOptionsByCard['TASK-1'].destinations.Done.missing_mandatory = [
+      'Priority',
+    ]
+
+    const result = await store.dispatch('moveCard', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      toColumn: 1,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+
+    expect(result).toBe(false)
+    expect(frappe.call).not.toHaveBeenCalled()
+    expect(store.state.columns[0].cards[0].name).toBe('TASK-1')
+    expect(frappe.show_alert).toHaveBeenCalledWith({
+      message: 'Mandatory fields required: Priority',
+      indicator: 'red',
+    })
   })
 
   test('does not roll a failed move into a board opened afterwards', async () => {
@@ -1065,5 +1253,219 @@ describe('card moves', () => {
     expect(result).toBe(false)
     expect(frappe.call).not.toHaveBeenCalled()
     expect(store.state.columns[0].cards[0].name).toBe('TASK-1')
+  })
+})
+
+describe('move options loading', () => {
+  test('requests move options in batches of 50 on initial hydrate', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue({ title_field: 'subject' })
+    const cards = Array.from({ length: 55 }, (_, index) => ({
+      name: `TASK-${index + 1}`,
+      subject: `Task ${index + 1}`,
+      status: 'Open',
+    }))
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.get_move_options') {
+        return {
+          message: Object.fromEntries(
+            args.names.map((name) => [
+              name,
+              buildPermissiveMoveOptions(store.state),
+            ]),
+          ),
+        }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('hydrateFromList', {
+      board: boardDocument,
+      cards,
+      args: { page_length: 100 },
+    })
+
+    const moveCalls = frappe.call.mock.calls.filter(
+      ([{ method }]) => method === 'quick_kanban.api.get_move_options',
+    )
+    expect(moveCalls.length).toBeGreaterThanOrEqual(2)
+    for (const [{ args }] of moveCalls) {
+      expect(args.names.length).toBeLessThanOrEqual(50)
+    }
+    expect(
+      moveCalls.reduce((total, [{ args }]) => total + args.names.length, 0),
+    ).toBe(55)
+    expect(store.state.moveOptionsLoaded).toBe(true)
+  })
+})
+
+describe('card creation', () => {
+  function hydratedStore() {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+        }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_CREATE_OPTIONS_BY_COLUMN', {
+      Open: {
+        allowed: true,
+        form_mode: 'quick_entry',
+        missing_mandatory: [],
+        missing_fieldnames: [],
+      },
+    })
+    return store
+  }
+
+  test('prepends a created card to the initiating column', async () => {
+    const store = hydratedStore()
+    store.commit('SET_PENDING_CREATE', {
+      column_name: 'Open',
+      columnIndex: 0,
+      board_name: 'Task Board',
+      form_mode: 'quick_entry',
+    })
+    store.commit('SET_COLUMN_TOTALS', { open: 1, done: 0 })
+
+    const created = await store.dispatch('handleCardCreated', {
+      doc: {
+        name: 'TASK-NEW',
+        subject: 'Fresh task',
+        status: 'Open',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+
+    expect(created).toBe(true)
+    expect(store.state.columns[0].cards[0].name).toBe('TASK-NEW')
+    expect(store.state.columns[0].cards[1].name).toBe('TASK-1')
+    expect(store.state.recentCreatedCards['TASK-NEW']).toBe('Open')
+    expect(store.state.pendingCreate).toBeNull()
+  })
+
+  test('prepends a created card to the Overdue column when status matches', async () => {
+    const store = hydratedStore()
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+        }],
+      },
+      { name: 'overdue', column_name: 'Overdue', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_PENDING_CREATE', {
+      column_name: 'Overdue',
+      columnIndex: 1,
+      board_name: 'Task Board',
+      form_mode: 'quick_entry',
+    })
+
+    const created = await store.dispatch('handleCardCreated', {
+      doc: {
+        name: 'TASK-OVERDUE',
+        subject: 'Late task',
+        status: 'Overdue',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+
+    expect(created).toBe(true)
+    expect(store.state.columns[1].cards[0].name).toBe('TASK-OVERDUE')
+    expect(store.state.recentCreatedCards['TASK-OVERDUE']).toBe('Overdue')
+    expect(store.state.pendingCreate).toBeNull()
+  })
+
+  test('does not prepend when saved status mismatches initiating column', async () => {
+    const store = hydratedStore()
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+        }],
+      },
+      { name: 'overdue', column_name: 'Overdue', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_PENDING_CREATE', {
+      column_name: 'Overdue',
+      columnIndex: 1,
+      board_name: 'Task Board',
+      form_mode: 'quick_entry',
+    })
+
+    const created = await store.dispatch('handleCardCreated', {
+      doc: {
+        name: 'TASK-WRONG',
+        subject: 'Wrong status task',
+        status: 'Open',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+
+    expect(created).toBe(false)
+    expect(store.state.columns[1].cards).toHaveLength(0)
+    expect(store.state.pendingCreate).toBeNull()
+  })
+
+  test('keeps recent creates pinned to the top after hydration', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      highlight_table: [],
+    })
+    store.commit('TRACK_RECENT_CREATED_CARD', {
+      cardName: 'TASK-NEW',
+      columnName: 'Open',
+    })
+    frappe.get_meta.mockReturnValue({ title_field: 'subject' })
+
+    await store.dispatch('hydrateFromList', {
+      board: boardDocument,
+      cards: [
+        {
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+        },
+        {
+          name: 'TASK-NEW',
+          subject: 'Fresh task',
+          status: 'Open',
+        },
+      ],
+      args: { page_length: 100 },
+    })
+
+    expect(store.state.columns[0].cards[0].name).toBe('TASK-NEW')
+    expect(store.state.columns[0].cards[1].name).toBe('TASK-1')
   })
 })

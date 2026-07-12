@@ -3,6 +3,20 @@ import { mount } from '@vue/test-utils'
 import { createKanbanStore } from '../../utils/store'
 import KanbanBoard from './KanbanBoard.vue'
 
+vi.mock('../../utils/cardRollbackAnimation', () => ({
+  animateCardRollback: vi.fn(() => Promise.resolve(true)),
+  captureCardRect: vi.fn(() => ({
+    left: 420,
+    top: 240,
+    width: 180,
+    height: 96,
+  })),
+}))
+import {
+  animateCardRollback,
+  captureCardRect,
+} from '../../utils/cardRollbackAnimation'
+
 function mountBoard() {
   const store = createKanbanStore()
   const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue()
@@ -27,6 +41,8 @@ beforeEach(() => {
   frappe.realtime.doctype_unsubscribe.mockReset()
   frappe.realtime.on.mockReset()
   frappe.realtime.off.mockReset()
+  animateCardRollback.mockClear()
+  captureCardRect.mockClear()
 })
 
 afterEach(() => {
@@ -201,10 +217,12 @@ test('persists the destination drop emitted by the virtual list', async () => {
     fromColumn: 0,
     fromIndex: 2,
   })
+  expect(store.getters.activeDragCard?.cardName).toBe('TASK-1')
+
   columns[1].vm.$emit('drop', {
-    oldIndex: -1,
+    oldIndex: 0,
     newIndex: 0,
-    event: { to: { id: '1' } },
+    event: { from: { id: '0' }, to: { id: '1' } },
   })
   await wrapper.vm.$nextTick()
 
@@ -215,5 +233,81 @@ test('persists the destination drop emitted by the virtual list', async () => {
     toColumn: 1,
     toIndex: 0,
   })
+  expect(store.getters.activeDragCard).toBeNull()
+  wrapper.unmount()
+})
+
+test('clears active drag on same-column drop and pointer release', async () => {
+  const { store, dispatch, wrapper } = mountBoard()
+  store.commit('SET_COLUMNS', [
+    { name: 'open', column_name: 'Open', cards: [{ name: 'TASK-1' }] },
+    { name: 'done', column_name: 'Done', cards: [] },
+  ])
+  await wrapper.vm.$nextTick()
+  const columns = wrapper.findAllComponents({ name: 'KanbanColumn' })
+
+  columns[0].vm.$emit('dragstart', {
+    cardName: 'TASK-1',
+    fromColumn: 0,
+    fromIndex: 0,
+  })
+  columns[0].vm.$emit('drop', {
+    oldIndex: 1,
+    newIndex: 0,
+    event: { to: { id: '0' } },
+  })
+  await wrapper.vm.$nextTick()
+
+  expect(dispatch).not.toHaveBeenCalledWith('persistMovedCard', expect.anything())
+  expect(store.getters.activeDragCard).toBeNull()
+
+  columns[0].vm.$emit('dragstart', {
+    cardName: 'TASK-1',
+    fromColumn: 0,
+    fromIndex: 0,
+  })
+  document.dispatchEvent(new PointerEvent('pointerup'))
+  await wrapper.vm.$nextTick()
+  expect(store.getters.activeDragCard).toBeNull()
+  wrapper.unmount()
+})
+
+test('plays rollback animation after a failed drag drop', async () => {
+  const { store, dispatch, wrapper } = mountBoard()
+  dispatch.mockImplementation((action) => {
+    if (action === 'persistMovedCard') {
+      return Promise.resolve({
+        ok: false,
+        needsAnimatedRollback: true,
+        preflight: { reason: 'workflow_denied' },
+      })
+    }
+    return Promise.resolve()
+  })
+  store.commit('SET_COLUMNS', [
+    { name: 'open', column_name: 'Open', cards: [{ name: 'TASK-1' }] },
+    { name: 'done', column_name: 'Done', cards: [] },
+  ])
+  await wrapper.vm.$nextTick()
+  const columns = wrapper.findAllComponents({ name: 'KanbanColumn' })
+
+  columns[0].vm.$emit('dragstart', {
+    cardName: 'TASK-1',
+    fromColumn: 0,
+    fromIndex: 0,
+  })
+  columns[1].vm.$emit('drop', {
+    oldIndex: 0,
+    newIndex: 0,
+    event: { from: { id: '0' }, to: { id: '1' } },
+  })
+  await vi.waitFor(() => expect(animateCardRollback).toHaveBeenCalled())
+
+  expect(captureCardRect).toHaveBeenCalledWith('TASK-1', expect.anything())
+  expect(animateCardRollback).toHaveBeenCalledWith(
+    'TASK-1',
+    expect.objectContaining({ left: 420, top: 240 }),
+    expect.objectContaining({ root: expect.anything() }),
+  )
   wrapper.unmount()
 })

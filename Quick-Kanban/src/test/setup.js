@@ -13,7 +13,7 @@ globalThis.frappe = {
   get_route: vi.fn(() => ['List', 'Task', 'Kanban', 'Test Board']),
   new_doc: vi.fn(),
   show_alert: vi.fn(),
-  set_route: vi.fn(),
+  set_route: vi.fn(() => Promise.resolve()),
   update_user_info: vi.fn((userInfo = {}) => {
     Object.assign(frappe.boot.user_info, userInfo)
   }),
@@ -70,6 +70,34 @@ globalThis.frappe = {
   }),
   utils: {
     get_form_link: vi.fn((doctype, name) => `/app/${doctype}/${name}`),
+    eval: vi.fn((expression, context) => {
+      if (expression.includes('status == "Done"')) {
+        return context.doc.status === 'Done'
+      }
+      if (expression.includes('status == "Working"')) {
+        return context.doc.status === 'Working'
+      }
+      return false
+    }),
+  },
+  msgprint: vi.fn(),
+  workflow: {
+    workflows: {},
+    setup: vi.fn(),
+  },
+  model: {
+    can_create: vi.fn(() => true),
+    with_doctype: vi.fn((doctype, callback) => Promise.resolve(callback?.())),
+    get_new_doc: vi.fn((doctype) => ({
+      doctype,
+      name: `new-${doctype}-1`,
+    })),
+  },
+  route_options: {},
+  route_hooks: {},
+  meta: {
+    docfield_list: {},
+    has_field: vi.fn(() => ({ no_copy: 0 })),
   },
   realtime: {
     doctype_subscribe: vi.fn(),
@@ -78,7 +106,18 @@ globalThis.frappe = {
     off: vi.fn(),
   },
   ui: {
+    Dialog: vi.fn(function Dialog() {
+      this.fields = []
+      this.$wrapper = {
+        on: vi.fn(),
+      }
+      this.show = vi.fn()
+      this.hide = vi.fn()
+    }),
     form: {
+      on: vi.fn(),
+      off: vi.fn(),
+      make_quick_entry: vi.fn(() => Promise.resolve({})),
       AssignToDialog: vi.fn(function AssignToDialog() {
         this.dialog = { show: vi.fn() }
       }),
