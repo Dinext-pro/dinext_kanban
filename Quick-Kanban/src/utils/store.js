@@ -73,6 +73,27 @@ function mergeColumnsPreservingCards(savedColumns, currentColumns, config) {
   )
 }
 
+/**
+ * Keep Frappe ListView's cached board columns in sync after board mutations.
+ * Returning to a cached Kanban page rehydrates from cur_list.board without
+ * re-fetching the doc, so unsynced column metadata (indicator, order) would
+ * overwrite Vuex with stale values.
+ */
+function syncCachedListBoardColumns(board) {
+  const list = globalThis.window?.cur_list
+  if (!list?.board || !Array.isArray(board?.columns)) {
+    return
+  }
+
+  const cachedName = list.board_name || list.board.name
+  const incomingName = board.name
+  if (incomingName && cachedName && incomingName !== cachedName) {
+    return
+  }
+
+  list.board.columns = board.columns.map((column) => ({ ...column }))
+}
+
 function reorderColumnsByName(columns, columnNames) {
   const byName = new Map(columns.map((column) => [column.column_name, column]))
   const reordered = columnNames
@@ -1309,7 +1330,7 @@ export function createKanbanStore() {
       },
       async setIndicator({ commit, state }, { indicator, columnIndex }) {
         try {
-          await frappe.call({
+          const response = await frappe.call({
             method: 'frappe.desk.doctype.kanban_board.kanban_board.set_indicator',
             args: {
               board_name: state.config.board_name,
@@ -1318,6 +1339,15 @@ export function createKanbanStore() {
             },
           })
           commit('UPDATE_COLUMN_INDICATOR', { columnIndex, indicator })
+          const savedBoard = response.message
+          if (savedBoard?.columns) {
+            syncCachedListBoardColumns(savedBoard)
+          } else {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: state.columns.map(({ cards, ...columnMeta }) => columnMeta),
+            })
+          }
         } catch (error) {
           frappe.show_alert({
             message: __('Could not update the column color.'),
@@ -1355,6 +1385,10 @@ export function createKanbanStore() {
                 state.config,
               ),
             )
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              ...savedBoard,
+            })
           }
         } catch (error) {
           commit('REORDER_COLUMNS', previousOrder)
