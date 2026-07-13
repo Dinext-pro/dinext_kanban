@@ -362,10 +362,11 @@ describe('formatCardField', () => {
     const result = formatCardField(75, meta, formatter, {})
 
     expect(formatter).not.toHaveBeenCalled()
-    expect(result).toContain('class="progress"')
+    expect(result).toContain('class="progress kanban-card-progress"')
     expect(result).toContain('progress-bar-success')
     expect(result).toContain('width: 75%')
     expect(result).toContain('aria-valuenow="75"')
+    expect(result).not.toContain('style="margin:')
   })
 
   test('clamps Percent progress bar width between 0 and 100', () => {

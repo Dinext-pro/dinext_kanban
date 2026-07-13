@@ -409,7 +409,7 @@ export function formatPercentProgress(value) {
   }
 
   const pct = Math.min(100, Math.max(0, Math.round(numeric)))
-  return `<div class="progress" style="margin: 0px;">
+  return `<div class="progress kanban-card-progress">
     <div class="progress-bar progress-bar-success" role="progressbar"
       aria-valuenow="${pct}"
       aria-valuemin="0" aria-valuemax="100" style="width: ${pct}%;">
