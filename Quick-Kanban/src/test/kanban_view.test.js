@@ -7,13 +7,14 @@ const bridgeSource = readFileSync(
   'utf8',
 )
 
-function createResultContainer(initialHtml = '') {
+function createVisibilityContainer(className, initialHtml = '') {
   const wrapper = document.createElement('div')
-  wrapper.className = 'list-result'
+  wrapper.className = className
   wrapper.innerHTML = initialHtml
   document.body.appendChild(wrapper)
-  return {
+  const api = {
     wrapper,
+    visible: true,
     html: vi.fn((html) => {
       wrapper.innerHTML = html
     }),
@@ -21,7 +22,28 @@ function createResultContainer(initialHtml = '') {
     empty: vi.fn(() => {
       wrapper.innerHTML = ''
     }),
+    show: vi.fn(() => {
+      api.visible = true
+      wrapper.style.display = ''
+      return api
+    }),
+    hide: vi.fn(() => {
+      api.visible = false
+      wrapper.style.display = 'none'
+      return api
+    }),
+    toggle: vi.fn((show) => {
+      if (show === undefined) {
+        return api.visible ? api.hide() : api.show()
+      }
+      return show ? api.show() : api.hide()
+    }),
   }
+  return api
+}
+
+function createResultContainer(initialHtml = '') {
+  return createVisibilityContainer('list-result', initialHtml)
 }
 
 class NativeKanbanView {
@@ -40,6 +62,8 @@ class NativeKanbanView {
     this.fields = []
     this.data = options.data || []
     this.$result = options.$result || createResultContainer()
+    this.$no_result = options.$no_result || createVisibilityContainer('no-result')
+    this.$paging_area = options.$paging_area || createVisibilityContainer('list-paging-area')
   }
 
   async setup_defaults() {
@@ -354,6 +378,53 @@ test('upgrades an active native Kanban instance created before the bridge loads'
   expect(Object.getPrototypeOf(nativeView)).toBe(frappeApi.views.KanbanView.prototype)
 })
 
+test('keeps the result area visible when filters match no cards', () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: { bundled_asset: vi.fn() },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+
+  const $result = createResultContainer('<div id="kanbanapp"></div>')
+  $result.hide()
+  const $no_result = createVisibilityContainer('no-result')
+  $no_result.show()
+  const $paging_area = createVisibilityContainer('list-paging-area')
+  $paging_area.show()
+
+  const view = new frappeApi.views.KanbanView({
+    data: [],
+    $result,
+    $no_result,
+    $paging_area,
+  })
+  view.toggle_result_area()
+
+  expect($result.visible).toBe(true)
+  expect($result.show).toHaveBeenCalled()
+  expect($no_result.visible).toBe(false)
+  expect($no_result.hide).toHaveBeenCalled()
+  expect($paging_area.visible).toBe(false)
+  expect($paging_area.toggle).toHaveBeenCalledWith(false)
+})
+
 test('hydrates when Vue is already mounted on the active board container', async () => {
   const frappeApi = {
     provide: vi.fn(),
@@ -561,4 +632,120 @@ test('does not attach Open Kanban Board action to unrelated dialogs', () => {
   } finally {
     NativeKanbanView.prototype.show_kanban_settings = nativeShow
   }
+})
+
+function createFilterSection() {
+  const customActions = document.createElement('div')
+  customActions.className = 'custom-actions'
+  const section = document.createElement('div')
+  section.className = 'filter-section flex'
+  const filterSelector = document.createElement('div')
+  filterSelector.className = 'filter-selector'
+  const button = document.createElement('button')
+  button.className = 'filter-button'
+  button.textContent = 'Filter'
+  filterSelector.appendChild(button)
+  section.appendChild(filterSelector)
+  customActions.appendChild(section)
+  document.body.appendChild(customActions)
+  return {
+    0: section,
+    length: 1,
+    find: (selector) => {
+      const nodes = [...section.querySelectorAll(selector)]
+      return Object.assign(nodes, {
+        0: nodes[0],
+        length: nodes.length,
+      })
+    },
+    prepend: (node) => {
+      section.insertBefore(node, section.firstChild)
+    },
+  }
+}
+
+test('inserts Minimize checkbox before the Filter control on beta render', async () => {
+  const setMinimize = vi.fn()
+  window.setQuickKanbanMinimizeCards = setMinimize
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.$filter_section = createFilterSection()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(window.mountQuickKanban).toHaveBeenCalledTimes(1)
+  })
+
+  const control = document.querySelector('.quick-kanban-minimize-control')
+  const filterSection = document.querySelector('.filter-section')
+  expect(control).toBeTruthy()
+  expect(control.nextElementSibling).toBe(filterSection)
+  expect(control.textContent).toContain('Minimize')
+
+  const checkbox = control.querySelector('input[type="checkbox"]')
+  checkbox.checked = true
+  checkbox.dispatchEvent(new Event('change'))
+  expect(setMinimize).toHaveBeenCalledWith(true)
+})
+
+test('removes Minimize checkbox when falling back to native Kanban', async () => {
+  window.quickKanbanBootstrap.shouldUseBeta = vi.fn(() => false)
+  const NativeBoard = vi.fn()
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: { bundled_asset: vi.fn() },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: NativeBoard,
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.$filter_section = createFilterSection()
+  view.setup_minimize_cards_control()
+  expect(document.querySelector('.quick-kanban-minimize-control')).toBeTruthy()
+
+  view.render()
+  await vi.waitFor(() => expect(NativeBoard).toHaveBeenCalledTimes(1))
+  expect(document.querySelector('.quick-kanban-minimize-control')).toBeNull()
 })

@@ -4,6 +4,93 @@ import DOMPurify from 'dompurify'
 const DEFAULT_FIELDS = ['name']
 const CARD_COLOR_FIELDNAME = 'color'
 const CARD_ACCENT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?([0-9A-Fa-f]{2})?$/
+const MINIMIZE_CARDS_STORAGE_PREFIX = 'quick_kanban:minimize_cards:'
+const COLLAPSED_COLUMNS_STORAGE_PREFIX = 'quick_kanban:collapsed_columns:'
+
+export const QUICK_KANBAN_BOARD_TRANSLATION_CONTEXT = 'QuickKanban.Board'
+export const QUICK_KANBAN_COLUMN_TRANSLATION_CONTEXT = 'QuickKanban.Column'
+export const CARD_EXPAND_DELAY_MS = 400
+export const CARD_COLLAPSE_DELAY_MS = 300
+export const CARD_DENSITY_ANIMATION_MS = 200
+export const COLUMN_COLLAPSE_ANIMATION_MS = 220
+export const COLUMN_DRAG_EXPAND_DELAY_MS = 400
+
+export function minimizeCardsStorageKey(boardName) {
+  return `${MINIMIZE_CARDS_STORAGE_PREFIX}${boardName || ''}`
+}
+
+export function readMinimizeCardsPreference(boardName, storage = globalThis.localStorage) {
+  try {
+    return storage?.getItem?.(minimizeCardsStorageKey(boardName)) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeMinimizeCardsPreference(boardName, value, storage = globalThis.localStorage) {
+  try {
+    const key = minimizeCardsStorageKey(boardName)
+    if (value) {
+      storage?.setItem?.(key, '1')
+    } else {
+      storage?.removeItem?.(key)
+    }
+  } catch {
+    // Ignore quota / private-mode storage failures.
+  }
+}
+
+export function collapsedColumnsStorageKey(boardName) {
+  return `${COLLAPSED_COLUMNS_STORAGE_PREFIX}${boardName || ''}`
+}
+
+export function collapsedColumnsFromList(columnNames = []) {
+  const collapsed = {}
+  for (const name of columnNames) {
+    if (name) {
+      collapsed[name] = true
+    }
+  }
+  return collapsed
+}
+
+export function collapsedColumnsToList(collapsedColumns = {}) {
+  return Object.keys(collapsedColumns).filter((name) => collapsedColumns[name])
+}
+
+export function readCollapsedColumnsPreference(boardName, storage = globalThis.localStorage) {
+  try {
+    const raw = storage?.getItem?.(collapsedColumnsStorageKey(boardName))
+    if (!raw) {
+      return {}
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return {}
+    }
+    return collapsedColumnsFromList(parsed)
+  } catch {
+    return {}
+  }
+}
+
+export function writeCollapsedColumnsPreference(
+  boardName,
+  collapsedColumns,
+  storage = globalThis.localStorage,
+) {
+  try {
+    const key = collapsedColumnsStorageKey(boardName)
+    const names = collapsedColumnsToList(collapsedColumns)
+    if (names.length) {
+      storage?.setItem?.(key, JSON.stringify(names))
+    } else {
+      storage?.removeItem?.(key)
+    }
+  } catch {
+    // Ignore quota / private-mode storage failures.
+  }
+}
 
 const ALWAYS_TRANSLATED_VALUE_TYPES = new Set(['Select', 'Autocomplete'])
 
@@ -23,6 +110,11 @@ function normalizeFieldtype(fieldMeta) {
 
 export function getColumnKey(column) {
   return column?.column_name || column?.name
+}
+
+/** Visible on the board when status is Active (or unset). Matches Frappe native Kanban. */
+export function isActiveColumn(column) {
+  return column?.status !== 'Archived'
 }
 
 export function translateFieldLabel(fieldMeta, translate = globalThis.__) {
@@ -196,7 +288,28 @@ export function normalizeBoardConfig(board, meta = {}) {
       ? board.custom_highlight_table
       : [],
     show_labels: Boolean(board.show_labels),
+    show_tags: Boolean(board.custom_show_tags),
   }
+}
+
+/**
+ * Build colored tag-pill HTML via the standard ListView helper (same as native Kanban).
+ * @param {string|null|undefined} userTags `_user_tags` value (",tag1,tag2")
+ * @param {{ get_tags_html?: Function }|null} [list] list view instance; defaults to `cur_list`
+ * @param {number} [limit=3]
+ * @returns {string}
+ */
+export function getCardTagsHtml(userTags, list = globalThis.cur_list, limit = 3) {
+  if (!userTags) {
+    return ''
+  }
+  const getTagsHtml =
+    (typeof list?.get_tags_html === 'function' && list.get_tags_html.bind(list))
+    || globalThis.frappe?.views?.ListView?.prototype?.get_tags_html
+  if (typeof getTagsHtml !== 'function') {
+    return ''
+  }
+  return getTagsHtml(userTags, limit, true) || ''
 }
 
 export function transformCard(keys, values, userInfo = {}) {
@@ -296,7 +409,7 @@ export function formatPercentProgress(value) {
   }
 
   const pct = Math.min(100, Math.max(0, Math.round(numeric)))
-  return `<div class="progress" style="margin: 0px;">
+  return `<div class="progress kanban-card-progress">
     <div class="progress-bar progress-bar-success" role="progressbar"
       aria-valuenow="${pct}"
       aria-valuemin="0" aria-valuemax="100" style="width: ${pct}%;">

@@ -3,6 +3,7 @@ import {
   attachColumnDisplayNames,
   groupCardsByColumn,
   getColumnKey,
+  isActiveColumn,
   mapAssignments,
   normalizeBoardConfig,
 } from './kanban'
@@ -43,10 +44,15 @@ const emptyConfig = () => ({
   color_field_meta: null,
   highlight_table: [],
   show_labels: false,
+  show_tags: false,
 })
 
 function withColumnDisplayNames(columns, config) {
   return attachColumnDisplayNames(columns, config.status_field_meta)
+}
+
+function visibleBoardColumns(columns) {
+  return (columns || []).filter(isActiveColumn)
 }
 
 function resolveBoardPerms(overrides) {
@@ -65,12 +71,33 @@ function mergeColumnsPreservingCards(savedColumns, currentColumns, config) {
     currentColumns.map((column) => [column.column_name, column.cards || []]),
   )
   return withColumnDisplayNames(
-    savedColumns.map((column) => ({
+    visibleBoardColumns(savedColumns).map((column) => ({
       ...column,
       cards: cardsByName.get(column.column_name) || [],
     })),
     config,
   )
+}
+
+/**
+ * Keep Frappe ListView's cached board columns in sync after board mutations.
+ * Returning to a cached Kanban page rehydrates from cur_list.board without
+ * re-fetching the doc, so unsynced column metadata (indicator, order) would
+ * overwrite Vuex with stale values.
+ */
+function syncCachedListBoardColumns(board) {
+  const list = globalThis.window?.cur_list
+  if (!list?.board || !Array.isArray(board?.columns)) {
+    return
+  }
+
+  const cachedName = list.board_name || list.board.name
+  const incomingName = board.name
+  if (incomingName && cachedName && incomingName !== cachedName) {
+    return
+  }
+
+  list.board.columns = board.columns.map((column) => ({ ...column }))
 }
 
 function reorderColumnsByName(columns, columnNames) {
@@ -326,10 +353,63 @@ export function createKanbanStore() {
       recentCreatedCards: {},
       boardPerms: { write: false },
       cardMoveFlash: {},
+      minimize_cards: false,
+      // Card name that should stay expanded across drag remounts (minimize mode).
+      densityHoldExpandedCard: null,
+      collapsedColumns: {},
     }),
     mutations: {
+      SET_MINIMIZE_CARDS(state, minimizeCards) {
+        state.minimize_cards = Boolean(minimizeCards)
+        if (!state.minimize_cards) {
+          state.densityHoldExpandedCard = null
+        }
+      },
+      SET_COLLAPSED_COLUMNS(state, collapsedColumns) {
+        state.collapsedColumns = { ...(collapsedColumns || {}) }
+      },
+      SET_COLUMN_COLLAPSED(state, { columnKey, collapsed }) {
+        if (!columnKey) {
+          return
+        }
+        if (collapsed) {
+          state.collapsedColumns = {
+            ...state.collapsedColumns,
+            [columnKey]: true,
+          }
+          return
+        }
+        const { [columnKey]: _removed, ...rest } = state.collapsedColumns
+        state.collapsedColumns = rest
+      },
+      SET_DENSITY_HOLD_EXPANDED(state, cardName) {
+        state.densityHoldExpandedCard = cardName || null
+      },
+      CLEAR_DENSITY_HOLD_EXPANDED(state, cardName = null) {
+        if (cardName && state.densityHoldExpandedCard !== cardName) {
+          return
+        }
+        state.densityHoldExpandedCard = null
+      },
       SET_COLUMNS(state, columns) {
         state.columns = columns
+      },
+      REMOVE_COLUMN(state, columnIndex) {
+        const column = state.columns[columnIndex]
+        if (!column) return
+        const key = getColumnKey(column)
+        state.columns = state.columns.filter((_, index) => index !== columnIndex)
+        const { [key]: _removedPagination, ...columnPagination } = state.columnPagination
+        state.columnPagination = columnPagination
+        const { [key]: _removedTotal, ...columnTotals } = state.columnTotals
+        state.columnTotals = columnTotals
+        const { [key]: _removedCollapsed, ...collapsedColumns } = state.collapsedColumns
+        state.collapsedColumns = collapsedColumns
+      },
+      RESTORE_COLUMN_LAYOUT(state, { columns, columnPagination, columnTotals }) {
+        state.columns = columns
+        state.columnPagination = columnPagination
+        state.columnTotals = columnTotals
       },
       SET_BOARD_PERMS(state, boardPerms) {
         state.boardPerms = boardPerms
@@ -608,7 +688,7 @@ export function createKanbanStore() {
           frappe.get_meta(board.reference_doctype),
         )
         const columns = withColumnDisplayNames(
-          board.columns.map((column) => ({ ...column, cards: [] })),
+          visibleBoardColumns(board.columns).map((column) => ({ ...column, cards: [] })),
           config,
         )
         const columnsByName = new Map(
@@ -675,7 +755,7 @@ export function createKanbanStore() {
           )
 
           commit('SET_COLUMNS', withColumnDisplayNames(
-            board.columns.map((column) => ({ ...column, cards: [] })),
+            visibleBoardColumns(board.columns).map((column) => ({ ...column, cards: [] })),
             config,
           ))
           commit(
@@ -1309,7 +1389,7 @@ export function createKanbanStore() {
       },
       async setIndicator({ commit, state }, { indicator, columnIndex }) {
         try {
-          await frappe.call({
+          const response = await frappe.call({
             method: 'frappe.desk.doctype.kanban_board.kanban_board.set_indicator',
             args: {
               board_name: state.config.board_name,
@@ -1318,9 +1398,76 @@ export function createKanbanStore() {
             },
           })
           commit('UPDATE_COLUMN_INDICATOR', { columnIndex, indicator })
+          const savedBoard = response.message
+          if (savedBoard?.columns) {
+            syncCachedListBoardColumns(savedBoard)
+          } else {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: state.columns.map(({ cards, ...columnMeta }) => columnMeta),
+            })
+          }
         } catch (error) {
           frappe.show_alert({
             message: __('Could not update the column color.'),
+            indicator: 'red',
+          })
+          throw error
+        }
+      },
+      async hideColumn({ commit, state, getters }, { columnIndex }) {
+        if (!getters.canEditBoard) {
+          return
+        }
+        const column = state.columns[columnIndex]
+        if (!column) {
+          return
+        }
+
+        const previousColumns = state.columns.map((item) => ({
+          ...item,
+          cards: [...(item.cards || [])],
+        }))
+        const previousPagination = { ...state.columnPagination }
+        const previousTotals = { ...state.columnTotals }
+
+        commit('REMOVE_COLUMN', columnIndex)
+        try {
+          const response = await frappe.call({
+            method: 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column',
+            args: {
+              board_name: state.config.board_name,
+              column_title: column.column_name,
+              status: 'Archived',
+            },
+          })
+          const savedColumns = Array.isArray(response.message)
+            ? response.message
+            : response.message?.columns
+          if (Array.isArray(savedColumns)) {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: savedColumns,
+            })
+          } else {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: previousColumns.map(({ cards, ...columnMeta }) => ({
+                ...columnMeta,
+                status: columnMeta.column_name === column.column_name
+                  ? 'Archived'
+                  : columnMeta.status,
+              })),
+            })
+          }
+        } catch (error) {
+          commit('RESTORE_COLUMN_LAYOUT', {
+            columns: previousColumns,
+            columnPagination: previousPagination,
+            columnTotals: previousTotals,
+          })
+          frappe.show_alert({
+            message: __('Could not hide the column.'),
             indicator: 'red',
           })
           throw error
@@ -1355,6 +1502,10 @@ export function createKanbanStore() {
                 state.config,
               ),
             )
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              ...savedBoard,
+            })
           }
         } catch (error) {
           commit('REORDER_COLUMNS', previousOrder)
@@ -1369,6 +1520,8 @@ export function createKanbanStore() {
     getters: {
       getColumns: (state) => state.columns,
       getConfig: (state) => state.config,
+      isMinimizeCards: (state) => state.minimize_cards,
+      isColumnCollapsed: (state) => (columnKey) => Boolean(state.collapsedColumns[columnKey]),
       canEditBoard: (state) => Boolean(state.boardPerms?.write),
       isMovePending: (state) => (cardName) => Boolean(state.pendingMoves[cardName]),
       isMoveOptionsLoading: (state) => state.moveOptionsLoading,
