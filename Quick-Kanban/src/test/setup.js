@@ -130,4 +130,16 @@ globalThis.frappe = {
 
 window.cur_list = {
   get_args: vi.fn(() => ({ doctype: 'Task' })),
+  get_tags_html: vi.fn((userTags, limit = 3, colored = false) => {
+    if (!userTags) return ''
+    return userTags
+      .split(',')
+      .slice(1, limit + 1)
+      .filter(Boolean)
+      .map((tag) => {
+        const style = colored ? 'background-color: var(--blue-100); color: var(--blue-800)' : ''
+        return `<div class="tag-pill ellipsis" title="${tag}" style="${style}">${tag}</div>`
+      })
+      .join('')
+  }),
 }

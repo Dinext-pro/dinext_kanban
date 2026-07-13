@@ -1,11 +1,13 @@
 <template>
   <article
     class="kanban-card"
-    :class="[moveFlashClasses, cardColorClass]"
+    :class="[moveFlashClasses, cardColorClass, densityClasses]"
     :style="cardAccentStyle"
     role="listitem"
     :aria-busy="pending"
     :data-card-name="card.name"
+    @pointerenter="onPointerEnter"
+    @pointerleave="onPointerLeave"
   >
     <header class="kanban-title-area">
       <a :href="getUrl()" draggable="false" class="card-title" :title="title">
@@ -20,6 +22,9 @@
         <svg class="icon icon-sm" aria-hidden="true">
           <use href="#icon-drag"></use>
         </svg>
+        <svg class="icon icon-sm" aria-hidden="true">
+          <use href="#icon-drag"></use>
+        </svg>
       </span>
       <span
         v-else
@@ -30,23 +35,39 @@
         <svg class="icon icon-sm" aria-hidden="true">
           <use href="#icon-drag"></use>
         </svg>
+        <svg class="icon icon-sm" aria-hidden="true">
+          <use href="#icon-drag"></use>
+        </svg>
       </span>
     </header>
 
-    <dl
-      v-if="displayFields.length"
-      class="kanban-card-fields"
-      :class="{ 'values-only': !config.show_labels }"
+    <div
+      v-if="showDetailsSlot"
+      class="kanban-card-fields-slot"
     >
-      <template v-for="field in displayFields" :key="field.fieldname">
-        <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
-        <dd
-          :class="{ 'field-without-label': !config.show_labels }"
-          :data-fieldtype="field.fieldtype"
-          v-html="formatValue(field)"
-        ></dd>
-      </template>
-    </dl>
+      <div class="kanban-card-density-inner">
+        <dl
+          v-if="displayFields.length"
+          class="kanban-card-fields"
+          :class="{ 'values-only': !config.show_labels }"
+        >
+          <template v-for="field in displayFields" :key="field.fieldname">
+            <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
+            <dd
+              :class="{ 'field-without-label': !config.show_labels }"
+              :data-fieldtype="field.fieldtype"
+              v-html="formatValue(field)"
+            ></dd>
+          </template>
+        </dl>
+
+        <div
+          v-if="config.show_tags && tagsHtml"
+          class="kanban-tags"
+          v-html="tagsHtml"
+        ></div>
+      </div>
+    </div>
 
     <div class="kanban-card-meta">
       <span
@@ -111,10 +132,18 @@
 </template>
 
 <script setup>
-import { computed, inject, nextTick, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useStore } from 'vuex'
 import Assignments from '../Assignments.vue'
-import { formatCardField, getCardFieldDisplayValue, parseCardAccentColor, translateFieldLabel } from '../../utils/kanban'
+import {
+  CARD_COLLAPSE_DELAY_MS,
+  CARD_EXPAND_DELAY_MS,
+  formatCardField,
+  getCardFieldDisplayValue,
+  getCardTagsHtml,
+  parseCardAccentColor,
+  translateFieldLabel,
+} from '../../utils/kanban'
 import { useDismissibleMenu } from '../../utils/menu'
 import { flashMovedCard } from '../../utils/cardMoveFlash'
 
@@ -130,6 +159,14 @@ const moveMenuButton = ref(null)
 const moveMenuPanel = ref(null)
 const moveMenuOpen = ref(false)
 const moveMenuStyle = ref({})
+const expanded = ref(
+  Boolean(
+    store.state.minimize_cards
+    && store.state.densityHoldExpandedCard === props.card.name,
+  ),
+)
+let expandTimer = null
+let collapseTimer = null
 
 useDismissibleMenu({
   isOpen: moveMenuOpen,
@@ -141,6 +178,26 @@ useDismissibleMenu({
 const columns = computed(() => store.state.columns)
 const pending = computed(() => store.getters.isMovePending(props.card.name))
 const moveOptionsLoading = computed(() => store.getters.isMoveOptionsLoading)
+const minimizeCards = computed(() => store.state.minimize_cards)
+const isDense = computed(() => minimizeCards.value && !expanded.value)
+const densityClasses = computed(() => ({
+  'kanban-card--minimized': isDense.value,
+  'kanban-card--expanded': minimizeCards.value && expanded.value,
+}))
+const isThisCardDragging = computed(
+  () => store.state.activeDrag?.cardName === props.card.name,
+)
+
+function holdExpandedDensity() {
+  if (!minimizeCards.value || !expanded.value) {
+    return
+  }
+  store.commit('SET_DENSITY_HOLD_EXPANDED', props.card.name)
+}
+
+function clearDensityHold() {
+  store.commit('CLEAR_DENSITY_HOLD_EXPANDED', props.card.name)
+}
 const title = computed(() =>
   getCardFieldDisplayValue(
     props.card[props.config.title_field] || props.card.name,
@@ -160,6 +217,15 @@ const moveBlockedLabel = computed(() => {
   return __('Move is not available for {0}', [title.value])
 })
 const displayFields = computed(() => props.config.display_fields || [])
+const tagsHtml = computed(() => {
+  if (!props.config.show_tags) {
+    return ''
+  }
+  return getCardTagsHtml(props.card._user_tags)
+})
+const showDetailsSlot = computed(
+  () => displayFields.value.length > 0 || Boolean(props.config.show_tags && tagsHtml.value),
+)
 const highlightValue = computed(() => {
   if (!props.config.highlighted_field) return ''
   return getCardFieldDisplayValue(
@@ -208,6 +274,67 @@ const moveFlashClasses = computed(() => {
     'kanban-card-move-flash--instant': flash.instant,
     'kanban-card-move-flash': !flash.instant,
   }
+})
+
+function clearExpandTimers() {
+  if (expandTimer) {
+    clearTimeout(expandTimer)
+    expandTimer = null
+  }
+  if (collapseTimer) {
+    clearTimeout(collapseTimer)
+    collapseTimer = null
+  }
+}
+
+function onPointerEnter(event) {
+  if (!minimizeCards.value) {
+    return
+  }
+  if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
+    return
+  }
+  if (store.state.activeDrag) {
+    return
+  }
+  clearExpandTimers()
+  expandTimer = setTimeout(() => {
+    expandTimer = null
+    if (!store.state.activeDrag) {
+      expanded.value = true
+    }
+  }, CARD_EXPAND_DELAY_MS)
+}
+
+function onPointerLeave() {
+  if (!minimizeCards.value) {
+    return
+  }
+  // Keep the open density while this card is dragged so the drop remount
+  // can restore the same visual state.
+  if (isThisCardDragging.value) {
+    holdExpandedDensity()
+    clearExpandTimers()
+    return
+  }
+  clearExpandTimers()
+  collapseTimer = setTimeout(() => {
+    collapseTimer = null
+    expanded.value = false
+    clearDensityHold()
+  }, CARD_COLLAPSE_DELAY_MS)
+}
+
+watch(isThisCardDragging, (dragging) => {
+  if (!dragging) {
+    return
+  }
+  clearExpandTimers()
+  holdExpandedDensity()
+})
+
+onBeforeUnmount(() => {
+  clearExpandTimers()
 })
 
 function getColumnLabel(column) {

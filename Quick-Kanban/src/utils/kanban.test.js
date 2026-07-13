@@ -1,19 +1,28 @@
-import { describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   attachColumnDisplayNames,
   formatCardField,
   getCardFieldDisplayValue,
+  getCardTagsHtml,
   getColumnDisplayName,
   getColumnKey,
   getIndicatorClass,
   groupCardsByColumn,
+  isActiveColumn,
   isNearScrollEnd,
   normalizeBoardConfig,
   parseCardAccentColor,
   resolveColorField,
+  readMinimizeCardsPreference,
+  minimizeCardsStorageKey,
   shouldTranslateFieldValue,
   translateFieldLabel,
   translateFieldValue,
+  writeMinimizeCardsPreference,
+  CARD_DENSITY_ANIMATION_MS,
+  collapsedColumnsStorageKey,
+  readCollapsedColumnsPreference,
+  writeCollapsedColumnsPreference,
 } from './kanban'
 
 const translationMap = {
@@ -30,10 +39,57 @@ function mockTranslate(message, _values, context) {
   return translationMap[key] || translationMap[message] || message
 }
 
+describe('getCardTagsHtml', () => {
+  test('delegates to list get_tags_html with a limit of three colored pills', () => {
+    const list = {
+      get_tags_html: vi.fn(() => '<div class="tag-pill">alpha</div>'),
+    }
+    expect(getCardTagsHtml(',alpha,beta', list)).toBe('<div class="tag-pill">alpha</div>')
+    expect(list.get_tags_html).toHaveBeenCalledWith(',alpha,beta', 3, true)
+  })
+
+  test('falls back to ListView.prototype when cur_list helper is missing', () => {
+    const previous = globalThis.frappe.views
+    globalThis.frappe.views = {
+      ListView: {
+        prototype: {
+          get_tags_html: vi.fn(() => '<div class="tag-pill">fallback</div>'),
+        },
+      },
+    }
+    try {
+      expect(getCardTagsHtml(',alpha', null)).toBe('<div class="tag-pill">fallback</div>')
+      expect(frappe.views.ListView.prototype.get_tags_html).toHaveBeenCalledWith(',alpha', 3, true)
+    } finally {
+      globalThis.frappe.views = previous
+    }
+  })
+
+  test('returns empty string without tags or html helper', () => {
+    const previous = globalThis.frappe.views
+    globalThis.frappe.views = undefined
+    try {
+      expect(getCardTagsHtml('', { get_tags_html: vi.fn() })).toBe('')
+      expect(getCardTagsHtml(',alpha', null)).toBe('')
+    } finally {
+      globalThis.frappe.views = previous
+    }
+  })
+})
+
 describe('getColumnKey', () => {
   test('prefers column_name over child row name', () => {
     expect(getColumnKey({ name: 'abc123', column_name: 'Open' })).toBe('Open')
     expect(getColumnKey({ name: 'xyz789', column_name: 'Done' })).toBe('Done')
+  })
+})
+
+describe('isActiveColumn', () => {
+  test('treats unset and Active as visible, Archived as hidden', () => {
+    expect(isActiveColumn({ column_name: 'Open' })).toBe(true)
+    expect(isActiveColumn({ column_name: 'Open', status: 'Active' })).toBe(true)
+    expect(isActiveColumn({ column_name: 'Open', status: 'Archived' })).toBe(false)
+    expect(isActiveColumn(null)).toBe(true)
   })
 })
 
@@ -65,10 +121,32 @@ describe('normalizeBoardConfig', () => {
       highlighted_field: 'priority',
       highlight_table: [],
       show_labels: true,
+      show_tags: false,
       title_field_meta: { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
       status_field_meta: { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
       highlighted_field_meta: { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
     })
+  })
+
+  test('maps custom_show_tags to show_tags', () => {
+    const enabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_tags: 1,
+    }, { title_field: 'subject', fields: [] })
+
+    const disabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_tags: 0,
+    }, { title_field: 'subject', fields: [] })
+
+    expect(enabled.show_tags).toBe(true)
+    expect(disabled.show_tags).toBe(false)
   })
 
   test('falls back to useful card fields when fields JSON is invalid', () => {
@@ -284,10 +362,11 @@ describe('formatCardField', () => {
     const result = formatCardField(75, meta, formatter, {})
 
     expect(formatter).not.toHaveBeenCalled()
-    expect(result).toContain('class="progress"')
+    expect(result).toContain('class="progress kanban-card-progress"')
     expect(result).toContain('progress-bar-success')
     expect(result).toContain('width: 75%')
     expect(result).toContain('aria-valuenow="75"')
+    expect(result).not.toContain('style="margin:')
   })
 
   test('clamps Percent progress bar width between 0 and 100', () => {
@@ -370,5 +449,72 @@ describe('translation helpers', () => {
       fieldtype: 'Select',
       parent: 'Task',
     }, mockTranslate)).toBe('Высокий')
+  })
+})
+
+describe('minimize cards preference', () => {
+  test('exports density animation duration for CSS transitions', () => {
+    expect(CARD_DENSITY_ANIMATION_MS).toBe(200)
+  })
+
+  test('reads and writes board-scoped localStorage preference', () => {
+    const storage = {
+      data: {},
+      getItem(key) {
+        return Object.hasOwn(this.data, key) ? this.data[key] : null
+      },
+      setItem(key, value) {
+        this.data[key] = String(value)
+      },
+      removeItem(key) {
+        delete this.data[key]
+      },
+    }
+
+    expect(minimizeCardsStorageKey('Task Board')).toBe('quick_kanban:minimize_cards:Task Board')
+    expect(readMinimizeCardsPreference('Task Board', storage)).toBe(false)
+
+    writeMinimizeCardsPreference('Task Board', true, storage)
+    expect(readMinimizeCardsPreference('Task Board', storage)).toBe(true)
+    expect(storage.data['quick_kanban:minimize_cards:Task Board']).toBe('1')
+
+    writeMinimizeCardsPreference('Task Board', false, storage)
+    expect(readMinimizeCardsPreference('Task Board', storage)).toBe(false)
+    expect(storage.data['quick_kanban:minimize_cards:Task Board']).toBeUndefined()
+  })
+})
+
+describe('collapsed columns preference', () => {
+  test('reads and writes board-scoped localStorage preference', () => {
+    const storage = {
+      data: {},
+      getItem(key) {
+        return Object.hasOwn(this.data, key) ? this.data[key] : null
+      },
+      setItem(key, value) {
+        this.data[key] = String(value)
+      },
+      removeItem(key) {
+        delete this.data[key]
+      },
+    }
+
+    expect(collapsedColumnsStorageKey('Task Board')).toBe(
+      'quick_kanban:collapsed_columns:Task Board',
+    )
+    expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({})
+
+    writeCollapsedColumnsPreference('Task Board', { Open: true, Done: true }, storage)
+    expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({
+      Open: true,
+      Done: true,
+    })
+    expect(storage.data['quick_kanban:collapsed_columns:Task Board']).toBe(
+      JSON.stringify(['Open', 'Done']),
+    )
+
+    writeCollapsedColumnsPreference('Task Board', {}, storage)
+    expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({})
+    expect(storage.data['quick_kanban:collapsed_columns:Task Board']).toBeUndefined()
   })
 })

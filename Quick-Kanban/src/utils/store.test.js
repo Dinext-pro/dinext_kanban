@@ -1569,4 +1569,328 @@ describe('column reorder', () => {
 
     expect(store.state.columnTotals).toEqual({ Open: 12, Done: 34, Review: 5 })
   })
+
+  test('updateColumnOrder syncs cached ListView board columns', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open' },
+          { name: 'done', column_name: 'Done' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    frappe.call.mockResolvedValue({
+      message: {
+        name: 'Task Board',
+        columns: [
+          { name: 'done', column_name: 'Done' },
+          { name: 'open', column_name: 'Open' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+    })
+    const store = boardStore()
+
+    await store.dispatch('updateColumnOrder', ['Done', 'Open', 'Review'])
+
+    expect(window.cur_list.board.columns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+  })
+})
+
+describe('column indicator', () => {
+  function boardPayload(name, columns) {
+    return {
+      name,
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: '["name", "subject"]',
+      columns,
+    }
+  }
+
+  test('setIndicator updates cached ListView board column indicator', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'Gray' },
+          { name: 'done', column_name: 'Done', indicator: 'Green' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    frappe.call.mockResolvedValue({
+      message: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'Blue' },
+          { name: 'done', column_name: 'Done', indicator: 'Green' },
+        ],
+      },
+    })
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', indicator: 'Gray', cards: [] },
+      { name: 'done', column_name: 'Done', indicator: 'Green', cards: [] },
+    ])
+
+    await store.dispatch('setIndicator', { indicator: 'Blue', columnIndex: 0 })
+
+    expect(store.state.columns[0].indicator).toBe('Blue')
+    expect(window.cur_list.board.columns[0].indicator).toBe('Blue')
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.set_indicator',
+      args: {
+        board_name: 'Task Board',
+        column_name: 'Open',
+        indicator: 'Blue',
+      },
+    }))
+  })
+
+  test('keeps updated indicator after switching boards and returning via hydrate', async () => {
+    const boardA = boardPayload('Board A', [
+      { name: 'open', column_name: 'Open', indicator: 'Gray' },
+      { name: 'done', column_name: 'Done', indicator: 'Green' },
+    ])
+    const boardB = boardPayload('Board B', [
+      { name: 'todo', column_name: 'Todo', indicator: 'Cyan' },
+    ])
+
+    const cachedListA = {
+      board_name: 'Board A',
+      board: structuredClone(boardA),
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    window.cur_list = cachedListA
+
+    const store = createStore()
+    await store.dispatch('hydrateFromList', { board: cachedListA.board, cards: [] })
+
+    frappe.call.mockResolvedValue({
+      message: {
+        name: 'Board A',
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'Blue' },
+          { name: 'done', column_name: 'Done', indicator: 'Green' },
+        ],
+      },
+    })
+    await store.dispatch('setIndicator', { indicator: 'Blue', columnIndex: 0 })
+    expect(cachedListA.board.columns[0].indicator).toBe('Blue')
+
+    window.cur_list = {
+      board_name: 'Board B',
+      board: structuredClone(boardB),
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    await store.dispatch('hydrateFromList', { board: boardB, cards: [] })
+    expect(store.state.columns[0].column_name).toBe('Todo')
+
+    // Returning reuses the same cached ListView instance (board mutated by setIndicator).
+    window.cur_list = cachedListA
+    await store.dispatch('hydrateFromList', {
+      board: cachedListA.board,
+      cards: [],
+    })
+
+    expect(store.state.columns[0].indicator).toBe('Blue')
+  })
+})
+
+describe('hide column', () => {
+  test('hydrateFromList omits Archived columns', async () => {
+    const store = createStore()
+
+    await store.dispatch('hydrateFromList', {
+      board: {
+        name: 'Task Board',
+        reference_doctype: 'Task',
+        field_name: 'status',
+        fields: '["name", "subject"]',
+        columns: [
+          { name: 'open', column_name: 'Open', status: 'Active' },
+          { name: 'done', column_name: 'Done', status: 'Archived' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+      cards: [
+        { name: 'TASK-1', subject: 'Visible', status: 'Open' },
+        { name: 'TASK-2', subject: 'Hidden', status: 'Done' },
+      ],
+      args: { page_length: 100 },
+      board_perms: { write: true },
+    })
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Open',
+      'Review',
+    ])
+    expect(store.state.columns[0].cards.map((card) => card.name)).toEqual(['TASK-1'])
+  })
+
+  test('ensureBoard omits Archived columns', async () => {
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'frappe.client.get') {
+        return {
+          message: {
+            name: 'Task Board',
+            reference_doctype: 'Task',
+            field_name: 'status',
+            fields: '["name", "subject"]',
+            columns: [
+              { name: 'open', column_name: 'Open', status: 'Active' },
+              { name: 'done', column_name: 'Done', status: 'Archived' },
+            ],
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+    const store = createStore()
+
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual(['Open'])
+  })
+
+  test('hideColumn archives via API, removes from view, and syncs ListView cache', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', status: 'Active' },
+          { name: 'done', column_name: 'Done', status: 'Active' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    frappe.call.mockResolvedValue({
+      message: [
+        { name: 'open', column_name: 'Open', status: 'Archived' },
+        { name: 'done', column_name: 'Done', status: 'Active' },
+      ],
+    })
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', status: 'Active', cards: [{ name: 'C1' }] },
+      { name: 'done', column_name: 'Done', status: 'Active', cards: [] },
+    ])
+    store.commit('SET_COLUMN_PAGINATION', {
+      Open: { offset: 1, loading: false, hasMore: false },
+      Done: { offset: 0, loading: false, hasMore: false },
+    })
+    store.commit('SET_COLUMN_TOTALS', { Open: 1, Done: 0 })
+
+    await store.dispatch('hideColumn', { columnIndex: 0 })
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual(['Done'])
+    expect(store.state.columnPagination.Open).toBeUndefined()
+    expect(store.state.columnTotals.Open).toBeUndefined()
+    expect(window.cur_list.board.columns).toEqual([
+      { name: 'open', column_name: 'Open', status: 'Archived' },
+      { name: 'done', column_name: 'Done', status: 'Active' },
+    ])
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column',
+      args: {
+        board_name: 'Task Board',
+        column_title: 'Open',
+        status: 'Archived',
+      },
+    }))
+  })
+
+  test('hideColumn is a no-op without board write permission', async () => {
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: false })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    frappe.call.mockClear()
+
+    await store.dispatch('hideColumn', { columnIndex: 0 })
+
+    expect(store.state.columns).toHaveLength(1)
+    expect(frappe.call).not.toHaveBeenCalled()
+  })
+
+  test('hideColumn rolls back and alerts when the API fails', async () => {
+    frappe.call.mockRejectedValue(new Error('Permission denied'))
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [{ name: 'C1' }] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_COLUMN_PAGINATION', {
+      Open: { offset: 1, loading: false, hasMore: false },
+      Done: { offset: 0, loading: false, hasMore: false },
+    })
+    store.commit('SET_COLUMN_TOTALS', { Open: 4, Done: 2 })
+
+    await expect(
+      store.dispatch('hideColumn', { columnIndex: 0 }),
+    ).rejects.toThrow('Permission denied')
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Open',
+      'Done',
+    ])
+    expect(store.state.columns[0].cards[0].name).toBe('C1')
+    expect(store.state.columnPagination.Open.offset).toBe(1)
+    expect(store.state.columnTotals).toEqual({ Open: 4, Done: 2 })
+    expect(frappe.show_alert).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Could not hide the column.',
+    }))
+  })
 })
