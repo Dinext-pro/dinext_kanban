@@ -288,6 +288,7 @@
 
 #kanbanapp .kanban-card {
   --kanban-card-density-duration: 200ms;
+  --kanban-card-shadow: var(--shadow-sm);
   display: flex;
   position: relative;
   box-sizing: border-box;
@@ -304,11 +305,13 @@
   border: 1px solid var(--border-color);
   border-radius: 8px !important;
   opacity: 1;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--kanban-card-shadow);
   overflow: hidden;
   transition:
     padding var(--kanban-card-density-duration) ease,
-    gap var(--kanban-card-density-duration) ease;
+    gap var(--kanban-card-density-duration) ease,
+    box-shadow 150ms ease,
+    border-color 150ms ease;
 }
 
 #kanbanapp .kanban-card--has-color {
@@ -316,7 +319,18 @@
   background: color-mix(in srgb, var(--kanban-card-accent) 10%, var(--card-bg));
   box-shadow:
     inset 4px 0 0 var(--kanban-card-accent),
-    0 1px 2px rgb(0 0 0 / 0.1);
+    var(--kanban-card-shadow);
+}
+
+#kanbanapp
+  .kanban-card:is(:hover, :focus-within):not(
+    .chosen-card,
+    .ghost-card,
+    .kanban-card-move-flash,
+    .kanban-card-move-flash--instant
+  ) {
+  --kanban-card-shadow: var(--shadow-md);
+  border-color: var(--gray-400);
 }
 
 @supports not (background: color-mix(in srgb, red 10%, white)) {
@@ -682,7 +696,7 @@
     box-shadow:
       inset 0 0 0 0 var(--kanban-move-flash-current-outline),
       inset 0 0 0 0 var(--kanban-move-flash-current-glow),
-      0 1px 2px rgb(0 0 0 / 0.1);
+      var(--shadow-sm);
   }
 
   25%,
@@ -690,14 +704,14 @@
     box-shadow:
       inset 0 0 0 2px var(--kanban-move-flash-current-outline),
       inset 0 0 0 5px var(--kanban-move-flash-current-glow),
-      0 1px 2px rgb(0 0 0 / 0.1);
+      var(--shadow-sm);
   }
 
   50% {
     box-shadow:
       inset 0 0 0 0 var(--kanban-move-flash-current-outline),
       inset 0 0 0 0 var(--kanban-move-flash-current-glow),
-      0 1px 2px rgb(0 0 0 / 0.1);
+      var(--shadow-sm);
   }
 }
 
@@ -723,7 +737,7 @@
   box-shadow:
     inset 0 0 0 2px var(--kanban-move-flash-current-outline),
     inset 0 0 0 5px var(--kanban-move-flash-current-glow),
-    0 1px 2px rgb(0 0 0 / 0.1);
+    var(--shadow-sm);
 }
 
 @media (max-width: 768px) {
