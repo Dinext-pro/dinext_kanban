@@ -56,6 +56,11 @@ export function getColumnKey(column) {
   return column?.column_name || column?.name
 }
 
+/** Visible on the board when status is Active (or unset). Matches Frappe native Kanban. */
+export function isActiveColumn(column) {
+  return column?.status !== 'Archived'
+}
+
 export function translateFieldLabel(fieldMeta, translate = globalThis.__) {
   if (!fieldMeta?.label) {
     return fieldMeta?.fieldname || ''

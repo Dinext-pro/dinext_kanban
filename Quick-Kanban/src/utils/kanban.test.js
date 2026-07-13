@@ -8,6 +8,7 @@ import {
   getColumnKey,
   getIndicatorClass,
   groupCardsByColumn,
+  isActiveColumn,
   isNearScrollEnd,
   normalizeBoardConfig,
   parseCardAccentColor,
@@ -77,6 +78,15 @@ describe('getColumnKey', () => {
   test('prefers column_name over child row name', () => {
     expect(getColumnKey({ name: 'abc123', column_name: 'Open' })).toBe('Open')
     expect(getColumnKey({ name: 'xyz789', column_name: 'Done' })).toBe('Done')
+  })
+})
+
+describe('isActiveColumn', () => {
+  test('treats unset and Active as visible, Archived as hidden', () => {
+    expect(isActiveColumn({ column_name: 'Open' })).toBe(true)
+    expect(isActiveColumn({ column_name: 'Open', status: 'Active' })).toBe(true)
+    expect(isActiveColumn({ column_name: 'Open', status: 'Archived' })).toBe(false)
+    expect(isActiveColumn(null)).toBe(true)
   })
 })
 

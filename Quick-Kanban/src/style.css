@@ -111,14 +111,20 @@
   right: 0;
   will-change: transform;
   z-index: 2;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(32px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   padding: 6px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .column-color-swatches {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(32px, 1fr));
+  gap: 4px;
 }
 
 #kanbanapp .column-title {
@@ -234,6 +240,27 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
+}
+
+#kanbanapp .column-menu-action {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  border-radius: 0 0 6px 6px;
+  background: transparent;
+  color: var(--text-color);
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+#kanbanapp .column-menu-action:hover,
+#kanbanapp .column-menu-action:focus-visible {
+  background: var(--fg-hover);
+  outline: none;
 }
 
 #kanbanapp .quick-kanban-indicator-swatch {

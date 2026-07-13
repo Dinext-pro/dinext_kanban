@@ -55,20 +55,31 @@
           <div
             v-if="colorMenuOpen"
             ref="colorMenuPanel"
-            class="column-dropdown button-group"
+            class="column-dropdown"
             role="group"
             :aria-label="__('Column colors')"
           >
+            <div class="column-color-swatches">
+              <button
+                v-for="indicator in indicators"
+                :key="indicator.name"
+                type="button"
+                class="indicator-choice"
+                :aria-label="__('Set {0} color to {1}', [columnLabel, indicator.name])"
+                @click="setIndicator(indicator.value)"
+              >
+                <IndicatorPill :indicator="indicator.class" />
+                <span class="sr-only">{{ indicator.name }}</span>
+              </button>
+            </div>
             <button
-              v-for="indicator in indicators"
-              :key="indicator.name"
+              v-if="canEditBoard"
               type="button"
-              class="indicator-choice"
-              :aria-label="__('Set {0} color to {1}', [columnLabel, indicator.name])"
-              @click="setIndicator(indicator.value)"
+              class="column-menu-action"
+              :aria-label="__('Hide {0} column', [columnLabel])"
+              @click="hideColumn"
             >
-              <IndicatorPill :indicator="indicator.class" />
-              <span class="sr-only">{{ indicator.name }}</span>
+              {{ __('Hide') }}
             </button>
           </div>
         </div>
@@ -318,6 +329,13 @@ function setIndicator(indicator) {
     columnIndex: props.columnIndex,
   });
   closeColorMenu()
+}
+
+function hideColumn() {
+  closeColorMenu()
+  store.dispatch("hideColumn", {
+    columnIndex: props.columnIndex,
+  })
 }
 
 function closeColorMenu({ restoreFocus = true } = {}) {
