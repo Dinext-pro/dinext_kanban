@@ -22,6 +22,9 @@
         <svg class="icon icon-sm" aria-hidden="true">
           <use href="#icon-drag"></use>
         </svg>
+        <svg class="icon icon-sm" aria-hidden="true">
+          <use href="#icon-drag"></use>
+        </svg>
       </span>
       <span
         v-else
@@ -29,6 +32,9 @@
         :aria-label="moveBlockedLabel"
         role="img"
       >
+        <svg class="icon icon-sm" aria-hidden="true">
+          <use href="#icon-drag"></use>
+        </svg>
         <svg class="icon icon-sm" aria-hidden="true">
           <use href="#icon-drag"></use>
         </svg>

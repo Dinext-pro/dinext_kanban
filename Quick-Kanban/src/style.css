@@ -347,6 +347,10 @@
 }
 
 #kanbanapp .drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
   flex: 0 0 auto;
   min-width: 32px;
   min-height: 32px;
