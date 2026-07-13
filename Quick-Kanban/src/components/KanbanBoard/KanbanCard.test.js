@@ -105,6 +105,9 @@ test('renders a semantic card with labels and a dedicated drag handle', () => {
 
   expect(wrapper.attributes('role')).toBe('listitem')
   expect(wrapper.get('[aria-label="Drag First task"]').exists()).toBe(true)
+  expect(
+    wrapper.findAll('[aria-label="Drag First task"] use[href="#icon-drag"]'),
+  ).toHaveLength(2)
   expect(wrapper.text()).toContain('Due date')
   expect(wrapper.text()).toContain('formatted:2026-07-10')
   expect(wrapper.get('.kanban-card-fields a').text()).toBe('TEST-PROJECT')
