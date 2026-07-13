@@ -1569,4 +1569,148 @@ describe('column reorder', () => {
 
     expect(store.state.columnTotals).toEqual({ Open: 12, Done: 34, Review: 5 })
   })
+
+  test('updateColumnOrder syncs cached ListView board columns', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open' },
+          { name: 'done', column_name: 'Done' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    frappe.call.mockResolvedValue({
+      message: {
+        name: 'Task Board',
+        columns: [
+          { name: 'done', column_name: 'Done' },
+          { name: 'open', column_name: 'Open' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+    })
+    const store = boardStore()
+
+    await store.dispatch('updateColumnOrder', ['Done', 'Open', 'Review'])
+
+    expect(window.cur_list.board.columns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+  })
+})
+
+describe('column indicator', () => {
+  function boardPayload(name, columns) {
+    return {
+      name,
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: '["name", "subject"]',
+      columns,
+    }
+  }
+
+  test('setIndicator updates cached ListView board column indicator', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'Gray' },
+          { name: 'done', column_name: 'Done', indicator: 'Green' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    frappe.call.mockResolvedValue({
+      message: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'Blue' },
+          { name: 'done', column_name: 'Done', indicator: 'Green' },
+        ],
+      },
+    })
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', indicator: 'Gray', cards: [] },
+      { name: 'done', column_name: 'Done', indicator: 'Green', cards: [] },
+    ])
+
+    await store.dispatch('setIndicator', { indicator: 'Blue', columnIndex: 0 })
+
+    expect(store.state.columns[0].indicator).toBe('Blue')
+    expect(window.cur_list.board.columns[0].indicator).toBe('Blue')
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.set_indicator',
+      args: {
+        board_name: 'Task Board',
+        column_name: 'Open',
+        indicator: 'Blue',
+      },
+    }))
+  })
+
+  test('keeps updated indicator after switching boards and returning via hydrate', async () => {
+    const boardA = boardPayload('Board A', [
+      { name: 'open', column_name: 'Open', indicator: 'Gray' },
+      { name: 'done', column_name: 'Done', indicator: 'Green' },
+    ])
+    const boardB = boardPayload('Board B', [
+      { name: 'todo', column_name: 'Todo', indicator: 'Cyan' },
+    ])
+
+    const cachedListA = {
+      board_name: 'Board A',
+      board: structuredClone(boardA),
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    window.cur_list = cachedListA
+
+    const store = createStore()
+    await store.dispatch('hydrateFromList', { board: cachedListA.board, cards: [] })
+
+    frappe.call.mockResolvedValue({
+      message: {
+        name: 'Board A',
+        columns: [
+          { name: 'open', column_name: 'Open', indicator: 'Blue' },
+          { name: 'done', column_name: 'Done', indicator: 'Green' },
+        ],
+      },
+    })
+    await store.dispatch('setIndicator', { indicator: 'Blue', columnIndex: 0 })
+    expect(cachedListA.board.columns[0].indicator).toBe('Blue')
+
+    window.cur_list = {
+      board_name: 'Board B',
+      board: structuredClone(boardB),
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    await store.dispatch('hydrateFromList', { board: boardB, cards: [] })
+    expect(store.state.columns[0].column_name).toBe('Todo')
+
+    // Returning reuses the same cached ListView instance (board mutated by setIndicator).
+    window.cur_list = cachedListA
+    await store.dispatch('hydrateFromList', {
+      board: cachedListA.board,
+      cards: [],
+    })
+
+    expect(store.state.columns[0].indicator).toBe('Blue')
+  })
 })
