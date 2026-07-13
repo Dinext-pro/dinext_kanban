@@ -7,13 +7,14 @@ const bridgeSource = readFileSync(
   'utf8',
 )
 
-function createResultContainer(initialHtml = '') {
+function createVisibilityContainer(className, initialHtml = '') {
   const wrapper = document.createElement('div')
-  wrapper.className = 'list-result'
+  wrapper.className = className
   wrapper.innerHTML = initialHtml
   document.body.appendChild(wrapper)
-  return {
+  const api = {
     wrapper,
+    visible: true,
     html: vi.fn((html) => {
       wrapper.innerHTML = html
     }),
@@ -21,7 +22,28 @@ function createResultContainer(initialHtml = '') {
     empty: vi.fn(() => {
       wrapper.innerHTML = ''
     }),
+    show: vi.fn(() => {
+      api.visible = true
+      wrapper.style.display = ''
+      return api
+    }),
+    hide: vi.fn(() => {
+      api.visible = false
+      wrapper.style.display = 'none'
+      return api
+    }),
+    toggle: vi.fn((show) => {
+      if (show === undefined) {
+        return api.visible ? api.hide() : api.show()
+      }
+      return show ? api.show() : api.hide()
+    }),
   }
+  return api
+}
+
+function createResultContainer(initialHtml = '') {
+  return createVisibilityContainer('list-result', initialHtml)
 }
 
 class NativeKanbanView {
@@ -40,6 +62,8 @@ class NativeKanbanView {
     this.fields = []
     this.data = options.data || []
     this.$result = options.$result || createResultContainer()
+    this.$no_result = options.$no_result || createVisibilityContainer('no-result')
+    this.$paging_area = options.$paging_area || createVisibilityContainer('list-paging-area')
   }
 
   async setup_defaults() {
@@ -352,6 +376,53 @@ test('upgrades an active native Kanban instance created before the bridge loads'
   expect(nativeView.set_fields).toHaveBeenCalledTimes(1)
   expect(nativeView.refresh).toHaveBeenCalledTimes(1)
   expect(Object.getPrototypeOf(nativeView)).toBe(frappeApi.views.KanbanView.prototype)
+})
+
+test('keeps the result area visible when filters match no cards', () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: { bundled_asset: vi.fn() },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+
+  const $result = createResultContainer('<div id="kanbanapp"></div>')
+  $result.hide()
+  const $no_result = createVisibilityContainer('no-result')
+  $no_result.show()
+  const $paging_area = createVisibilityContainer('list-paging-area')
+  $paging_area.show()
+
+  const view = new frappeApi.views.KanbanView({
+    data: [],
+    $result,
+    $no_result,
+    $paging_area,
+  })
+  view.toggle_result_area()
+
+  expect($result.visible).toBe(true)
+  expect($result.show).toHaveBeenCalled()
+  expect($no_result.visible).toBe(false)
+  expect($no_result.hide).toHaveBeenCalled()
+  expect($paging_area.visible).toBe(false)
+  expect($paging_area.toggle).toHaveBeenCalledWith(false)
 })
 
 test('hydrates when Vue is already mounted on the active board container', async () => {
