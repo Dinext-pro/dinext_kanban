@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quick Kanban browser fixture</title>
+    <style>
+      :root {
+        --navbar-height: 0px;
+        --page-bottom-margin: 0px;
+        --text-color: #171717;
+        --border-color: #d1d8dd;
+        --primary: #2491ef;
+        --control-bg: #f3f3f3;
+        --blue-500: #2491ef;
+        --gray-200: #e2e2e2;
+        --gray-800: #383838;
+        --red-200: #ffdcdc;
+        --red-800: #971515;
+        --red-900: #6b1515;
+        --blue-100: #d1eaff;
+        --blue-200: #a3d0ff;
+        --blue-800: #004880;
+        --blue-900: #003566;
+        --yellow-100: #fff4d1;
+        --yellow-200: #ffe8a3;
+        --yellow-800: #733f12;
+        --yellow-900: #57300e;
+        --purple-200: #e4d4ff;
+        --purple-800: #401863;
+        --purple-900: #30124a;
+        --pink-200: #ffd4f4;
+        --pink-800: #570f3e;
+        --pink-900: #420b2f;
+        --green-200: #d4ffe8;
+        --green-800: #173b2c;
+        --green-900: #102820;
+        --orange-200: #ffe0d1;
+        --orange-800: #6b2711;
+        --orange-900: #501d0d;
+        --cyan-100: #d1f4ff;
+        --cyan-200: #a3e8ff;
+        --cyan-800: #164759;
+        --cyan-900: #103544;
+      }
+
+      [data-theme="dark"] {
+        --text-color: #ededed;
+        --border-color: #404040;
+        --gray-100: #262626;
+        --gray-200: #404040;
+        --gray-800: #1a1a1a;
+        --red-900: #6b1515;
+        --blue-900: #003566;
+        --blue-800: #004880;
+        --yellow-900: #57300e;
+        --purple-900: #30124a;
+        --pink-900: #420b2f;
+        --green-900: #102820;
+        --orange-900: #501d0d;
+        --cyan-900: #103544;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="kanbanapp"></div>
+    <script type="module">
+      window.__ = (message, values = []) =>
+        (values || []).reduce(
+          (result, value, index) => result.replace(`{${index}}`, value),
+          message,
+        )
+      window.__quickKanbanAlerts = []
+      window.__reportviewCalls = []
+      window.__countCalls = []
+      window.__columnPages = {}
+      window.__columnTotals = { Open: 51, Done: 12, Overdue: 0 }
+      window.__moveOptionsCalls = []
+      window.__quickKanbanPermissiveMoves = true
+      window.__assignDialogOpened = false
+      window.__assignDialogShown = false
+      window.__assignmentDialogOpened = false
+      window.__makeColumnPage = (status, start, length) => ({
+        keys: ['name', 'subject', 'status'],
+        values: Array.from({ length }, (_, index) => [
+          `${status.toUpperCase()}-${start + index + 1}`,
+          `${status} ${start + index + 1}`,
+          status,
+        ]),
+        user_info: {},
+      })
+      window.__columnOrderCalls = []
+      window.__quickKanbanForceColumnSortableFallback = true
+      window.__quickKanbanExposeColumnReorder = true
+      window.__setQuickKanbanTheme = (theme) => {
+        document.documentElement.dataset.theme = theme
+      }
+      window.__getQuickKanbanColumnBackground = (columnName = 'Open') => {
+        const column = [...document.querySelectorAll('.kanban-column')].find((node) =>
+          node.querySelector('.column-title')?.textContent === columnName,
+        )
+        return column ? getComputedStyle(column).backgroundColor : ''
+      }
+      window.__getQuickKanbanDropStyles = (columnName = 'Open') => {
+        const column = [...document.querySelectorAll('.kanban-column')].find((node) =>
+          node.querySelector('.column-title')?.textContent === columnName,
+        )
+        if (!column) {
+          return null
+        }
+        const overlay = column.querySelector('.kanban-column-drop-overlay')
+        return {
+          allowed: column.classList.contains('kanban-column-drop-allowed'),
+          forbidden: column.classList.contains('kanban-column-drop-forbidden'),
+          overlayVisible: Boolean(overlay),
+          overlayBackground: overlay
+            ? getComputedStyle(overlay).backgroundColor
+            : '',
+          outlineColor: getComputedStyle(column).outlineColor,
+        }
+      }
+      window.__configureQuickKanbanMovePolicy = ({
+        permissive = false,
+        forbiddenColumns = ['Done'],
+        reason = 'workflow_denied',
+      } = {}) => {
+        window.__quickKanbanPermissiveMoves = permissive
+        window.__moveOptionsByCard = (names) => Object.fromEntries(
+          names.map((name) => [
+            name,
+            {
+              can_drag: true,
+              destinations: Object.fromEntries(
+                ['Open', 'Done'].map((column) => [
+                  column,
+                  forbiddenColumns.includes(column)
+                    ? {
+                      allowed: false,
+                      reason,
+                      mode: 'field_update',
+                      actions: [],
+                      missing_mandatory: [],
+                    }
+                    : {
+                      allowed: true,
+                      mode: 'field_update',
+                      actions: [],
+                      missing_mandatory: [],
+                    },
+                ]),
+              ),
+            },
+          ]),
+        )
+      }
+      if (window.__configureQuickKanbanMovePolicyOnLoad) {
+        window.__configureQuickKanbanMovePolicy(window.__configureQuickKanbanMovePolicyOnLoad)
+      }
+      window.frappe = {
+        boot: { user_info: {} },
+        call: async ({ method, args }) => {
+          if (method === 'quick_kanban.api.get_move_options') {
+            const names = args.names || []
+            if (typeof window.__moveOptionsByCard === 'function') {
+              return { message: window.__moveOptionsByCard(names) }
+            }
+            const destinations = Object.fromEntries(
+              ['Open', 'Done'].map((column) => [
+                column,
+                {
+                  allowed: true,
+                  mode: 'field_update',
+                  actions: [],
+                  missing_mandatory: [],
+                },
+              ]),
+            )
+            return {
+              message: Object.fromEntries(
+                names.map((name) => [name, { can_drag: true, destinations }]),
+              ),
+            }
+          }
+          if (method === 'quick_kanban.api.move_card') {
+            if (window.__failNextMove) {
+              window.__failNextMove = false
+              throw new Error('Move rejected by fixture')
+            }
+            return {
+              message: {
+                status: args.value,
+                modified: '2026-07-10 10:01:00',
+              },
+            }
+          }
+          if (method === 'frappe.desk.reportview.get') {
+            window.__reportviewCalls.push(args)
+            const statusFilter = args.filters.find(
+              (filter) => filter.at(-3) === 'status',
+            )
+            const status = statusFilter?.at(-1)
+            const configuredPage = window.__columnPages[status]
+            return {
+              message: (
+                Array.isArray(configuredPage)
+                  ? configuredPage.shift()
+                  : configuredPage
+              ) || {
+                keys: ['name', 'subject', 'status'],
+                values: [],
+                user_info: {},
+              },
+            }
+          }
+          if (method === 'quick_kanban.api.get_column_totals') {
+            window.__countCalls.push(args)
+            return {
+              message: Object.fromEntries(
+                args.columns.map((column) => [
+                  column,
+                  window.__columnTotals[column] || 0,
+                ]),
+              ),
+            }
+          }
+          if (method === 'quick_kanban.api.get_create_options') {
+            return {
+              message: Object.fromEntries(
+                ['Open', 'Done', 'Overdue'].map((column) => [
+                  column,
+                  {
+                    allowed: true,
+                    form_mode: 'quick_entry',
+                    missing_mandatory: [],
+                    missing_fieldnames: [],
+                  },
+                ]),
+              ),
+            }
+          }
+          if (method === 'frappe.desk.doctype.kanban_board.kanban_board.update_column_order') {
+            window.__columnOrderCalls = window.__columnOrderCalls || []
+            window.__columnOrderCalls.push(args)
+            if (window.__failNextColumnReorder) {
+              window.__failNextColumnReorder = false
+              throw new Error('Column reorder rejected by fixture')
+            }
+            const order = JSON.parse(args.order)
+            const board = window.quickKanbanInitialData?.board
+            if (board?.columns) {
+              const byName = Object.fromEntries(
+                board.columns.map((column) => [column.column_name, column]),
+              )
+              board.columns = order
+                .map((name) => byName[name])
+                .filter(Boolean)
+            }
+            return {
+              message: {
+                name: args.board_name,
+                columns: board?.columns || [],
+              },
+            }
+          }
+          return { message: {} }
+        },
+        format: (value, field) =>
+          field.fieldtype === 'Link'
+            ? `<a href="/app/project/${value}">${value}</a>`
+            : String(value),
+        get_meta: () => ({
+          name: 'Task',
+          quick_entry: 1,
+          title_field: 'subject',
+          fields: [
+            { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', reqd: 1, parent: 'Task' },
+            { fieldname: 'status', label: 'Status', fieldtype: 'Select', reqd: 1, no_copy: 1, parent: 'Task' },
+            { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
+            { fieldname: 'expected_end_date', label: 'Expected End Date', fieldtype: 'Date', parent: 'Task' },
+            { fieldname: 'project', label: 'Project', fieldtype: 'Link', parent: 'Task' },
+          ],
+        }),
+        get_palette: () => ['--blue-100', '--blue-800'],
+        get_route: () => ['List', 'Task', 'Kanban', 'Browser Board'],
+        route_options: {},
+        route_hooks: {},
+        model: {
+          can_create: () => true,
+          with_doctype: (doctype, callback) => Promise.resolve(callback?.()),
+          get_new_doc: (doctype) => {
+            const doc = {
+              doctype,
+              name: `new-${doctype}-1`,
+            }
+            const fields = window.frappe.get_meta().fields || []
+            const noCopyFields = new Set(
+              fields.filter((field) => field.no_copy).map((field) => field.fieldname),
+            )
+            Object.entries(window.frappe.route_options || {}).forEach(([fieldname, value]) => {
+              if (!noCopyFields.has(fieldname)) {
+                doc[fieldname] = value
+              }
+            })
+            window.frappe.route_options = {}
+            return doc
+          },
+        },
+        new_doc: (doctype, defaults = {}) => {
+          window.__lastNewDoc = { doctype, defaults, mode: 'quick_entry' }
+          return Promise.resolve()
+        },
+        set_route: (...args) => {
+          if (args[0] === 'List' && args[2] === 'List') {
+            window.__lastListRoute = {
+              route: args,
+              routeOptions: { ...window.frappe.route_options },
+            }
+            return Promise.resolve()
+          }
+          window.__lastNewDoc = {
+            doctype: args[1],
+            defaults: { ...window.frappe.route_options },
+            mode: 'full_form',
+            route: args,
+          }
+          return Promise.resolve()
+        },
+        show_alert: (alert) => window.__quickKanbanAlerts.push(alert),
+        update_user_info: (userInfo = {}) => {
+          Object.assign(window.frappe.boot.user_info, userInfo)
+        },
+        user_info: (user) => window.frappe.boot.user_info[user] || { fullname: user },
+        avatar_group: (users, limit = 4, options = {}) => {
+          const displayUsers = users.slice(0, limit)
+          const extraUsers = users.slice(limit)
+          const group = document.createElement('div')
+          group.className = 'avatar-group right overlap'
+
+          for (const user of displayUsers) {
+            const info = window.frappe.user_info(user)
+            const avatar = document.createElement('span')
+            avatar.className = 'avatar avatar-small'
+            const frame = document.createElement('span')
+            frame.className = 'avatar-frame'
+            if (info.image) {
+              frame.style.backgroundImage = `url("${info.image}")`
+            } else {
+              frame.classList.add('standard-image')
+              frame.textContent = (info.fullname || user).charAt(0)
+            }
+            avatar.appendChild(frame)
+            group.appendChild(avatar)
+          }
+
+          if (extraUsers.length === 1) {
+            const info = window.frappe.user_info(extraUsers[0])
+            const avatar = document.createElement('span')
+            avatar.className = 'avatar avatar-small'
+            const frame = document.createElement('span')
+            frame.className = 'avatar-frame'
+            if (info.image) {
+              frame.style.backgroundImage = `url("${info.image}")`
+            } else {
+              frame.classList.add('standard-image')
+              frame.textContent = (info.fullname || extraUsers[0]).charAt(0)
+            }
+            avatar.appendChild(frame)
+            group.appendChild(avatar)
+          } else if (extraUsers.length > 1) {
+            const count = document.createElement('span')
+            count.className = 'avatar avatar-small'
+            count.innerHTML = `<div class="avatar-frame standard-image avatar-extra-count">+${extraUsers.length}</div>`
+            group.appendChild(count)
+          }
+
+          if (options.action_icon) {
+            const action = document.createElement('span')
+            action.className = 'avatar avatar-small'
+            const actionFrame = document.createElement('div')
+            actionFrame.className = 'avatar-frame avatar-action'
+            actionFrame.dataset.actionIcon = options.action_icon
+            action.appendChild(actionFrame)
+            if (options.action) {
+              action.addEventListener('click', options.action)
+            }
+            group.appendChild(action)
+          }
+
+          return {
+            0: group,
+            get: () => group,
+            find: (selector) => ({
+              on: (event, handler) => {
+                if (event === 'click' && selector === '.avatar-action') {
+                  group.querySelectorAll('.avatar-action').forEach((node) => {
+                    node.addEventListener('click', handler)
+                  })
+                }
+              },
+            }),
+          }
+        },
+        utils: {
+          get_form_link: (doctype, name) => `/app/${doctype}/${name}`,
+          eval: (expression, context) => {
+            if (expression.includes('status == "Done"')) {
+              return context.doc.status === 'Done'
+            }
+            return false
+          },
+        },
+        msgprint: () => {},
+        workflow: {
+          workflows: {},
+          setup() {},
+        },
+        meta: {
+          docfield_list: {},
+          has_field: (doctype, fieldname) => {
+            const field = window.frappe.get_meta().fields.find(
+              (row) => row.fieldname === fieldname,
+            )
+            return field || null
+          },
+        },
+        ui: {
+          form: {
+            on: () => {},
+            off: () => {},
+            make_quick_entry: (doctype, afterInsert, initCallback, doc) => {
+              window.__lastNewDoc = {
+                doctype,
+                doc,
+                defaults: doc ? { status: doc.status } : {},
+                mode: 'quick_entry',
+              }
+              window.__lastQuickEntryAfterInsert = afterInsert
+              return Promise.resolve({})
+            },
+            AssignToDialog: class {
+              constructor() {
+                window.__assignDialogOpened = true
+              }
+              dialog = {
+                show() {
+                  window.__assignDialogShown = true
+                },
+              }
+            },
+            AssignmentDialog: class {
+              constructor() {
+                window.__assignmentDialogOpened = true
+              }
+            },
+          },
+        },
+      }
+      window.cur_list = {
+        get_args: () => ({ doctype: 'Task', page_length: 100 }),
+        get_search_params: () => new URLSearchParams([['priority', 'High']]),
+        board_perms: { write: true },
+      }
+      window.quickKanbanInitialData = {
+        board: {
+          name: 'Browser Board',
+          reference_doctype: 'Task',
+          field_name: 'status',
+          fields: ['name', 'subject', 'priority', 'expected_end_date', 'project'],
+          custom_highlighted_field: 'priority',
+          custom_highlight_table: [{ tag: 'High', color: 'red' }],
+          show_labels: 1,
+          columns: [
+            { name: 'open', column_name: 'Open', indicator: 'gray' },
+            { name: 'done', column_name: 'Done', indicator: 'green' },
+          ],
+        },
+        cards: window.__customQuickKanbanCards || [
+          {
+            name: 'TASK-1',
+            subject: 'First task',
+            status: 'Open',
+            priority: 'High',
+            expected_end_date: '2026-07-10',
+            project: 'TEST-PROJECT',
+            modified: '2026-07-10 10:00:00',
+          },
+          {
+            name: 'TASK-2',
+            subject: 'Second task',
+            status: 'Done',
+            priority: 'Low',
+            expected_end_date: '2026-07-11',
+            project: 'SECOND-PROJECT',
+            modified: '2026-07-10 10:00:00',
+          },
+        ],
+        args: { doctype: 'Task', page_length: 100 },
+        board_perms: { write: true },
+      }
+
+      await import('/src/main.js')
+      window.mountQuickKanban()
+    </script>
+  </body>
+</html>
