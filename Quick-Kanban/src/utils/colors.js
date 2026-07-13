@@ -1,13 +1,28 @@
-export const indicators = [
-    { name: 'Blue', class: 'blue' },
-    { name: 'Cyan', class: 'cyan' },
-    { name: 'Gray', class: 'gray' },
-    { name: 'Green', class: 'green' },
-    { name: 'Light Blue', class: 'light-blue' },
-    { name: 'Orange', class: 'orange' },
-    { name: 'Pink', class: 'pink' },
-    { name: 'Purple', class: 'purple' },
-    { name: 'Red', class: 'red' },
-    { name: 'Yellow', class: 'yellow' }
-  ];
-  
+const INDICATOR_DEFINITIONS = [
+  { value: 'Blue', class: 'blue' },
+  { value: 'Cyan', class: 'cyan' },
+  { value: 'Gray', class: 'gray' },
+  { value: 'Green', class: 'green' },
+  { value: 'Light Blue', class: 'light-blue' },
+  { value: 'Orange', class: 'orange' },
+  { value: 'Pink', class: 'pink' },
+  { value: 'Purple', class: 'purple' },
+  { value: 'Red', class: 'red' },
+  { value: 'Yellow', class: 'yellow' },
+]
+
+export function getIndicators() {
+  const translate = globalThis.__ || ((message) => message)
+
+  return INDICATOR_DEFINITIONS.map(({ value, class: cssClass }) => ({
+    name: translate(value),
+    value,
+    class: cssClass,
+  }))
+}
+
+export function getIndicatorDefinition(value) {
+  return INDICATOR_DEFINITIONS.find((indicator) =>
+    indicator.value === value || indicator.class === value,
+  )
+}

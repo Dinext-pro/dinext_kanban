@@ -1,3 +1,5 @@
+from pathlib import Path
+
 app_name = "quick_kanban"
 app_title = "Quick-Kanban"
 app_publisher = "tridz"
@@ -10,8 +12,11 @@ app_license = "mit"
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_css = "quick_kanban.bundle.css"
-app_include_js = "kanban_view.bundle.js"
+_bootstrap_asset = Path(__file__).parent / "public" / "js" / "kanban_bootstrap.js"
+_bootstrap_version = int(_bootstrap_asset.stat().st_mtime) if _bootstrap_asset.exists() else 1
+app_include_js = [
+    f"/assets/quick_kanban/js/kanban_bootstrap.js?v={_bootstrap_version}",
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/quick_kanban/css/quick_kanban.css"

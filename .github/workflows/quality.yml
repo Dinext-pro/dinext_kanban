@@ -1,0 +1,105 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - main
+      - main/v15
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-scripts
+
+      - name: Lint
+        run: yarn workspace quick_kanban lint
+
+      - name: Test
+        run: yarn workspace quick_kanban test:run
+
+      - name: Install browser
+        run: yarn workspace quick_kanban playwright install --with-deps chromium
+
+      - name: Browser test
+        run: yarn workspace quick_kanban test:browser
+
+      - name: Build
+        run: yarn workspace quick_kanban build
+
+      - name: Check Python syntax
+        run: python3 -m compileall -q quick_kanban
+
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      redis-cache:
+        image: redis:alpine
+        ports:
+          - 13000:6379
+      redis-queue:
+        image: redis:alpine
+        ports:
+          - 11000:6379
+      redis-socketio:
+        image: redis:alpine
+        ports:
+          - 12000:6379
+      mariadb:
+        image: mariadb:10.8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=5s
+          --health-timeout=2s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Frappe v15
+        run: |
+          pip install frappe-bench
+          bench init \
+            --frappe-branch version-15 \
+            --skip-assets \
+            --skip-redis-config-generation \
+            --python "$(which python)" \
+            "$HOME/frappe-bench"
+          mysql --host 127.0.0.1 --port 3306 -u root -proot \
+            -e "SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_unicode_ci';"
+
+      - name: Install Quick Kanban
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench get-app quick_kanban "$GITHUB_WORKSPACE"
+          bench setup requirements --dev
+          bench new-site --db-root-password root --admin-password admin test_site
+          bench --site test_site install-app quick_kanban
+          bench --site test_site set-config allow_tests true
+
+      - name: Run backend tests
+        working-directory: /home/runner/frappe-bench
+        run: bench --site test_site run-tests --app quick_kanban
