@@ -20,6 +20,9 @@ import {
   translateFieldValue,
   writeMinimizeCardsPreference,
   CARD_DENSITY_ANIMATION_MS,
+  collapsedColumnsStorageKey,
+  readCollapsedColumnsPreference,
+  writeCollapsedColumnsPreference,
 } from './kanban'
 
 const translationMap = {
@@ -477,5 +480,40 @@ describe('minimize cards preference', () => {
     writeMinimizeCardsPreference('Task Board', false, storage)
     expect(readMinimizeCardsPreference('Task Board', storage)).toBe(false)
     expect(storage.data['quick_kanban:minimize_cards:Task Board']).toBeUndefined()
+  })
+})
+
+describe('collapsed columns preference', () => {
+  test('reads and writes board-scoped localStorage preference', () => {
+    const storage = {
+      data: {},
+      getItem(key) {
+        return Object.hasOwn(this.data, key) ? this.data[key] : null
+      },
+      setItem(key, value) {
+        this.data[key] = String(value)
+      },
+      removeItem(key) {
+        delete this.data[key]
+      },
+    }
+
+    expect(collapsedColumnsStorageKey('Task Board')).toBe(
+      'quick_kanban:collapsed_columns:Task Board',
+    )
+    expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({})
+
+    writeCollapsedColumnsPreference('Task Board', { Open: true, Done: true }, storage)
+    expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({
+      Open: true,
+      Done: true,
+    })
+    expect(storage.data['quick_kanban:collapsed_columns:Task Board']).toBe(
+      JSON.stringify(['Open', 'Done']),
+    )
+
+    writeCollapsedColumnsPreference('Task Board', {}, storage)
+    expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({})
+    expect(storage.data['quick_kanban:collapsed_columns:Task Board']).toBeUndefined()
   })
 })

@@ -356,6 +356,7 @@ export function createKanbanStore() {
       minimize_cards: false,
       // Card name that should stay expanded across drag remounts (minimize mode).
       densityHoldExpandedCard: null,
+      collapsedColumns: {},
     }),
     mutations: {
       SET_MINIMIZE_CARDS(state, minimizeCards) {
@@ -363,6 +364,23 @@ export function createKanbanStore() {
         if (!state.minimize_cards) {
           state.densityHoldExpandedCard = null
         }
+      },
+      SET_COLLAPSED_COLUMNS(state, collapsedColumns) {
+        state.collapsedColumns = { ...(collapsedColumns || {}) }
+      },
+      SET_COLUMN_COLLAPSED(state, { columnKey, collapsed }) {
+        if (!columnKey) {
+          return
+        }
+        if (collapsed) {
+          state.collapsedColumns = {
+            ...state.collapsedColumns,
+            [columnKey]: true,
+          }
+          return
+        }
+        const { [columnKey]: _removed, ...rest } = state.collapsedColumns
+        state.collapsedColumns = rest
       },
       SET_DENSITY_HOLD_EXPANDED(state, cardName) {
         state.densityHoldExpandedCard = cardName || null
@@ -385,6 +403,8 @@ export function createKanbanStore() {
         state.columnPagination = columnPagination
         const { [key]: _removedTotal, ...columnTotals } = state.columnTotals
         state.columnTotals = columnTotals
+        const { [key]: _removedCollapsed, ...collapsedColumns } = state.collapsedColumns
+        state.collapsedColumns = collapsedColumns
       },
       RESTORE_COLUMN_LAYOUT(state, { columns, columnPagination, columnTotals }) {
         state.columns = columns
@@ -1501,6 +1521,7 @@ export function createKanbanStore() {
       getColumns: (state) => state.columns,
       getConfig: (state) => state.config,
       isMinimizeCards: (state) => state.minimize_cards,
+      isColumnCollapsed: (state) => (columnKey) => Boolean(state.collapsedColumns[columnKey]),
       canEditBoard: (state) => Boolean(state.boardPerms?.write),
       isMovePending: (state) => (cardName) => Boolean(state.pendingMoves[cardName]),
       isMoveOptionsLoading: (state) => state.moveOptionsLoading,

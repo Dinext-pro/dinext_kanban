@@ -3,7 +3,9 @@ import './style.css'
 import App from './App.vue'
 import store from './utils/store'
 import {
+  readCollapsedColumnsPreference,
   readMinimizeCardsPreference,
+  writeCollapsedColumnsPreference,
   writeMinimizeCardsPreference,
 } from './utils/kanban'
 
@@ -64,6 +66,29 @@ window.setQuickKanbanMinimizeCards = (value, { persist = true } = {}) => {
   return next
 }
 
+function applyCollapsedColumnsPreference(boardName) {
+  const value = readCollapsedColumnsPreference(boardName)
+  store.commit('SET_COLLAPSED_COLUMNS', value)
+  return value
+}
+
+window.setQuickKanbanColumnCollapsed = (columnKey, collapsed, { persist = true } = {}) => {
+  if (!columnKey) {
+    return store.state.collapsedColumns
+  }
+  store.commit('SET_COLUMN_COLLAPSED', {
+    columnKey,
+    collapsed: Boolean(collapsed),
+  })
+  if (persist) {
+    writeCollapsedColumnsPreference(
+      store.state.config.board_name,
+      store.state.collapsedColumns,
+    )
+  }
+  return store.state.collapsedColumns
+}
+
 store.subscribe((mutation, state) => {
   if (mutation.type === 'SET_KANBAN_CONFIG') {
     const doctype = mutation.payload?.ref_doctype
@@ -71,7 +96,17 @@ store.subscribe((mutation, state) => {
       bindCreateFormHooks(doctype)
     }
     applyMinimizePreference(state.config.board_name)
+    applyCollapsedColumnsPreference(state.config.board_name)
     return
+  }
+  if (
+    mutation.type === 'SET_COLUMN_COLLAPSED'
+    || mutation.type === 'REMOVE_COLUMN'
+  ) {
+    writeCollapsedColumnsPreference(
+      state.config.board_name,
+      state.collapsedColumns,
+    )
   }
 })
 
@@ -79,6 +114,7 @@ if (store.state.config?.ref_doctype) {
   bindCreateFormHooks(store.state.config.ref_doctype)
 }
 applyMinimizePreference(store.state.config?.board_name)
+applyCollapsedColumnsPreference(store.state.config?.board_name)
 
 let app
 let mountedTarget

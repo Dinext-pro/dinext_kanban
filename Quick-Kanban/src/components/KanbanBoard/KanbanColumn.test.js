@@ -102,7 +102,8 @@ test('does not mark the column title draggable without board write access', () =
 })
 
 test('uses labelled buttons for adding cards and choosing colors', async () => {
-  const { wrapper } = mountColumn()
+  const { wrapper, store } = mountColumn()
+  const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
 
   const addButton = wrapper.get('[aria-label="Add Task to Open"]')
   expect(addButton.element.tagName).toBe('BUTTON')
@@ -111,6 +112,10 @@ test('uses labelled buttons for adding cards and choosing colors', async () => {
   const colorButton = wrapper.get('[aria-label="Set Open color to Gray"]')
   expect(colorButton.element.tagName).toBe('BUTTON')
   await colorButton.trigger('click')
+  expect(dispatchSpy).toHaveBeenCalledWith('setIndicator', {
+    indicator: 'Gray',
+    columnIndex: 0,
+  })
 })
 
 test('synchronizes expanded state and closes the color menu with Escape', async () => {
@@ -282,4 +287,93 @@ test('loads the next page only when this column reaches the bottom', async () =>
     columnIndex: 0,
     args: window.cur_list.get_args(),
   })
+})
+
+test('collapses the column from the menu and shows Open while collapsed', async () => {
+  const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
+
+  await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
+  expect(wrapper.get('[aria-label="Collapse Open column"]').text()).toBe('Collapse')
+  expect(wrapper.get('[aria-label="Hide Open column"]').exists()).toBe(true)
+
+  await wrapper.get('[aria-label="Collapse Open column"]').trigger('click')
+  expect(wrapper.classes()).toContain('kanban-column--collapsed')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+  expect(wrapper.find('[aria-label="Add Task to Open"]').isVisible()).toBe(false)
+  expect(wrapper.find('[aria-label="Column colors"]').exists()).toBe(false)
+
+  await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
+  expect(wrapper.get('[aria-label="Open Open column"]').text()).toBe('Open')
+
+  await wrapper.get('[aria-label="Open Open column"]').trigger('click')
+  expect(wrapper.classes()).not.toContain('kanban-column--collapsed')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+})
+
+test('toggles collapse with double-click on the title', async () => {
+  const { wrapper, store } = mountColumn()
+
+  await wrapper.get('h2.column-title').trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+  expect(wrapper.classes()).toContain('kanban-column--collapsed')
+
+  await wrapper.get('h2.column-title').trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+})
+
+test('expands a collapsed column from the count without opening the list', async () => {
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await wrapper.vm.$nextTick()
+  frappe.set_route.mockClear()
+
+  await wrapper.get('.column-count').trigger('dblclick')
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  expect(frappe.set_route).not.toHaveBeenCalled()
+})
+
+test('auto-expands a collapsed column after drag dwell delay', async () => {
+  vi.useFakeTimers()
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  store.commit('SET_ACTIVE_DRAG', {
+    cardName: 'TASK-1',
+    fromColumn: 1,
+    fromIndex: 0,
+  })
+  await wrapper.vm.$nextTick()
+
+  await wrapper.trigger('pointerenter')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+
+  await vi.advanceTimersByTimeAsync(400)
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  vi.useRealTimers()
+})
+
+test('cancels drag auto-expand when the pointer leaves before the dwell delay', async () => {
+  vi.useFakeTimers()
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  store.commit('SET_ACTIVE_DRAG', {
+    cardName: 'TASK-1',
+    fromColumn: 1,
+    fromIndex: 0,
+  })
+  await wrapper.vm.$nextTick()
+
+  await wrapper.trigger('pointerenter')
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(400)
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+  vi.useRealTimers()
+})
+
+test('keeps title draggable while the column is collapsed', () => {
+  const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+
+  expect(wrapper.get('h2.column-title').classes()).toContain('column-title--draggable')
 })
