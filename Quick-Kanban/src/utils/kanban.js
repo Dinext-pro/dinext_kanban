@@ -227,7 +227,28 @@ export function normalizeBoardConfig(board, meta = {}) {
       ? board.custom_highlight_table
       : [],
     show_labels: Boolean(board.show_labels),
+    show_tags: Boolean(board.custom_show_tags),
   }
+}
+
+/**
+ * Build colored tag-pill HTML via the standard ListView helper (same as native Kanban).
+ * @param {string|null|undefined} userTags `_user_tags` value (",tag1,tag2")
+ * @param {{ get_tags_html?: Function }|null} [list] list view instance; defaults to `cur_list`
+ * @param {number} [limit=3]
+ * @returns {string}
+ */
+export function getCardTagsHtml(userTags, list = globalThis.cur_list, limit = 3) {
+  if (!userTags) {
+    return ''
+  }
+  const getTagsHtml =
+    (typeof list?.get_tags_html === 'function' && list.get_tags_html.bind(list))
+    || globalThis.frappe?.views?.ListView?.prototype?.get_tags_html
+  if (typeof getTagsHtml !== 'function') {
+    return ''
+  }
+  return getTagsHtml(userTags, limit, true) || ''
 }
 
 export function transformCard(keys, values, userInfo = {}) {

@@ -1,8 +1,9 @@
-import { describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   attachColumnDisplayNames,
   formatCardField,
   getCardFieldDisplayValue,
+  getCardTagsHtml,
   getColumnDisplayName,
   getColumnKey,
   getIndicatorClass,
@@ -33,6 +34,44 @@ function mockTranslate(message, _values, context) {
   const key = context ? `${message}::${context}` : message
   return translationMap[key] || translationMap[message] || message
 }
+
+describe('getCardTagsHtml', () => {
+  test('delegates to list get_tags_html with a limit of three colored pills', () => {
+    const list = {
+      get_tags_html: vi.fn(() => '<div class="tag-pill">alpha</div>'),
+    }
+    expect(getCardTagsHtml(',alpha,beta', list)).toBe('<div class="tag-pill">alpha</div>')
+    expect(list.get_tags_html).toHaveBeenCalledWith(',alpha,beta', 3, true)
+  })
+
+  test('falls back to ListView.prototype when cur_list helper is missing', () => {
+    const previous = globalThis.frappe.views
+    globalThis.frappe.views = {
+      ListView: {
+        prototype: {
+          get_tags_html: vi.fn(() => '<div class="tag-pill">fallback</div>'),
+        },
+      },
+    }
+    try {
+      expect(getCardTagsHtml(',alpha', null)).toBe('<div class="tag-pill">fallback</div>')
+      expect(frappe.views.ListView.prototype.get_tags_html).toHaveBeenCalledWith(',alpha', 3, true)
+    } finally {
+      globalThis.frappe.views = previous
+    }
+  })
+
+  test('returns empty string without tags or html helper', () => {
+    const previous = globalThis.frappe.views
+    globalThis.frappe.views = undefined
+    try {
+      expect(getCardTagsHtml('', { get_tags_html: vi.fn() })).toBe('')
+      expect(getCardTagsHtml(',alpha', null)).toBe('')
+    } finally {
+      globalThis.frappe.views = previous
+    }
+  })
+})
 
 describe('getColumnKey', () => {
   test('prefers column_name over child row name', () => {
@@ -69,10 +108,32 @@ describe('normalizeBoardConfig', () => {
       highlighted_field: 'priority',
       highlight_table: [],
       show_labels: true,
+      show_tags: false,
       title_field_meta: { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
       status_field_meta: { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
       highlighted_field_meta: { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
     })
+  })
+
+  test('maps custom_show_tags to show_tags', () => {
+    const enabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_tags: 1,
+    }, { title_field: 'subject', fields: [] })
+
+    const disabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_tags: 0,
+    }, { title_field: 'subject', fields: [] })
+
+    expect(enabled.show_tags).toBe(true)
+    expect(disabled.show_tags).toBe(false)
   })
 
   test('falls back to useful card fields when fields JSON is invalid', () => {
