@@ -293,8 +293,12 @@ test('collapses the column from the menu and shows Open while collapsed', async 
   const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
 
   await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
-  expect(wrapper.get('[aria-label="Collapse Open column"]').text()).toBe('Collapse')
-  expect(wrapper.get('[aria-label="Hide Open column"]').exists()).toBe(true)
+  const collapseButton = wrapper.get('[aria-label="Collapse Open column"]')
+  expect(collapseButton.get('span').text()).toBe('Collapse')
+  expect(collapseButton.get('use').attributes('href')).toBe('#icon-sidebar-collapse')
+  const hideButton = wrapper.get('[aria-label="Hide Open column"]')
+  expect(hideButton.exists()).toBe(true)
+  expect(hideButton.get('use').attributes('href')).toBe('#icon-hide')
 
   await wrapper.get('[aria-label="Collapse Open column"]').trigger('click')
   expect(wrapper.classes()).toContain('kanban-column--collapsed')
@@ -303,11 +307,78 @@ test('collapses the column from the menu and shows Open while collapsed', async 
   expect(wrapper.find('[aria-label="Column colors"]').exists()).toBe(false)
 
   await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
-  expect(wrapper.get('[aria-label="Open Open column"]').text()).toBe('Open')
+  const openButton = wrapper.get('[aria-label="Open Open column"]')
+  expect(openButton.get('span').text()).toBe('Open')
+  expect(openButton.get('use').attributes('href')).toBe('#icon-sidebar-expand')
 
   await wrapper.get('[aria-label="Open Open column"]').trigger('click')
   expect(wrapper.classes()).not.toContain('kanban-column--collapsed')
   expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+})
+
+test('flips the collapsed column menu left when there is no room on the right', async () => {
+  const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await wrapper.vm.$nextTick()
+
+  const originalInnerWidth = window.innerWidth
+  const originalInnerHeight = window.innerHeight
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+  const originalGbr = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.classList?.contains('column-dropdown')) {
+      return {
+        top: 0,
+        bottom: 180,
+        left: 0,
+        right: 200,
+        width: 200,
+        height: 180,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      }
+    }
+    if (this.getAttribute?.('aria-label') === 'Change Open column color') {
+      return {
+        top: 40,
+        bottom: 72,
+        left: 340,
+        right: 372,
+        width: 32,
+        height: 32,
+        x: 340,
+        y: 40,
+        toJSON() {},
+      }
+    }
+    return originalGbr.call(this)
+  }
+
+  try {
+    await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const menu = wrapper.get('[aria-label="Column colors"]')
+    const style = menu.attributes('style') || ''
+    const leftMatch = style.match(/left:\s*([\d.]+)px/)
+    expect(leftMatch).not.toBeNull()
+    // trigger.left (340) - menu.width (200) - gap (4) = 136
+    expect(Number(leftMatch[1])).toBe(136)
+    expect(Number(leftMatch[1])).toBeLessThanOrEqual(340)
+  } finally {
+    Element.prototype.getBoundingClientRect = originalGbr
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalInnerWidth,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: originalInnerHeight,
+    })
+  }
 })
 
 test('toggles collapse with double-click on the title', async () => {

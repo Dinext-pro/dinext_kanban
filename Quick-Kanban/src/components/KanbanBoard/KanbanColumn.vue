@@ -54,7 +54,7 @@
             class="header-item"
             :aria-label="__('Change {0} column color', [columnLabel])"
             :aria-expanded="String(colorMenuOpen)"
-            @click="colorMenuOpen = !colorMenuOpen"
+            @click="toggleColorMenu"
           >
             <svg class="icon icon-sm" aria-hidden="true">
               <use href="#icon-dot-horizontal"></use>
@@ -67,6 +67,7 @@
             class="column-dropdown"
             role="group"
             :aria-label="__('Column colors')"
+            :style="collapsed ? columnMenuStyle : undefined"
           >
             <div class="column-color-swatches">
               <button
@@ -89,9 +90,12 @@
                 : __('Collapse {0} column', [columnLabel], COLUMN_CTX)"
               @click="toggleCollapsedFromMenu"
             >
-              {{ collapsed
+              <svg class="icon icon-sm" aria-hidden="true">
+                <use :href="collapsed ? '#icon-sidebar-expand' : '#icon-sidebar-collapse'"></use>
+              </svg>
+              <span>{{ collapsed
                 ? __('Open', [], COLUMN_CTX)
-                : __('Collapse', [], COLUMN_CTX) }}
+                : __('Collapse', [], COLUMN_CTX) }}</span>
             </button>
             <button
               v-if="canEditBoard"
@@ -100,7 +104,10 @@
               :aria-label="__('Hide {0} column', [columnLabel])"
               @click="hideColumn"
             >
-              {{ __('Hide') }}
+              <svg class="icon icon-sm" aria-hidden="true">
+                <use href="#icon-hide"></use>
+              </svg>
+              <span>{{ __('Hide') }}</span>
             </button>
           </div>
         </div>
@@ -199,6 +206,7 @@ const virtualListRef = ref(null)
 const colorMenuButton = ref(null)
 const colorMenuPanel = ref(null)
 const colorMenuOpen = ref(false)
+const columnMenuStyle = ref({})
 const columnRootRef = ref(null)
 const __ = globalThis.__
 const indicators = computed(() => getIndicators())
@@ -479,7 +487,50 @@ function hideColumn() {
 
 function closeColorMenu({ restoreFocus = true } = {}) {
   colorMenuOpen.value = false
+  columnMenuStyle.value = {}
   if (restoreFocus) nextTick(() => colorMenuButton.value?.focus())
+}
+
+function positionCollapsedColorMenu() {
+  const triggerRect = colorMenuButton.value?.getBoundingClientRect()
+  const menuRect = colorMenuPanel.value?.getBoundingClientRect()
+  if (!triggerRect || !menuRect) return
+
+  const margin = 8
+  const gap = 4
+  const preferredLeft = triggerRect.right + gap
+  const flippedLeft = triggerRect.left - menuRect.width - gap
+  const left = preferredLeft + menuRect.width <= window.innerWidth - margin
+    ? Math.max(margin, preferredLeft)
+    : Math.max(margin, Math.min(flippedLeft, window.innerWidth - menuRect.width - margin))
+
+  const preferredTop = triggerRect.top
+  const top = preferredTop + menuRect.height <= window.innerHeight - margin
+    ? Math.max(margin, preferredTop)
+    : Math.max(margin, triggerRect.bottom - menuRect.height)
+
+  columnMenuStyle.value = {
+    top: `${top}px`,
+    left: `${left}px`,
+    visibility: 'visible',
+  }
+}
+
+function toggleColorMenu() {
+  if (colorMenuOpen.value) {
+    closeColorMenu()
+    return
+  }
+
+  if (!collapsed.value) {
+    columnMenuStyle.value = {}
+    colorMenuOpen.value = true
+    return
+  }
+
+  columnMenuStyle.value = { visibility: 'hidden' }
+  colorMenuOpen.value = true
+  nextTick(() => positionCollapsedColorMenu())
 }
 
 function scrollToCard(cardName, cardIndex) {

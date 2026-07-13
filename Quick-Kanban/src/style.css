@@ -169,11 +169,12 @@
 }
 
 #kanbanapp .kanban-column--collapsed .column-dropdown {
+  position: fixed;
   top: 0;
-  left: calc(100% + 4px);
+  left: 0;
   right: auto;
   transform: none;
-  z-index: 20;
+  z-index: 1050;
 }
 
 #kanbanapp .kanban-column--collapsed .kanban-card-list {
@@ -342,7 +343,10 @@
 }
 
 #kanbanapp .column-menu-action {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
   width: 100%;
   margin: 0;
   padding: 6px 8px;
@@ -354,6 +358,13 @@
   font-size: var(--text-sm);
   text-align: start;
   cursor: pointer;
+}
+
+#kanbanapp .column-menu-action .icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 0; /* override Frappe .icon { margin: 0 auto } */
 }
 
 #kanbanapp .column-menu-action:last-child {
