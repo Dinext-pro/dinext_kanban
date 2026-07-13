@@ -633,3 +633,119 @@ test('does not attach Open Kanban Board action to unrelated dialogs', () => {
     NativeKanbanView.prototype.show_kanban_settings = nativeShow
   }
 })
+
+function createFilterSection() {
+  const customActions = document.createElement('div')
+  customActions.className = 'custom-actions'
+  const section = document.createElement('div')
+  section.className = 'filter-section flex'
+  const filterSelector = document.createElement('div')
+  filterSelector.className = 'filter-selector'
+  const button = document.createElement('button')
+  button.className = 'filter-button'
+  button.textContent = 'Filter'
+  filterSelector.appendChild(button)
+  section.appendChild(filterSelector)
+  customActions.appendChild(section)
+  document.body.appendChild(customActions)
+  return {
+    0: section,
+    length: 1,
+    find: (selector) => {
+      const nodes = [...section.querySelectorAll(selector)]
+      return Object.assign(nodes, {
+        0: nodes[0],
+        length: nodes.length,
+      })
+    },
+    prepend: (node) => {
+      section.insertBefore(node, section.firstChild)
+    },
+  }
+}
+
+test('inserts Minimize checkbox before the Filter control on beta render', async () => {
+  const setMinimize = vi.fn()
+  window.setQuickKanbanMinimizeCards = setMinimize
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.$filter_section = createFilterSection()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(window.mountQuickKanban).toHaveBeenCalledTimes(1)
+  })
+
+  const control = document.querySelector('.quick-kanban-minimize-control')
+  const filterSection = document.querySelector('.filter-section')
+  expect(control).toBeTruthy()
+  expect(control.nextElementSibling).toBe(filterSection)
+  expect(control.textContent).toContain('Minimize')
+
+  const checkbox = control.querySelector('input[type="checkbox"]')
+  checkbox.checked = true
+  checkbox.dispatchEvent(new Event('change'))
+  expect(setMinimize).toHaveBeenCalledWith(true)
+})
+
+test('removes Minimize checkbox when falling back to native Kanban', async () => {
+  window.quickKanbanBootstrap.shouldUseBeta = vi.fn(() => false)
+  const NativeBoard = vi.fn()
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: { bundled_asset: vi.fn() },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: NativeBoard,
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.$filter_section = createFilterSection()
+  view.setup_minimize_cards_control()
+  expect(document.querySelector('.quick-kanban-minimize-control')).toBeTruthy()
+
+  view.render()
+  await vi.waitFor(() => expect(NativeBoard).toHaveBeenCalledTimes(1))
+  expect(document.querySelector('.quick-kanban-minimize-control')).toBeNull()
+})

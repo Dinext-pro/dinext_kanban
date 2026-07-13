@@ -510,3 +510,139 @@ test('does not apply card accent styling for empty or invalid color values', () 
     expect(wrapper.attributes('style') || '').not.toContain('--card-accent-color')
   }
 })
+
+test('hides only display fields while minimized and keeps header with meta', () => {
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
+  expect(wrapper.find('.kanban-card-fields').exists()).toBe(true)
+  expect(wrapper.get('.card-title').text()).toBe('First task')
+  expect(wrapper.get('[aria-label="Drag First task"]').exists()).toBe(true)
+  expect(wrapper.get('.kanban-highlight').text()).toBe('High')
+  expect(wrapper.get('[aria-label="Move First task"]').exists()).toBe(true)
+  expect(wrapper.get('.assignments-block').exists()).toBe(true)
+})
+
+test('expands minimized card after hover delay and collapses after leave', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
+
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  expect(wrapper.text()).toContain('Due date')
+
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.classes()).not.toContain('kanban-card--expanded')
+  expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
+
+  vi.useRealTimers()
+})
+
+test('keeps expanded density while dragging and after remount until leave', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const card = {
+    name: 'TASK-1',
+    subject: 'First task',
+    status: 'Open',
+    priority: 'High',
+    due_date: '2026-07-10',
+    project: 'TEST-PROJECT',
+    _assign: {},
+  }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card,
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  store.commit('SET_ACTIVE_DRAG', {
+    cardName: 'TASK-1',
+    fromColumn: 0,
+    fromIndex: 0,
+  })
+  await flushPromises()
+  expect(store.state.densityHoldExpandedCard).toBe('TASK-1')
+
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(store.state.densityHoldExpandedCard).toBe('TASK-1')
+
+  wrapper.unmount()
+  store.commit('SET_ACTIVE_DRAG', null)
+
+  const remounted = mount(KanbanCard, {
+    props: {
+      card,
+      config: store.state.config,
+      columnIndex: 1,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  expect(remounted.classes()).toContain('kanban-card--expanded')
+  expect(remounted.classes()).not.toContain('kanban-card--minimized')
+
+  await remounted.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(remounted.classes()).toContain('kanban-card--minimized')
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+
+  remounted.unmount()
+  vi.useRealTimers()
+})

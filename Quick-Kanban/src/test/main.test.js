@@ -7,6 +7,7 @@ beforeEach(() => {
   delete window.isQuickKanbanMountedOn
   delete window.refreshKanbanBoard
   delete window.hydrateQuickKanban
+  delete window.setQuickKanbanMinimizeCards
   vi.resetModules()
 })
 
@@ -62,4 +63,35 @@ test('binds persistent create form hooks for the configured doctype', async () =
       after_cancel: expect.any(Function),
     }),
   )
+})
+
+test('setQuickKanbanMinimizeCards updates store, storage, and checkbox', async () => {
+  localStorage.clear()
+  await import('../main.js')
+  window.__quickKanbanStore.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'subject',
+    fields: ['name'],
+    highlight_table: [],
+  })
+
+  const label = document.createElement('label')
+  label.className = 'quick-kanban-minimize-control'
+  const checkbox = document.createElement('input')
+  checkbox.type = 'checkbox'
+  label.append(checkbox)
+  document.body.appendChild(label)
+
+  window.setQuickKanbanMinimizeCards(true)
+
+  expect(window.__quickKanbanStore.state.minimize_cards).toBe(true)
+  expect(localStorage.getItem('quick_kanban:minimize_cards:Task Board')).toBe('1')
+  expect(checkbox.checked).toBe(true)
+
+  window.setQuickKanbanMinimizeCards(false)
+  expect(window.__quickKanbanStore.state.minimize_cards).toBe(false)
+  expect(localStorage.getItem('quick_kanban:minimize_cards:Task Board')).toBeNull()
+  expect(checkbox.checked).toBe(false)
 })
