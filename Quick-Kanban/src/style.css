@@ -20,6 +20,7 @@
   --kanban-drop-allowed-outline: var(--primary, var(--blue-500, #2491ef));
   --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #2491ef) 12%, transparent);
   --kanban-drop-forbidden-overlay: rgb(23 23 23 / 0.28);
+  --kanban-header-item-hover-bg: color-mix(in srgb, var(--gray-600, #525252) 11%, transparent);
   --kanban-move-flash-success-outline: var(--gray-400, #a3a3a3);
   --kanban-move-flash-success-glow: color-mix(in srgb, var(--gray-400, #a3a3a3) 22%, transparent);
   --kanban-move-flash-failure-outline: var(--orange-500, #f97316);
@@ -42,6 +43,7 @@
   --kanban-drop-allowed-outline: var(--primary, var(--blue-400, #7ec1ff));
   --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #7ec1ff) 18%, transparent);
   --kanban-drop-forbidden-overlay: rgb(0 0 0 / 0.42);
+  --kanban-header-item-hover-bg: color-mix(in srgb, var(--gray-400, #a3a3a3) 18%, transparent);
   --kanban-move-flash-success-outline: var(--gray-500, #737373);
   --kanban-move-flash-success-glow: color-mix(in srgb, var(--gray-500, #737373) 28%, transparent);
   --kanban-move-flash-failure-outline: var(--orange-400, #fb923c);
@@ -770,7 +772,11 @@
 }
 
 #kanbanapp .header-item:hover {
-  background-color: #5b5f611c;
+  background-color: var(--kanban-header-item-hover-bg);
+}
+
+#kanbanapp .kanban-card-progress {
+  margin: 0;
 }
 
 #kanbanapp .loadbtn {
