@@ -151,6 +151,13 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         }
     }
 
+    toggle_result_area() {
+        // Columns come from the board config; keep $result visible with empty cards.
+        this.$result.show();
+        this.$no_result?.hide?.();
+        this.$paging_area?.toggle?.(false);
+    }
+
     render() {
         const renderToken = Symbol("quick-kanban-render");
         this.quick_kanban_render_token = renderToken;
