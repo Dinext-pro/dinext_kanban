@@ -8,6 +8,7 @@ beforeEach(() => {
   delete window.refreshKanbanBoard
   delete window.hydrateQuickKanban
   delete window.setQuickKanbanMinimizeCards
+  delete window.setQuickKanbanColumnCollapsed
   vi.resetModules()
 })
 
@@ -94,4 +95,48 @@ test('setQuickKanbanMinimizeCards updates store, storage, and checkbox', async (
   expect(window.__quickKanbanStore.state.minimize_cards).toBe(false)
   expect(localStorage.getItem('quick_kanban:minimize_cards:Task Board')).toBeNull()
   expect(checkbox.checked).toBe(false)
+})
+
+test('setQuickKanbanColumnCollapsed updates store and storage', async () => {
+  localStorage.clear()
+  await import('../main.js')
+  window.__quickKanbanStore.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'subject',
+    fields: ['name'],
+    highlight_table: [],
+  })
+
+  window.setQuickKanbanColumnCollapsed('Open', true)
+
+  expect(window.__quickKanbanStore.state.collapsedColumns).toEqual({ Open: true })
+  expect(localStorage.getItem('quick_kanban:collapsed_columns:Task Board')).toBe(
+    JSON.stringify(['Open']),
+  )
+
+  window.setQuickKanbanColumnCollapsed('Open', false)
+  expect(window.__quickKanbanStore.state.collapsedColumns).toEqual({})
+  expect(localStorage.getItem('quick_kanban:collapsed_columns:Task Board')).toBeNull()
+})
+
+test('loads collapsed columns preference when board config is set', async () => {
+  localStorage.clear()
+  localStorage.setItem(
+    'quick_kanban:collapsed_columns:Task Board',
+    JSON.stringify(['Done']),
+  )
+  await import('../main.js')
+
+  window.__quickKanbanStore.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'subject',
+    fields: ['name'],
+    highlight_table: [],
+  })
+
+  expect(window.__quickKanbanStore.state.collapsedColumns).toEqual({ Done: true })
 })

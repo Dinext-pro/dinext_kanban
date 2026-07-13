@@ -5,11 +5,15 @@ const DEFAULT_FIELDS = ['name']
 const CARD_COLOR_FIELDNAME = 'color'
 const CARD_ACCENT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?([0-9A-Fa-f]{2})?$/
 const MINIMIZE_CARDS_STORAGE_PREFIX = 'quick_kanban:minimize_cards:'
+const COLLAPSED_COLUMNS_STORAGE_PREFIX = 'quick_kanban:collapsed_columns:'
 
 export const QUICK_KANBAN_BOARD_TRANSLATION_CONTEXT = 'QuickKanban.Board'
+export const QUICK_KANBAN_COLUMN_TRANSLATION_CONTEXT = 'QuickKanban.Column'
 export const CARD_EXPAND_DELAY_MS = 400
 export const CARD_COLLAPSE_DELAY_MS = 300
 export const CARD_DENSITY_ANIMATION_MS = 200
+export const COLUMN_COLLAPSE_ANIMATION_MS = 220
+export const COLUMN_DRAG_EXPAND_DELAY_MS = 400
 
 export function minimizeCardsStorageKey(boardName) {
   return `${MINIMIZE_CARDS_STORAGE_PREFIX}${boardName || ''}`
@@ -28,6 +32,58 @@ export function writeMinimizeCardsPreference(boardName, value, storage = globalT
     const key = minimizeCardsStorageKey(boardName)
     if (value) {
       storage?.setItem?.(key, '1')
+    } else {
+      storage?.removeItem?.(key)
+    }
+  } catch {
+    // Ignore quota / private-mode storage failures.
+  }
+}
+
+export function collapsedColumnsStorageKey(boardName) {
+  return `${COLLAPSED_COLUMNS_STORAGE_PREFIX}${boardName || ''}`
+}
+
+export function collapsedColumnsFromList(columnNames = []) {
+  const collapsed = {}
+  for (const name of columnNames) {
+    if (name) {
+      collapsed[name] = true
+    }
+  }
+  return collapsed
+}
+
+export function collapsedColumnsToList(collapsedColumns = {}) {
+  return Object.keys(collapsedColumns).filter((name) => collapsedColumns[name])
+}
+
+export function readCollapsedColumnsPreference(boardName, storage = globalThis.localStorage) {
+  try {
+    const raw = storage?.getItem?.(collapsedColumnsStorageKey(boardName))
+    if (!raw) {
+      return {}
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return {}
+    }
+    return collapsedColumnsFromList(parsed)
+  } catch {
+    return {}
+  }
+}
+
+export function writeCollapsedColumnsPreference(
+  boardName,
+  collapsedColumns,
+  storage = globalThis.localStorage,
+) {
+  try {
+    const key = collapsedColumnsStorageKey(boardName)
+    const names = collapsedColumnsToList(collapsedColumns)
+    if (names.length) {
+      storage?.setItem?.(key, JSON.stringify(names))
     } else {
       storage?.removeItem?.(key)
     }
