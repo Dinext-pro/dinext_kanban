@@ -35,20 +35,32 @@
       </span>
     </header>
 
-    <div v-if="displayFields.length" class="kanban-card-fields-slot">
-      <dl
-        class="kanban-card-fields"
-        :class="{ 'values-only': !config.show_labels }"
-      >
-        <template v-for="field in displayFields" :key="field.fieldname">
-          <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
-          <dd
-            :class="{ 'field-without-label': !config.show_labels }"
-            :data-fieldtype="field.fieldtype"
-            v-html="formatValue(field)"
-          ></dd>
-        </template>
-      </dl>
+    <div
+      v-if="showDetailsSlot"
+      class="kanban-card-fields-slot"
+    >
+      <div class="kanban-card-density-inner">
+        <dl
+          v-if="displayFields.length"
+          class="kanban-card-fields"
+          :class="{ 'values-only': !config.show_labels }"
+        >
+          <template v-for="field in displayFields" :key="field.fieldname">
+            <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
+            <dd
+              :class="{ 'field-without-label': !config.show_labels }"
+              :data-fieldtype="field.fieldtype"
+              v-html="formatValue(field)"
+            ></dd>
+          </template>
+        </dl>
+
+        <div
+          v-if="config.show_tags && tagsHtml"
+          class="kanban-tags"
+          v-html="tagsHtml"
+        ></div>
+      </div>
     </div>
 
     <div class="kanban-card-meta">
@@ -122,6 +134,7 @@ import {
   CARD_EXPAND_DELAY_MS,
   formatCardField,
   getCardFieldDisplayValue,
+  getCardTagsHtml,
   parseCardAccentColor,
   translateFieldLabel,
 } from '../../utils/kanban'
@@ -198,6 +211,15 @@ const moveBlockedLabel = computed(() => {
   return __('Move is not available for {0}', [title.value])
 })
 const displayFields = computed(() => props.config.display_fields || [])
+const tagsHtml = computed(() => {
+  if (!props.config.show_tags) {
+    return ''
+  }
+  return getCardTagsHtml(props.card._user_tags)
+})
+const showDetailsSlot = computed(
+  () => displayFields.value.length > 0 || Boolean(props.config.show_tags && tagsHtml.value),
+)
 const highlightValue = computed(() => {
   if (!props.config.highlighted_field) return ''
   return getCardFieldDisplayValue(

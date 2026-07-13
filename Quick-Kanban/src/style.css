@@ -392,13 +392,19 @@
 }
 
 #kanbanapp .kanban-card-fields-slot {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition: grid-template-rows var(--kanban-card-density-duration) ease;
+  display: block;
+  overflow: hidden;
+  min-height: 0;
+  max-height: 16rem;
+  transition: max-height var(--kanban-card-density-duration) ease;
 }
 
 #kanbanapp .kanban-card--minimized .kanban-card-fields-slot {
-  grid-template-rows: 0fr;
+  max-height: 0;
+}
+
+#kanbanapp .kanban-card-density-inner {
+  min-height: 0;
 }
 
 #kanbanapp .kanban-card--minimized {
@@ -485,6 +491,25 @@
 
 #kanbanapp .kanban-card-fields .field-without-label {
   grid-column: 1 / -1;
+}
+
+#kanbanapp .kanban-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+  margin-bottom: 0;
+  font-size: var(--text-sm, 12px);
+}
+
+#kanbanapp .kanban-tags .tag-pill {
+  border-radius: 100px;
+  height: 22px;
+  width: auto;
+  max-width: 100%;
+  padding: 2px 8px;
+  margin: 0;
+  line-height: 18px;
 }
 
 #kanbanapp .kanban-highlight {

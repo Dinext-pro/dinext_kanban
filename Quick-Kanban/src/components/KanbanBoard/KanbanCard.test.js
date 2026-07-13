@@ -36,6 +36,7 @@ function createStore() {
     highlighted_field: 'priority',
     highlight_table: [{ tag: 'High', color: 'red' }],
     show_labels: true,
+    show_tags: false,
   })
   store.commit('SET_COLUMNS', [
     {
@@ -78,6 +79,7 @@ beforeEach(() => {
   frappe.ui.form.AssignToDialog.mockClear()
   frappe.ui.form.AssignmentDialog.mockClear()
   flashMovedCard.mockClear()
+  cur_list.get_tags_html.mockClear()
 })
 
 test('renders a semantic card with labels and a dedicated drag handle', () => {
@@ -133,6 +135,66 @@ test('hides field labels when show_labels is disabled', () => {
   expect(wrapper.text()).not.toContain('Project')
   expect(wrapper.text()).toContain('formatted:2026-07-10')
   expect(wrapper.get('.kanban-card-fields a').text()).toBe('TEST-PROJECT')
+})
+
+test('renders colored tags between fields and meta when show_tags is enabled', () => {
+  const store = createStore()
+  const config = { ...store.state.config, show_tags: true }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _user_tags: ',alpha,beta,gamma,delta',
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  const details = wrapper.get('.kanban-card-fields-slot')
+  const tags = wrapper.get('.kanban-tags')
+  const fields = wrapper.get('.kanban-card-fields')
+  const meta = wrapper.get('.kanban-card-meta')
+  expect(fields.element.parentElement).toBe(details.get('.kanban-card-density-inner').element)
+  expect(tags.element.parentElement).toBe(fields.element.parentElement)
+  expect(fields.element.nextElementSibling).toBe(tags.element)
+  expect(details.element.nextElementSibling).toBe(meta.element)
+  expect(wrapper.findAll('.tag-pill')).toHaveLength(3)
+  expect(wrapper.text()).toContain('alpha')
+  expect(wrapper.text()).toContain('beta')
+  expect(wrapper.text()).toContain('gamma')
+  expect(wrapper.text()).not.toContain('delta')
+  expect(cur_list.get_tags_html).toHaveBeenCalledWith(',alpha,beta,gamma,delta', 3, true)
+})
+
+test('hides tags when show_tags is disabled', () => {
+  const store = createStore()
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _user_tags: ',alpha,beta',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.find('.kanban-tags').exists()).toBe(false)
 })
 
 test('offers a keyboard-operable move control', async () => {
@@ -511,9 +573,11 @@ test('does not apply card accent styling for empty or invalid color values', () 
   }
 })
 
-test('hides only display fields while minimized and keeps header with meta', () => {
+test('collapses fields and tags slots while minimized; keeps header and meta', async () => {
+  vi.useFakeTimers()
   const store = createStore()
   store.commit('SET_MINIMIZE_CARDS', true)
+  const config = { ...store.state.config, show_tags: true }
   const wrapper = mount(KanbanCard, {
     props: {
       card: {
@@ -524,8 +588,9 @@ test('hides only display fields while minimized and keeps header with meta', () 
         due_date: '2026-07-10',
         project: 'TEST-PROJECT',
         _assign: {},
+        _user_tags: ',alpha,beta',
       },
-      config: store.state.config,
+      config,
       columnIndex: 0,
     },
     global: { plugins: [store], stubs: { Teleport: true } },
@@ -533,12 +598,24 @@ test('hides only display fields while minimized and keeps header with meta', () 
 
   expect(wrapper.classes()).toContain('kanban-card--minimized')
   expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
-  expect(wrapper.find('.kanban-card-fields').exists()).toBe(true)
+  expect(wrapper.find('.kanban-card-density-inner .kanban-card-fields').exists()).toBe(true)
+  expect(wrapper.find('.kanban-card-density-inner .kanban-tags').exists()).toBe(true)
   expect(wrapper.get('.card-title').text()).toBe('First task')
   expect(wrapper.get('[aria-label="Drag First task"]').exists()).toBe(true)
   expect(wrapper.get('.kanban-highlight').text()).toBe('High')
   expect(wrapper.get('[aria-label="Move First task"]').exists()).toBe(true)
   expect(wrapper.get('.assignments-block').exists()).toBe(true)
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  expect(wrapper.text()).toContain('alpha')
+  expect(wrapper.text()).toContain('beta')
+  expect(wrapper.text()).toContain('Due date')
+
+  vi.useRealTimers()
 })
 
 test('expands minimized card after hover delay and collapses after leave', async () => {

@@ -43,6 +43,7 @@ const emptyConfig = () => ({
   color_field_meta: null,
   highlight_table: [],
   show_labels: false,
+  show_tags: false,
 })
 
 function withColumnDisplayNames(columns, config) {
