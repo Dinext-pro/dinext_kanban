@@ -23,6 +23,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Расцветка карточек по полю `color` (fieldtype `Color`) в целевом DocType: цветная полоска слева и лёгкий tint фона.
 - Просмотр и изменение назначенных пользователей через стандартный Assign To Dialog.
 - Переход из диалога Kanban Settings к записи текущей Kanban Board.
+- Режим **Минимизировать**: компактные карточки (заголовок, drag-handle, highlight, Move, assignees) с раскрытием по hover и сохранением плотности при DnD.
 - Явные состояния загрузки, отсутствия данных и ошибки с повторным запросом.
 - Санитизация форматированного содержимого карточек через DOMPurify.
 - Обновление через стандартный lifecycle списка Frappe без дополнительной realtime-подписки.
@@ -189,6 +190,19 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 Сохранение выполняется через `quick_kanban.api.move_card` с `board_name`, именем документа, целевой колонкой, `expected_modified` и опциональным `workflow_action`. Сервер повторяет проверки Workflow-прав и mandatory rules, затем либо применяет `apply_workflow`, либо вызывает полный `doc.save()` с lifecycle hooks целевого DocType.
 
+### Режим «Минимизировать»
+
+В панели инструментов Desk (слева от кнопки **Фильтр**) доступен чекбокс **Минимизировать**. Состояние запоминается отдельно для каждой Kanban Board (`localStorage`).
+
+Когда режим включён:
+
+- карточки показываются компактно: видны заголовок со ссылкой, drag-handle, highlight-pill, кнопка Move и assignees; поля из `Fields` доски скрыты;
+- при наведении мыши карточка с небольшой задержкой раскрывается (поля появляются с анимацией), после ухода курсора снова сжимается;
+- если карточку перетаскивают в раскрытом виде, в целевой колонке она остаётся раскрытой и схлопывается только после ухода курсора;
+- цветовой акцент карточки (`color`) сохраняется и в компактном, и в раскрытом виде.
+
+Чекбокс добавляет `kanban_view.bundle.js` в page-actions Frappe; поведение плотности реализовано в Vue-карточках (`KanbanCard`) и store.
+
 ### Расцветка карточек по полю `color`
 
 Quick Kanban автоматически использует поле **`color`** с fieldtype **`Color`** в DocType, для которого создана доска:
@@ -290,7 +304,7 @@ bench --site <site-name> run-tests --app quick_kanban
 yarn dev
 ```
 
-Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get`), а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/`; `bench build --app quick_kanban` собирает хешированные bundles в `quick_kanban/dist/`, которые Frappe реально отдаёт на сайт. Перед review и деплоем выполняйте обе команды и проверяйте, что изменения попали в `dist/`.
+Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get` и чекбокс **Минимизировать** в page-actions), а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/`; `bench build --app quick_kanban` собирает хешированные bundles в `quick_kanban/dist/`, которые Frappe реально отдаёт на сайт. Перед review и деплоем выполняйте обе команды и проверяйте, что изменения попали в `dist/`.
 
 ## Локализация
 

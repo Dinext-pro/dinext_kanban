@@ -347,8 +347,26 @@ export function createKanbanStore() {
       recentCreatedCards: {},
       boardPerms: { write: false },
       cardMoveFlash: {},
+      minimize_cards: false,
+      // Card name that should stay expanded across drag remounts (minimize mode).
+      densityHoldExpandedCard: null,
     }),
     mutations: {
+      SET_MINIMIZE_CARDS(state, minimizeCards) {
+        state.minimize_cards = Boolean(minimizeCards)
+        if (!state.minimize_cards) {
+          state.densityHoldExpandedCard = null
+        }
+      },
+      SET_DENSITY_HOLD_EXPANDED(state, cardName) {
+        state.densityHoldExpandedCard = cardName || null
+      },
+      CLEAR_DENSITY_HOLD_EXPANDED(state, cardName = null) {
+        if (cardName && state.densityHoldExpandedCard !== cardName) {
+          return
+        }
+        state.densityHoldExpandedCard = null
+      },
       SET_COLUMNS(state, columns) {
         state.columns = columns
       },
@@ -1403,6 +1421,7 @@ export function createKanbanStore() {
     getters: {
       getColumns: (state) => state.columns,
       getConfig: (state) => state.config,
+      isMinimizeCards: (state) => state.minimize_cards,
       canEditBoard: (state) => Boolean(state.boardPerms?.write),
       isMovePending: (state) => (cardName) => Boolean(state.pendingMoves[cardName]),
       isMoveOptionsLoading: (state) => state.moveOptionsLoading,

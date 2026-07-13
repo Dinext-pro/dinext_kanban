@@ -4,6 +4,37 @@ import DOMPurify from 'dompurify'
 const DEFAULT_FIELDS = ['name']
 const CARD_COLOR_FIELDNAME = 'color'
 const CARD_ACCENT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?([0-9A-Fa-f]{2})?$/
+const MINIMIZE_CARDS_STORAGE_PREFIX = 'quick_kanban:minimize_cards:'
+
+export const QUICK_KANBAN_BOARD_TRANSLATION_CONTEXT = 'QuickKanban.Board'
+export const CARD_EXPAND_DELAY_MS = 400
+export const CARD_COLLAPSE_DELAY_MS = 300
+export const CARD_DENSITY_ANIMATION_MS = 200
+
+export function minimizeCardsStorageKey(boardName) {
+  return `${MINIMIZE_CARDS_STORAGE_PREFIX}${boardName || ''}`
+}
+
+export function readMinimizeCardsPreference(boardName, storage = globalThis.localStorage) {
+  try {
+    return storage?.getItem?.(minimizeCardsStorageKey(boardName)) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeMinimizeCardsPreference(boardName, value, storage = globalThis.localStorage) {
+  try {
+    const key = minimizeCardsStorageKey(boardName)
+    if (value) {
+      storage?.setItem?.(key, '1')
+    } else {
+      storage?.removeItem?.(key)
+    }
+  } catch {
+    // Ignore quota / private-mode storage failures.
+  }
+}
 
 const ALWAYS_TRANSLATED_VALUE_TYPES = new Set(['Select', 'Autocomplete'])
 

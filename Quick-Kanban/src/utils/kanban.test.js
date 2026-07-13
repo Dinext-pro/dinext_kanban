@@ -11,9 +11,13 @@ import {
   normalizeBoardConfig,
   parseCardAccentColor,
   resolveColorField,
+  readMinimizeCardsPreference,
+  minimizeCardsStorageKey,
   shouldTranslateFieldValue,
   translateFieldLabel,
   translateFieldValue,
+  writeMinimizeCardsPreference,
+  CARD_DENSITY_ANIMATION_MS,
 } from './kanban'
 
 const translationMap = {
@@ -370,5 +374,37 @@ describe('translation helpers', () => {
       fieldtype: 'Select',
       parent: 'Task',
     }, mockTranslate)).toBe('Высокий')
+  })
+})
+
+describe('minimize cards preference', () => {
+  test('exports density animation duration for CSS transitions', () => {
+    expect(CARD_DENSITY_ANIMATION_MS).toBe(200)
+  })
+
+  test('reads and writes board-scoped localStorage preference', () => {
+    const storage = {
+      data: {},
+      getItem(key) {
+        return Object.hasOwn(this.data, key) ? this.data[key] : null
+      },
+      setItem(key, value) {
+        this.data[key] = String(value)
+      },
+      removeItem(key) {
+        delete this.data[key]
+      },
+    }
+
+    expect(minimizeCardsStorageKey('Task Board')).toBe('quick_kanban:minimize_cards:Task Board')
+    expect(readMinimizeCardsPreference('Task Board', storage)).toBe(false)
+
+    writeMinimizeCardsPreference('Task Board', true, storage)
+    expect(readMinimizeCardsPreference('Task Board', storage)).toBe(true)
+    expect(storage.data['quick_kanban:minimize_cards:Task Board']).toBe('1')
+
+    writeMinimizeCardsPreference('Task Board', false, storage)
+    expect(readMinimizeCardsPreference('Task Board', storage)).toBe(false)
+    expect(storage.data['quick_kanban:minimize_cards:Task Board']).toBeUndefined()
   })
 })
