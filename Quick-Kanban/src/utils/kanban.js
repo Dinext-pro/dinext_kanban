@@ -195,6 +195,74 @@ export function getColumnDisplayName(
   return columnName
 }
 
+/** Select/Autocomplete options from DocField meta (newline-separated). */
+export function parseSelectOptions(fieldMeta) {
+  const fieldtype = normalizeFieldtype(fieldMeta)
+  if (fieldtype !== 'Select' && fieldtype !== 'Autocomplete') {
+    return []
+  }
+  const raw = fieldMeta?.options
+  if (raw == null || raw === '') {
+    return []
+  }
+  return String(raw)
+    .split('\n')
+    .map((value) => value.trim())
+    .filter(Boolean)
+}
+
+/**
+ * Columns that can be added to the board: unused Select options (add) and
+ * Archived columns (restore). Active column names are excluded.
+ */
+export function getAddableColumnCandidates({
+  options = [],
+  activeNames = [],
+  archivedColumns = [],
+  statusFieldMeta = null,
+  translate = globalThis.__,
+} = {}) {
+  const active = new Set(
+    (activeNames || []).filter(Boolean).map((name) => String(name)),
+  )
+  const archivedByName = new Map(
+    (archivedColumns || [])
+      .filter((column) => column?.column_name)
+      .map((column) => [String(column.column_name), column]),
+  )
+  const seen = new Set()
+  const candidates = []
+
+  function pushCandidate(columnName, mode) {
+    if (!columnName || active.has(columnName) || seen.has(columnName)) {
+      return
+    }
+    seen.add(columnName)
+    candidates.push({
+      column_name: columnName,
+      display_name: getColumnDisplayName(columnName, statusFieldMeta, translate),
+      mode,
+    })
+  }
+
+  for (const option of options || []) {
+    const columnName = String(option)
+    if (archivedByName.has(columnName)) {
+      pushCandidate(columnName, 'restore')
+    } else {
+      pushCandidate(columnName, 'add')
+    }
+  }
+
+  for (const column of archivedColumns || []) {
+    const columnName = column?.column_name
+    if (!columnName) continue
+    pushCandidate(String(columnName), 'restore')
+  }
+
+  return candidates
+}
+
 export function resolveColorField(metaByField = {}) {
   const field = metaByField[CARD_COLOR_FIELDNAME]
   if (field && normalizeFieldtype(field) === 'Color') {

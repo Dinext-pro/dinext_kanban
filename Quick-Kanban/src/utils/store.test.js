@@ -1744,6 +1744,9 @@ describe('hide column', () => {
       'Review',
     ])
     expect(store.state.columns[0].cards.map((card) => card.name)).toEqual(['TASK-1'])
+    expect(store.state.archivedColumns.map((column) => column.column_name)).toEqual([
+      'Done',
+    ])
   })
 
   test('ensureBoard omits Archived columns', async () => {
@@ -1775,6 +1778,9 @@ describe('hide column', () => {
     await store.dispatch('ensureBoard', { board_name: 'Task Board' })
 
     expect(store.state.columns.map((column) => column.column_name)).toEqual(['Open'])
+    expect(store.state.archivedColumns.map((column) => column.column_name)).toEqual([
+      'Done',
+    ])
   })
 
   test('hideColumn archives via API, removes from view, and syncs ListView cache', async () => {
@@ -1809,6 +1815,7 @@ describe('hide column', () => {
       { name: 'open', column_name: 'Open', status: 'Active', cards: [{ name: 'C1' }] },
       { name: 'done', column_name: 'Done', status: 'Active', cards: [] },
     ])
+    store.commit('SET_ARCHIVED_COLUMNS', [])
     store.commit('SET_COLUMN_PAGINATION', {
       Open: { offset: 1, loading: false, hasMore: false },
       Done: { offset: 0, loading: false, hasMore: false },
@@ -1818,6 +1825,9 @@ describe('hide column', () => {
     await store.dispatch('hideColumn', { columnIndex: 0 })
 
     expect(store.state.columns.map((column) => column.column_name)).toEqual(['Done'])
+    expect(store.state.archivedColumns.map((column) => column.column_name)).toEqual([
+      'Open',
+    ])
     expect(store.state.columnPagination.Open).toBeUndefined()
     expect(store.state.columnTotals.Open).toBeUndefined()
     expect(window.cur_list.board.columns).toEqual([
@@ -1872,6 +1882,7 @@ describe('hide column', () => {
       { name: 'open', column_name: 'Open', cards: [{ name: 'C1' }] },
       { name: 'done', column_name: 'Done', cards: [] },
     ])
+    store.commit('SET_ARCHIVED_COLUMNS', [])
     store.commit('SET_COLUMN_PAGINATION', {
       Open: { offset: 1, loading: false, hasMore: false },
       Done: { offset: 0, loading: false, hasMore: false },
@@ -1886,11 +1897,314 @@ describe('hide column', () => {
       'Open',
       'Done',
     ])
+    expect(store.state.archivedColumns).toEqual([])
     expect(store.state.columns[0].cards[0].name).toBe('C1')
     expect(store.state.columnPagination.Open.offset).toBe(1)
     expect(store.state.columnTotals).toEqual({ Open: 4, Done: 2 })
     expect(frappe.show_alert).toHaveBeenCalledWith(expect.objectContaining({
       message: 'Could not hide the column.',
     }))
+  })
+
+  test('restoreColumn activates via API, inserts into view, and syncs ListView cache', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', status: 'Archived' },
+          { name: 'done', column_name: 'Done', status: 'Active' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task', filters: [] })),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column') {
+        return {
+          message: [
+            { name: 'open', column_name: 'Open', status: 'Active' },
+            { name: 'done', column_name: 'Done', status: 'Active' },
+          ],
+        }
+      }
+      if (method === 'quick_kanban.api.get_column_totals') {
+        return { message: { Open: 0, Done: 0 } }
+      }
+      if (method === 'frappe.desk.reportview.get') {
+        return { message: { keys: ['name'], values: [] } }
+      }
+      return { message: {} }
+    })
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'done', column_name: 'Done', status: 'Active', cards: [] },
+    ])
+    store.commit('SET_ARCHIVED_COLUMNS', [
+      { name: 'open', column_name: 'Open', status: 'Archived' },
+    ])
+    store.commit('SET_COLUMN_PAGINATION', {
+      Done: { offset: 0, loading: false, hasMore: false },
+    })
+    store.commit('SET_COLUMN_TOTALS', { Done: 0 })
+
+    await store.dispatch('restoreColumn', { column_title: 'Open' })
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Open',
+      'Done',
+    ])
+    expect(store.state.archivedColumns).toEqual([])
+    expect(window.cur_list.board.columns).toEqual([
+      { name: 'open', column_name: 'Open', status: 'Active' },
+      { name: 'done', column_name: 'Done', status: 'Active' },
+    ])
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column',
+      args: {
+        board_name: 'Task Board',
+        column_title: 'Open',
+        status: 'Active',
+      },
+    }))
+  })
+
+  test('restoreColumn is a no-op without board write permission', async () => {
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: false })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_ARCHIVED_COLUMNS', [
+      { name: 'open', column_name: 'Open', status: 'Archived' },
+    ])
+    frappe.call.mockClear()
+
+    await store.dispatch('restoreColumn', { column_title: 'Open' })
+
+    expect(store.state.columns).toHaveLength(1)
+    expect(store.state.archivedColumns).toHaveLength(1)
+    expect(frappe.call).not.toHaveBeenCalled()
+  })
+
+  test('restoreColumn rolls back and alerts when the API fails', async () => {
+    frappe.call.mockRejectedValue(new Error('Permission denied'))
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_ARCHIVED_COLUMNS', [
+      { name: 'open', column_name: 'Open', status: 'Archived' },
+    ])
+    store.commit('SET_COLUMN_PAGINATION', {
+      Done: { offset: 0, loading: false, hasMore: false },
+    })
+    store.commit('SET_COLUMN_TOTALS', { Done: 2 })
+
+    await expect(
+      store.dispatch('restoreColumn', { column_title: 'Open' }),
+    ).rejects.toThrow('Permission denied')
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual(['Done'])
+    expect(store.state.archivedColumns.map((column) => column.column_name)).toEqual([
+      'Open',
+    ])
+    expect(store.state.columnPagination.Done.offset).toBe(0)
+    expect(store.state.columnTotals).toEqual({ Done: 2 })
+    expect(frappe.show_alert).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Could not add the column.',
+    }))
+  })
+
+  test('addColumn creates via API and syncs ListView cache', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', status: 'Active' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task', filters: [] })),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'frappe.desk.doctype.kanban_board.kanban_board.add_column') {
+        return {
+          message: [
+            { name: 'open', column_name: 'Open', status: 'Active' },
+            { name: 'working', column_name: 'Working', status: 'Active' },
+          ],
+        }
+      }
+      if (method === 'quick_kanban.api.get_column_totals') {
+        return { message: { Open: 0, Working: 0 } }
+      }
+      if (method === 'frappe.desk.reportview.get') {
+        return { message: { keys: ['name'], values: [] } }
+      }
+      return { message: {} }
+    })
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+      status_field_meta: {
+        fieldname: 'status',
+        fieldtype: 'Select',
+        options: 'Open\nWorking\nDone',
+        parent: 'Task',
+      },
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', status: 'Active', cards: [] },
+    ])
+    store.commit('SET_ARCHIVED_COLUMNS', [])
+    store.commit('SET_COLUMN_PAGINATION', {
+      Open: { offset: 0, loading: false, hasMore: false },
+    })
+
+    expect(store.getters.getAddableColumns.map((column) => column.column_name)).toEqual([
+      'Working',
+      'Done',
+    ])
+
+    await store.dispatch('addColumn', { column_title: 'Working' })
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Open',
+      'Working',
+    ])
+    expect(window.cur_list.board.columns).toEqual([
+      { name: 'open', column_name: 'Open', status: 'Active' },
+      { name: 'working', column_name: 'Working', status: 'Active' },
+    ])
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.add_column',
+      args: {
+        board_name: 'Task Board',
+        column_title: 'Working',
+      },
+    }))
+  })
+
+  test('addColumn delegates archived titles to restoreColumn', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', status: 'Archived' },
+          { name: 'done', column_name: 'Done', status: 'Active' },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task', filters: [] })),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column') {
+        return {
+          message: [
+            { name: 'open', column_name: 'Open', status: 'Active' },
+            { name: 'done', column_name: 'Done', status: 'Active' },
+          ],
+        }
+      }
+      if (method === 'quick_kanban.api.get_column_totals') {
+        return { message: { Open: 0, Done: 0 } }
+      }
+      if (method === 'frappe.desk.reportview.get') {
+        return { message: { keys: ['name'], values: [] } }
+      }
+      return { message: {} }
+    })
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_ARCHIVED_COLUMNS', [
+      { name: 'open', column_name: 'Open', status: 'Archived' },
+    ])
+    store.commit('SET_COLUMN_PAGINATION', {
+      Done: { offset: 0, loading: false, hasMore: false },
+    })
+
+    await store.dispatch('addColumn', { column_title: 'Open' })
+
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column',
+      args: {
+        board_name: 'Task Board',
+        column_title: 'Open',
+        status: 'Active',
+      },
+    }))
+    expect(frappe.call).not.toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.kanban_board.kanban_board.add_column',
+    }))
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Open',
+      'Done',
+    ])
+    expect(store.state.archivedColumns).toEqual([])
+  })
+
+  test('addColumn is a no-op for already active columns', async () => {
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    frappe.call.mockClear()
+
+    await store.dispatch('addColumn', { column_title: 'Open' })
+
+    expect(store.state.columns).toHaveLength(1)
+    expect(frappe.call).not.toHaveBeenCalled()
   })
 })
