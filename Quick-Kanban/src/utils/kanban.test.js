@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   attachColumnDisplayNames,
   formatCardField,
+  getAddableColumnCandidates,
   getCardFieldDisplayValue,
   getCardTagsHtml,
   getColumnDisplayName,
@@ -12,6 +13,7 @@ import {
   isNearScrollEnd,
   normalizeBoardConfig,
   parseCardAccentColor,
+  parseSelectOptions,
   resolveColorField,
   readMinimizeCardsPreference,
   minimizeCardsStorageKey,
@@ -90,6 +92,52 @@ describe('isActiveColumn', () => {
     expect(isActiveColumn({ column_name: 'Open', status: 'Active' })).toBe(true)
     expect(isActiveColumn({ column_name: 'Open', status: 'Archived' })).toBe(false)
     expect(isActiveColumn(null)).toBe(true)
+  })
+})
+
+describe('parseSelectOptions', () => {
+  test('splits Select options and ignores blank lines', () => {
+    expect(parseSelectOptions({
+      fieldtype: 'Select',
+      options: '\nOpen\n\nDone\n ',
+    })).toEqual(['Open', 'Done'])
+  })
+
+  test('returns empty for non-Select fields', () => {
+    expect(parseSelectOptions({ fieldtype: 'Data', options: 'Open\nDone' })).toEqual([])
+  })
+})
+
+describe('getAddableColumnCandidates', () => {
+  const statusFieldMeta = {
+    fieldname: 'status',
+    fieldtype: 'Select',
+    parent: 'Task',
+    options: 'Open\nWorking\nDone',
+  }
+
+  test('lists unused options as add and archived as restore', () => {
+    expect(getAddableColumnCandidates({
+      options: parseSelectOptions(statusFieldMeta),
+      activeNames: ['Open'],
+      archivedColumns: [{ column_name: 'Done', status: 'Archived' }],
+      statusFieldMeta,
+      translate: mockTranslate,
+    })).toEqual([
+      { column_name: 'Working', display_name: 'Working', mode: 'add' },
+      { column_name: 'Done', display_name: 'Готово', mode: 'restore' },
+    ])
+  })
+
+  test('includes archived columns missing from Select options', () => {
+    expect(getAddableColumnCandidates({
+      options: ['Open'],
+      activeNames: ['Open'],
+      archivedColumns: [{ column_name: 'Legacy', status: 'Archived' }],
+      statusFieldMeta: { fieldtype: 'Select', parent: 'Task' },
+    })).toEqual([
+      { column_name: 'Legacy', display_name: 'Legacy', mode: 'restore' },
+    ])
   })
 })
 

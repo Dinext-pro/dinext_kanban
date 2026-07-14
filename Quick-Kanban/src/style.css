@@ -81,6 +81,84 @@
   scroll-padding-inline: 8px;
 }
 
+#kanbanapp .add-column-control {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+#kanbanapp .add-column-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#kanbanapp .add-column-trigger:hover,
+#kanbanapp .add-column-trigger:focus-visible {
+  color: var(--text-color);
+  background: var(--control-bg, var(--bg-color));
+  border-color: var(--text-muted);
+  outline: none;
+}
+
+#kanbanapp .add-column-trigger .icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+#kanbanapp .add-column-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+  max-width: 240px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--card-bg, var(--bg-color));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .add-column-option {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-color);
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+#kanbanapp .add-column-option:hover,
+#kanbanapp .add-column-option:focus-visible {
+  background: var(--control-bg, var(--subtle-fg));
+  outline: none;
+}
+
 #kanbanapp .kanban-column {
   display: flex;
   flex-direction: column;
@@ -643,6 +721,7 @@
 #kanbanapp .kanban-tags {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
   margin-top: 8px;
   margin-bottom: 0;
