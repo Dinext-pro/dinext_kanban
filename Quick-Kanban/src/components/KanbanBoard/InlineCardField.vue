@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="fieldRoot"
     class="kanban-inline-field"
     :class="fieldClasses"
     :data-fieldname="fieldMeta.fieldname"
@@ -74,7 +75,17 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
 })
 
+const FLOATING_EDIT_UI_SELECTOR = [
+  '.awesomplete > ul',
+  'ul[role="listbox"]',
+  '.datepicker',
+  '.datepicker--dropdown',
+  '.datepicker-picker',
+  '.flatpickr-calendar',
+].join(',')
+
 const store = useStore()
+const fieldRoot = ref(null)
 const displayEl = ref(null)
 const controlParent = ref(null)
 const editing = ref(false)
@@ -85,6 +96,7 @@ const loadedDoc = ref(null)
 const originalValue = ref(null)
 const suppressBlurCommit = ref(false)
 const editBoxMetrics = ref(null)
+let listeningOutside = false
 
 const __ = globalThis.__
 
@@ -149,7 +161,49 @@ function destroyControl() {
   control.value = null
 }
 
+function isRelatedFloatingTarget(target) {
+  return target instanceof Element && Boolean(target.closest(FLOATING_EDIT_UI_SELECTOR))
+}
+
+function containsEditTarget(target) {
+  if (!(target instanceof Node)) {
+    return false
+  }
+  if (fieldRoot.value?.contains(target)) {
+    return true
+  }
+  return isRelatedFloatingTarget(target)
+}
+
+function stopOutsideListening() {
+  if (!listeningOutside) {
+    return
+  }
+  listeningOutside = false
+  document.removeEventListener('pointerdown', onPointerDownOutside, true)
+}
+
+function startOutsideListening() {
+  if (listeningOutside) {
+    return
+  }
+  listeningOutside = true
+  document.addEventListener('pointerdown', onPointerDownOutside, true)
+}
+
+function onPointerDownOutside(event) {
+  if (!editing.value || busy.value || suppressBlurCommit.value) {
+    return
+  }
+  if (containsEditTarget(event.target)) {
+    return
+  }
+  suppressBlurCommit.value = true
+  void commitEdit(readControlValue(control.value))
+}
+
 function closeEditor() {
+  stopOutsideListening()
   destroyControl()
   editing.value = false
   busy.value = false
@@ -181,7 +235,12 @@ async function commitEdit(nextValue) {
   const fieldname = props.fieldMeta.fieldname
   const cardName = props.card.name
   const previous = originalValue.value
-  busy.value = true
+  const doctype = props.doctype
+
+  // Drop overlay immediately; store update is already optimistic.
+  suppressBlurCommit.value = true
+  clearClickTimer()
+  closeEditor()
 
   try {
     await store.dispatch('updateCardField', {
@@ -190,14 +249,12 @@ async function commitEdit(nextValue) {
       value: nextValue,
       previousValue: previous,
     })
-    clearCardDocument(props.doctype, cardName)
-    await cancelEdit()
+    clearCardDocument(doctype, cardName)
   } catch {
-    // Store already rolled back / alerted; keep editor open with previous value.
-    if (control.value?.set_value) {
-      control.value.set_value(previous)
-    }
-    busy.value = false
+    // Store already rolled back / alerted; editor stays closed.
+  } finally {
+    await nextTick()
+    suppressBlurCommit.value = false
   }
 }
 
@@ -442,8 +499,21 @@ watch(
   },
 )
 
+watch(
+  editing,
+  (isEditing) => {
+    if (isEditing) {
+      startOutsideListening()
+    } else {
+      stopOutsideListening()
+    }
+  },
+  { flush: 'post' },
+)
+
 onBeforeUnmount(() => {
   clearClickTimer()
+  stopOutsideListening()
   destroyControl()
   if (
     store.state.activeInlineEdit?.cardName === props.card.name
