@@ -1,11 +1,15 @@
 import { createStore } from 'vuex'
 import {
   attachColumnDisplayNames,
+  flattenCardsFromColumns,
+  getAddableColumnCandidates,
   groupCardsByColumn,
   getColumnKey,
   isActiveColumn,
   mapAssignments,
   normalizeBoardConfig,
+  parseSelectOptions,
+  resolveCardLinkTitles,
 } from './kanban'
 import {
   buildMoveFailureAnnouncement,
@@ -17,6 +21,12 @@ import {
   showCreateBlockedMessage,
 } from './createValidation'
 import { validateMoveMandatory } from './moveValidation'
+import {
+  TAG_DRAG_MODE_MOVE,
+  appendTagToList,
+  canDropTag,
+  removeTagFromList,
+} from './tagDragDrop'
 
 const initialColumnCardMinimum = 15
 const moveOptionsDebounceMs = 50
@@ -53,6 +63,15 @@ function withColumnDisplayNames(columns, config) {
 
 function visibleBoardColumns(columns) {
   return (columns || []).filter(isActiveColumn)
+}
+
+function archivedBoardColumns(columns, config) {
+  return withColumnDisplayNames(
+    (columns || [])
+      .filter((column) => column?.status === 'Archived')
+      .map(({ cards: _cards, ...columnMeta }) => columnMeta),
+    config,
+  )
 }
 
 function resolveBoardPerms(overrides) {
@@ -258,7 +277,7 @@ function reportMoveFailure(commit, preflight, config, error = null) {
   )
 }
 
-function promoteRecentCreatesToTop(columns, recentCreatedCards, fieldName) {
+function promoteRecentCreatesToTop(columns, recentCreatedCards, _fieldName) {
   if (!recentCreatedCards || !Object.keys(recentCreatedCards).length) {
     return columns
   }
@@ -347,6 +366,8 @@ export function createKanbanStore() {
       moveOptionsGeneration: 0,
       moveOptionsLoaded: false,
       activeDrag: null,
+      activeTagDrag: null,
+      tagDragHoverCard: null,
       dragSyncGeneration: 0,
       createOptionsByColumn: {},
       pendingCreate: null,
@@ -356,13 +377,20 @@ export function createKanbanStore() {
       minimize_cards: false,
       // Card name that should stay expanded across drag remounts (minimize mode).
       densityHoldExpandedCard: null,
+      // Cards that must stay minimized after tag-drag until intentional expand.
+      densityForceCollapsedCards: {},
       collapsedColumns: {},
+      archivedColumns: [],
+      activeInlineEdit: null,
+      pendingFieldUpdates: {},
+      linkTitlesVersion: 0,
     }),
     mutations: {
       SET_MINIMIZE_CARDS(state, minimizeCards) {
         state.minimize_cards = Boolean(minimizeCards)
         if (!state.minimize_cards) {
           state.densityHoldExpandedCard = null
+          state.densityForceCollapsedCards = {}
         }
       },
       SET_COLLAPSED_COLUMNS(state, collapsedColumns) {
@@ -384,6 +412,10 @@ export function createKanbanStore() {
       },
       SET_DENSITY_HOLD_EXPANDED(state, cardName) {
         state.densityHoldExpandedCard = cardName || null
+        if (cardName && state.densityForceCollapsedCards[cardName]) {
+          const { [cardName]: _removed, ...rest } = state.densityForceCollapsedCards
+          state.densityForceCollapsedCards = rest
+        }
       },
       CLEAR_DENSITY_HOLD_EXPANDED(state, cardName = null) {
         if (cardName && state.densityHoldExpandedCard !== cardName) {
@@ -391,8 +423,34 @@ export function createKanbanStore() {
         }
         state.densityHoldExpandedCard = null
       },
+      FORCE_DENSITY_COLLAPSE(state, cardName) {
+        if (!cardName) {
+          return
+        }
+        state.densityForceCollapsedCards = {
+          ...state.densityForceCollapsedCards,
+          [cardName]: true,
+        }
+        if (state.densityHoldExpandedCard === cardName) {
+          state.densityHoldExpandedCard = null
+        }
+      },
+      CLEAR_FORCE_DENSITY_COLLAPSE(state, cardName = null) {
+        if (!cardName) {
+          state.densityForceCollapsedCards = {}
+          return
+        }
+        if (!state.densityForceCollapsedCards[cardName]) {
+          return
+        }
+        const { [cardName]: _removed, ...rest } = state.densityForceCollapsedCards
+        state.densityForceCollapsedCards = rest
+      },
       SET_COLUMNS(state, columns) {
         state.columns = columns
+      },
+      SET_ARCHIVED_COLUMNS(state, columns) {
+        state.archivedColumns = columns || []
       },
       REMOVE_COLUMN(state, columnIndex) {
         const column = state.columns[columnIndex]
@@ -492,6 +550,9 @@ export function createKanbanStore() {
         if (state.error === error) return
         state.error = error
       },
+      BUMP_LINK_TITLES_VERSION(state) {
+        state.linkTitlesVersion += 1
+      },
       SET_ANNOUNCEMENT(state, announcement) {
         if (state.announcement === announcement) return
         state.announcement = announcement
@@ -509,6 +570,49 @@ export function createKanbanStore() {
         state.moveOptionsGeneration += 1
         state.moveOptionsLoaded = false
         state.activeDrag = null
+        state.activeTagDrag = null
+        state.tagDragHoverCard = null
+        state.densityHoldExpandedCard = null
+        state.densityForceCollapsedCards = {}
+        state.activeInlineEdit = null
+        state.pendingFieldUpdates = {}
+        state.linkTitlesVersion = 0
+      },
+      SET_ACTIVE_INLINE_EDIT(state, payload) {
+        state.activeInlineEdit = payload
+          ? {
+              cardName: payload.cardName,
+              fieldname: payload.fieldname,
+            }
+          : null
+      },
+      CLEAR_ACTIVE_INLINE_EDIT(state) {
+        state.activeInlineEdit = null
+      },
+      SET_FIELD_UPDATE_PENDING(state, { cardName, fieldname, pending }) {
+        const key = `${cardName}::${fieldname}`
+        if (pending) {
+          state.pendingFieldUpdates = {
+            ...state.pendingFieldUpdates,
+            [key]: true,
+          }
+          return
+        }
+        const pendingFieldUpdates = { ...state.pendingFieldUpdates }
+        delete pendingFieldUpdates[key]
+        state.pendingFieldUpdates = pendingFieldUpdates
+      },
+      UPDATE_CARD_FIELD(state, { cardName, fieldname, value, modified }) {
+        for (const column of state.columns) {
+          const card = column.cards.find(({ name }) => name === cardName)
+          if (card) {
+            card[fieldname] = value
+            if (modified) {
+              card.modified = modified
+            }
+            break
+          }
+        }
       },
       SET_DATA_REQUEST_ID(state, requestId) {
         state.dataRequestId = requestId
@@ -554,6 +658,19 @@ export function createKanbanStore() {
       },
       SET_ACTIVE_DRAG(state, activeDrag) {
         state.activeDrag = activeDrag
+      },
+      SET_ACTIVE_TAG_DRAG(state, activeTagDrag) {
+        state.activeTagDrag = activeTagDrag || null
+        if (!activeTagDrag) {
+          state.tagDragHoverCard = null
+        }
+      },
+      CLEAR_ACTIVE_TAG_DRAG(state) {
+        state.activeTagDrag = null
+        state.tagDragHoverCard = null
+      },
+      SET_TAG_DRAG_HOVER(state, cardName) {
+        state.tagDragHoverCard = cardName || null
       },
       SET_CARD_MOVE_FLASH(state, { cardName, outcome, instant }) {
         state.cardMoveFlash = {
@@ -716,6 +833,10 @@ export function createKanbanStore() {
         }
         commit('SET_COLUMNS', columns)
         commit(
+          'SET_ARCHIVED_COLUMNS',
+          archivedBoardColumns(board.columns, config),
+        )
+        commit(
           'SET_COLUMN_PAGINATION',
           createColumnPagination(columns, cards.length >= pageSize),
         )
@@ -727,6 +848,35 @@ export function createKanbanStore() {
           columns,
           config,
         }) })
+        dispatch('hydrateCardLinkTitles', {
+          cards: flattenCardsFromColumns(columns),
+          boardGeneration: state.boardGeneration,
+        })
+      },
+      async hydrateCardLinkTitles(
+        { commit, state },
+        {
+          cards,
+          boardGeneration = state.boardGeneration,
+          dataRequestId = null,
+          columnRequestGeneration = null,
+        } = {},
+      ) {
+        const didFetch = await resolveCardLinkTitles(cards || [], state.config)
+        if (
+          state.boardGeneration !== boardGeneration
+          || (dataRequestId != null && state.dataRequestId !== dataRequestId)
+          || (
+            columnRequestGeneration != null
+            && state.columnRequestGeneration !== columnRequestGeneration
+          )
+        ) {
+          return false
+        }
+        if (didFetch) {
+          commit('BUMP_LINK_TITLES_VERSION')
+        }
+        return didFetch
       },
       async ensureBoard({ commit, dispatch, state }, { board_name }) {
         if (
@@ -758,6 +908,10 @@ export function createKanbanStore() {
             visibleBoardColumns(board.columns).map((column) => ({ ...column, cards: [] })),
             config,
           ))
+          commit(
+            'SET_ARCHIVED_COLUMNS',
+            archivedBoardColumns(board.columns, config),
+          )
           commit(
             'SET_COLUMN_PAGINATION',
             createColumnPagination(state.columns, true),
@@ -833,6 +987,11 @@ export function createKanbanStore() {
             createColumnPagination(columns, resultCount >= pageSize),
           )
           dispatch('scheduleMoveOptionsRefresh')
+          dispatch('hydrateCardLinkTitles', {
+            cards: flattenCardsFromColumns(columns),
+            boardGeneration,
+            dataRequestId: requestId,
+          })
           return true
         } catch (error) {
           if (
@@ -976,6 +1135,11 @@ export function createKanbanStore() {
             },
           })
           dispatch('scheduleMoveOptionsRefresh')
+          dispatch('hydrateCardLinkTitles', {
+            cards: pageColumn.cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
         } catch (error) {
           if (
             state.boardGeneration === boardGeneration &&
@@ -995,6 +1159,7 @@ export function createKanbanStore() {
         commit('SET_CONFIG_REQUEST_BOARD', '')
         commit('SET_LOADING', false)
         commit('SET_COLUMNS', [])
+        commit('SET_ARCHIVED_COLUMNS', [])
         commit('SET_KANBAN_CONFIG', emptyConfig())
         commit('SET_COLUMN_PAGINATION', {})
         commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
@@ -1085,6 +1250,10 @@ export function createKanbanStore() {
         })
         commit('CLEAR_PENDING_CREATE')
         dispatch('scheduleMoveOptionsRefresh')
+        dispatch('hydrateCardLinkTitles', {
+          cards: [card],
+          boardGeneration: state.boardGeneration,
+        })
         return true
       },
       scheduleMoveOptionsRefresh({ dispatch, state }) {
@@ -1387,6 +1556,154 @@ export function createKanbanStore() {
           ),
         })
       },
+      async updateCardField(
+        { commit, state },
+        { cardName, fieldname, value, previousValue },
+      ) {
+        const card = findCard(state, cardName)
+        if (!card || !state.config.ref_doctype || !fieldname) {
+          return false
+        }
+        if (state.pendingFieldUpdates[`${cardName}::${fieldname}`]) {
+          return false
+        }
+
+        const priorValue = previousValue !== undefined
+          ? previousValue
+          : card[fieldname]
+        commit('SET_FIELD_UPDATE_PENDING', {
+          cardName,
+          fieldname,
+          pending: true,
+        })
+        commit('UPDATE_CARD_FIELD', {
+          cardName,
+          fieldname,
+          value,
+        })
+
+        try {
+          const response = await frappe.db.set_value(
+            state.config.ref_doctype,
+            cardName,
+            { [fieldname]: value },
+          )
+          const saved = response?.message || response
+          commit('UPDATE_CARD_FIELD', {
+            cardName,
+            fieldname: fieldname,
+            value: saved?.[fieldname] ?? value,
+            modified: saved?.modified,
+          })
+          if (typeof frappe.model?.clear_doc === 'function') {
+            frappe.model.clear_doc(state.config.ref_doctype, cardName)
+          }
+          frappe.show_alert({
+            message: __('Field updated.', null, 'QuickKanban.Inline'),
+            indicator: 'green',
+          })
+          return true
+        } catch (error) {
+          commit('UPDATE_CARD_FIELD', {
+            cardName,
+            fieldname,
+            value: priorValue,
+          })
+          frappe.show_alert({
+            message: __('Could not update the field.', null, 'QuickKanban.Inline'),
+            indicator: 'red',
+          })
+          throw error
+        } finally {
+          commit('SET_FIELD_UPDATE_PENDING', {
+            cardName,
+            fieldname,
+            pending: false,
+          })
+        }
+      },
+      async persistTagTransfer(
+        { commit, state },
+        { tag, mode, doctype, sourceCardName, targetCardName },
+      ) {
+        if (!tag || !doctype || !sourceCardName || !targetCardName) {
+          return false
+        }
+        const sourceCard = findCard(state, sourceCardName)
+        const targetCard = findCard(state, targetCardName)
+        if (!sourceCard || !targetCard) {
+          return false
+        }
+
+        const previousSourceTags = sourceCard._user_tags || ''
+        const previousTargetTags = targetCard._user_tags || ''
+        if (!canDropTag({
+          tag,
+          sourceName: sourceCardName,
+          targetName: targetCardName,
+          targetUserTags: previousTargetTags,
+        })) {
+          return false
+        }
+
+        const nextTargetTags = appendTagToList(previousTargetTags, tag)
+        const nextSourceTags = mode === TAG_DRAG_MODE_MOVE
+          ? removeTagFromList(previousSourceTags, tag)
+          : previousSourceTags
+
+        commit('UPDATE_CARD_FIELD', {
+          cardName: targetCardName,
+          fieldname: '_user_tags',
+          value: nextTargetTags,
+        })
+        if (mode === TAG_DRAG_MODE_MOVE) {
+          commit('UPDATE_CARD_FIELD', {
+            cardName: sourceCardName,
+            fieldname: '_user_tags',
+            value: nextSourceTags,
+          })
+        }
+
+        try {
+          await frappe.call({
+            method: 'frappe.desk.doctype.tag.tag.add_tag',
+            args: {
+              tag,
+              dt: doctype,
+              dn: targetCardName,
+            },
+          })
+          if (mode === TAG_DRAG_MODE_MOVE) {
+            await frappe.call({
+              method: 'frappe.desk.doctype.tag.tag.remove_tag',
+              args: {
+                tag,
+                dt: doctype,
+                dn: sourceCardName,
+              },
+            })
+          }
+          return true
+        } catch (_error) {
+          commit('UPDATE_CARD_FIELD', {
+            cardName: targetCardName,
+            fieldname: '_user_tags',
+            value: previousTargetTags,
+          })
+          if (mode === TAG_DRAG_MODE_MOVE) {
+            commit('UPDATE_CARD_FIELD', {
+              cardName: sourceCardName,
+              fieldname: '_user_tags',
+              value: previousSourceTags,
+            })
+          }
+          frappe.show_alert({
+            message: __('Could not update tags.', null, 'QuickKanban.Tags'),
+            indicator: 'red',
+          })
+          return false
+        }
+      },
       async setIndicator({ commit, state }, { indicator, columnIndex }) {
         try {
           const response = await frappe.call({
@@ -1404,7 +1721,7 @@ export function createKanbanStore() {
           } else {
             syncCachedListBoardColumns({
               name: state.config.board_name,
-              columns: state.columns.map(({ cards, ...columnMeta }) => columnMeta),
+              columns: state.columns.map(({ cards: _cards, ...columnMeta }) => columnMeta),
             })
           }
         } catch (error) {
@@ -1428,10 +1745,16 @@ export function createKanbanStore() {
           ...item,
           cards: [...(item.cards || [])],
         }))
+        const previousArchived = state.archivedColumns.map((item) => ({ ...item }))
         const previousPagination = { ...state.columnPagination }
         const previousTotals = { ...state.columnTotals }
+        const { cards: _cards, ...columnMeta } = column
 
         commit('REMOVE_COLUMN', columnIndex)
+        commit('SET_ARCHIVED_COLUMNS', [
+          ...previousArchived,
+          { ...columnMeta, status: 'Archived' },
+        ])
         try {
           const response = await frappe.call({
             method: 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column',
@@ -1449,14 +1772,18 @@ export function createKanbanStore() {
               name: state.config.board_name,
               columns: savedColumns,
             })
+            commit(
+              'SET_ARCHIVED_COLUMNS',
+              archivedBoardColumns(savedColumns, state.config),
+            )
           } else {
             syncCachedListBoardColumns({
               name: state.config.board_name,
-              columns: previousColumns.map(({ cards, ...columnMeta }) => ({
-                ...columnMeta,
-                status: columnMeta.column_name === column.column_name
+              columns: previousColumns.map(({ cards: _cards, ...meta }) => ({
+                ...meta,
+                status: meta.column_name === column.column_name
                   ? 'Archived'
-                  : columnMeta.status,
+                  : meta.status,
               })),
             })
           }
@@ -1466,11 +1793,304 @@ export function createKanbanStore() {
             columnPagination: previousPagination,
             columnTotals: previousTotals,
           })
+          commit('SET_ARCHIVED_COLUMNS', previousArchived)
           frappe.show_alert({
             message: __('Could not hide the column.'),
             indicator: 'red',
           })
           throw error
+        }
+      },
+      async restoreColumn({ commit, dispatch, state, getters }, { column_title }) {
+        if (!getters.canEditBoard || !column_title) {
+          return
+        }
+        const archivedColumn = state.archivedColumns.find(
+          (column) => column.column_name === column_title,
+        )
+        if (!archivedColumn) {
+          return
+        }
+
+        const previousColumns = state.columns.map((item) => ({
+          ...item,
+          cards: [...(item.cards || [])],
+        }))
+        const previousArchived = state.archivedColumns.map((item) => ({ ...item }))
+        const previousPagination = { ...state.columnPagination }
+        const previousTotals = { ...state.columnTotals }
+        const restoredMeta = {
+          ...archivedColumn,
+          status: 'Active',
+          cards: [],
+        }
+        const restoredKey = getColumnKey(restoredMeta)
+
+        commit(
+          'SET_ARCHIVED_COLUMNS',
+          previousArchived.filter((column) => column.column_name !== column_title),
+        )
+        commit(
+          'SET_COLUMNS',
+          withColumnDisplayNames(
+            [...previousColumns, restoredMeta],
+            state.config,
+          ),
+        )
+        commit('SET_COLUMN_PAGINATION', {
+          ...previousPagination,
+          [restoredKey]: {
+            offset: 0,
+            loading: false,
+            hasMore: true,
+          },
+        })
+
+        try {
+          const response = await frappe.call({
+            method: 'frappe.desk.doctype.kanban_board.kanban_board.archive_restore_column',
+            args: {
+              board_name: state.config.board_name,
+              column_title,
+              status: 'Active',
+            },
+          })
+          const savedColumns = Array.isArray(response.message)
+            ? response.message
+            : response.message?.columns
+          if (Array.isArray(savedColumns)) {
+            commit(
+              'SET_COLUMNS',
+              mergeColumnsPreservingCards(
+                savedColumns,
+                state.columns,
+                state.config,
+              ),
+            )
+            commit(
+              'SET_ARCHIVED_COLUMNS',
+              archivedBoardColumns(savedColumns, state.config),
+            )
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: savedColumns,
+            })
+          } else {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: [
+                ...previousColumns.map(({ cards: _cards, ...meta }) => ({
+                  ...meta,
+                  status: meta.status === 'Archived' ? meta.status : 'Active',
+                })),
+                { ...archivedColumn, status: 'Active' },
+                ...previousArchived
+                  .filter((column) => column.column_name !== column_title)
+                  .map((column) => ({ ...column, status: 'Archived' })),
+              ],
+            })
+          }
+
+          const pagination = { ...state.columnPagination }
+          for (const column of state.columns) {
+            const key = getColumnKey(column)
+            if (!pagination[key]) {
+              pagination[key] = {
+                offset: column.cards?.length || 0,
+                loading: false,
+                hasMore: true,
+              }
+            }
+          }
+          for (const key of Object.keys(pagination)) {
+            if (!state.columns.some((column) => getColumnKey(column) === key)) {
+              delete pagination[key]
+            }
+          }
+          commit('SET_COLUMN_PAGINATION', pagination)
+        } catch (error) {
+          commit('RESTORE_COLUMN_LAYOUT', {
+            columns: previousColumns,
+            columnPagination: previousPagination,
+            columnTotals: previousTotals,
+          })
+          commit('SET_ARCHIVED_COLUMNS', previousArchived)
+          frappe.show_alert({
+            message: __('Could not add the column.'),
+            indicator: 'red',
+          })
+          throw error
+        }
+
+        try {
+          await dispatch('fetchColumnTotals')
+          const restoredIndex = findColumnIndexByName(state, column_title)
+          if (restoredIndex >= 0) {
+            const total = state.columnTotals[restoredKey]
+            const target = Number.isFinite(total)
+              ? Math.min(initialColumnCardMinimum, total)
+              : state.columnPageSize
+            let loaded = state.columns[restoredIndex]?.cards?.length || 0
+            while (loaded < target) {
+              const pageState = state.columnPagination[restoredKey]
+              if (!pageState?.hasMore || pageState.loading) {
+                break
+              }
+              const previousOffset = pageState.offset
+              await dispatch('loadColumnPage', {
+                columnIndex: restoredIndex,
+                pageSize: target - loaded,
+              })
+              loaded = state.columns[restoredIndex]?.cards?.length || 0
+              if (state.columnPagination[restoredKey]?.offset === previousOffset) {
+                break
+              }
+            }
+          }
+        } catch {
+          // Column is already restored on the board; card loading can retry via refresh.
+        }
+      },
+      async addColumn({ commit, dispatch, state, getters }, { column_title }) {
+        if (!getters.canEditBoard || !column_title) {
+          return
+        }
+        if (state.archivedColumns.some((column) => column.column_name === column_title)) {
+          return dispatch('restoreColumn', { column_title })
+        }
+        if (state.columns.some((column) => column.column_name === column_title)) {
+          return
+        }
+
+        const previousColumns = state.columns.map((item) => ({
+          ...item,
+          cards: [...(item.cards || [])],
+        }))
+        const previousArchived = state.archivedColumns.map((item) => ({ ...item }))
+        const previousPagination = { ...state.columnPagination }
+        const previousTotals = { ...state.columnTotals }
+        const addedMeta = withColumnDisplayNames(
+          [{ column_name: column_title, status: 'Active', cards: [] }],
+          state.config,
+        )[0]
+        const addedKey = getColumnKey(addedMeta)
+
+        commit(
+          'SET_COLUMNS',
+          withColumnDisplayNames(
+            [...previousColumns, addedMeta],
+            state.config,
+          ),
+        )
+        commit('SET_COLUMN_PAGINATION', {
+          ...previousPagination,
+          [addedKey]: {
+            offset: 0,
+            loading: false,
+            hasMore: true,
+          },
+        })
+
+        try {
+          const response = await frappe.call({
+            method: 'frappe.desk.doctype.kanban_board.kanban_board.add_column',
+            args: {
+              board_name: state.config.board_name,
+              column_title,
+            },
+          })
+          const savedColumns = Array.isArray(response.message)
+            ? response.message
+            : response.message?.columns
+          if (Array.isArray(savedColumns)) {
+            commit(
+              'SET_COLUMNS',
+              mergeColumnsPreservingCards(
+                savedColumns,
+                state.columns,
+                state.config,
+              ),
+            )
+            commit(
+              'SET_ARCHIVED_COLUMNS',
+              archivedBoardColumns(savedColumns, state.config),
+            )
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: savedColumns,
+            })
+          } else {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: [
+                ...previousColumns.map(({ cards: _cards, ...meta }) => meta),
+                { column_name: column_title, status: 'Active' },
+                ...previousArchived.map((column) => ({
+                  ...column,
+                  status: 'Archived',
+                })),
+              ],
+            })
+          }
+
+          const pagination = { ...state.columnPagination }
+          for (const column of state.columns) {
+            const key = getColumnKey(column)
+            if (!pagination[key]) {
+              pagination[key] = {
+                offset: column.cards?.length || 0,
+                loading: false,
+                hasMore: true,
+              }
+            }
+          }
+          for (const key of Object.keys(pagination)) {
+            if (!state.columns.some((column) => getColumnKey(column) === key)) {
+              delete pagination[key]
+            }
+          }
+          commit('SET_COLUMN_PAGINATION', pagination)
+        } catch (error) {
+          commit('RESTORE_COLUMN_LAYOUT', {
+            columns: previousColumns,
+            columnPagination: previousPagination,
+            columnTotals: previousTotals,
+          })
+          commit('SET_ARCHIVED_COLUMNS', previousArchived)
+          frappe.show_alert({
+            message: __('Could not add the column.'),
+            indicator: 'red',
+          })
+          throw error
+        }
+
+        try {
+          await dispatch('fetchColumnTotals')
+          const addedIndex = findColumnIndexByName(state, column_title)
+          if (addedIndex >= 0) {
+            const total = state.columnTotals[addedKey]
+            const target = Number.isFinite(total)
+              ? Math.min(initialColumnCardMinimum, total)
+              : state.columnPageSize
+            let loaded = state.columns[addedIndex]?.cards?.length || 0
+            while (loaded < target) {
+              const pageState = state.columnPagination[addedKey]
+              if (!pageState?.hasMore || pageState.loading) {
+                break
+              }
+              const previousOffset = pageState.offset
+              await dispatch('loadColumnPage', {
+                columnIndex: addedIndex,
+                pageSize: target - loaded,
+              })
+              loaded = state.columns[addedIndex]?.cards?.length || 0
+              if (state.columnPagination[addedKey]?.offset === previousOffset) {
+                break
+              }
+            }
+          }
+        } catch {
+          // Column is already on the board; card loading can retry via refresh.
         }
       },
       async updateColumnOrder({ commit, state }, order) {
@@ -1519,11 +2139,28 @@ export function createKanbanStore() {
     },
     getters: {
       getColumns: (state) => state.columns,
+      getArchivedColumns: (state) => state.archivedColumns,
+      getAddableColumns: (state) => getAddableColumnCandidates({
+        options: parseSelectOptions(state.config?.status_field_meta),
+        activeNames: state.columns.map((column) => column.column_name),
+        archivedColumns: state.archivedColumns,
+        statusFieldMeta: state.config?.status_field_meta,
+      }),
       getConfig: (state) => state.config,
       isMinimizeCards: (state) => state.minimize_cards,
       isColumnCollapsed: (state) => (columnKey) => Boolean(state.collapsedColumns[columnKey]),
       canEditBoard: (state) => Boolean(state.boardPerms?.write),
       isMovePending: (state) => (cardName) => Boolean(state.pendingMoves[cardName]),
+      isFieldUpdatePending: (state) => (cardName, fieldname) =>
+        Boolean(state.pendingFieldUpdates[`${cardName}::${fieldname}`]),
+      isCardInlineBusy: (state) => (cardName) => {
+        if (state.activeInlineEdit?.cardName === cardName) {
+          return true
+        }
+        return Object.keys(state.pendingFieldUpdates).some((key) =>
+          key.startsWith(`${cardName}::`),
+        )
+      },
       isMoveOptionsLoading: (state) => state.moveOptionsLoading,
       getCardMoveOptions: (state) => (cardName) => state.moveOptionsByCard[cardName],
       getAllowedDestinations: (state) => (cardName) => {
@@ -1556,6 +2193,9 @@ export function createKanbanStore() {
           .filter(Boolean)
       },
       canDragCard: (state, getters) => (cardName) => {
+        if (getters.isCardInlineBusy(cardName)) {
+          return false
+        }
         if (!isMoveReady(state, cardName)) {
           return false
         }
@@ -1583,6 +2223,8 @@ export function createKanbanStore() {
         ).valid
       },
       activeDragCard: (state) => state.activeDrag,
+      activeTagDrag: (state) => state.activeTagDrag,
+      tagDragHoverCard: (state) => state.tagDragHoverCard,
     },
   })
 }
