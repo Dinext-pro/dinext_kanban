@@ -111,6 +111,13 @@ beforeEach(() => {
   window.isQuickKanbanMountedOn = vi.fn(() => false)
   window.hydrateQuickKanban = vi.fn()
   window.cur_dialog = null
+  globalThis.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      'quick_kanban.bundle.js': '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js',
+      'quick_kanban.bundle.css': '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css',
+    }),
+  })
   const documentEventHandlers = {}
   globalThis.__documentEventHandlers = documentEventHandlers
   globalThis.$ = vi.fn((target) => {
@@ -134,6 +141,7 @@ beforeEach(() => {
     shouldUseBeta: vi.fn(() => true),
     loadScript: vi.fn().mockResolvedValue(),
     loadStylesheet: vi.fn().mockResolvedValue(),
+    forgetScript: vi.fn(),
   }
 })
 

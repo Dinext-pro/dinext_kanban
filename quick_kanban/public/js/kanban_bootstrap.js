@@ -52,6 +52,10 @@
     return load
   }
 
+  function forgetScript(src) {
+    scriptLoads.delete(src)
+  }
+
   function removeStaleQuickKanbanStylesheets(href, documentRef = global.document) {
     documentRef.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
       const linkHref = link.getAttribute('href') || ''
@@ -150,6 +154,7 @@
   global.quickKanbanBootstrap = {
     loadConfig,
     loadScript,
+    forgetScript,
     loadStylesheet,
     shouldUseBeta,
     ensureKanbanViewBridge,

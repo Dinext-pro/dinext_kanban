@@ -7,7 +7,16 @@ vi.mock('../../utils/cardMoveFlash', () => ({
   flashMovedCard: vi.fn(() => Promise.resolve(true)),
 }))
 
+vi.mock('../../utils/listNavigation', async () => {
+  const actual = await vi.importActual('../../utils/listNavigation')
+  return {
+    ...actual,
+    applyUserTagFilter: vi.fn(() => true),
+  }
+})
+
 import { flashMovedCard } from '../../utils/cardMoveFlash'
+import { applyUserTagFilter } from '../../utils/listNavigation'
 
 function seedMoveOptions(store) {
   store.commit('SET_MOVE_OPTIONS_BATCH', {
@@ -76,9 +85,13 @@ beforeEach(() => {
       : `formatted:${value}`,
   )
   frappe.get_palette = vi.fn(() => ['--blue-100', '--blue-800'])
+  frappe.model.can_write.mockReturnValue(false)
+  frappe.ui.TagEditor.mockClear()
   frappe.ui.form.AssignToDialog.mockClear()
   frappe.ui.form.AssignmentDialog.mockClear()
+  applyUserTagFilter.mockClear()
   flashMovedCard.mockClear()
+  frappe.set_route.mockClear()
   cur_list.get_tags_html.mockClear()
 })
 
@@ -140,6 +153,38 @@ test('hides field labels when show_labels is disabled', () => {
   expect(wrapper.get('.kanban-card-fields a').text()).toBe('TEST-PROJECT')
 })
 
+test('renders Percent display fields as a progress bar', () => {
+  const store = createStore()
+  const config = {
+    ...store.state.config,
+    fields: ['subject', 'priority', 'progress'],
+    display_fields: [
+      { fieldname: 'progress', label: 'Progress', fieldtype: 'Percent', parent: 'Task' },
+    ],
+  }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        progress: 75,
+        _assign: {},
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  const percentField = wrapper.get('dd[data-fieldtype="Percent"]')
+  expect(percentField.find('.progress.kanban-card-progress').exists()).toBe(true)
+  expect(percentField.find('.progress-bar-success').exists()).toBe(true)
+  expect(percentField.html()).toContain('width: 75%')
+  expect(frappe.format).not.toHaveBeenCalled()
+})
+
 test('renders colored tags between fields and meta when show_tags is enabled', () => {
   const store = createStore()
   const config = { ...store.state.config, show_tags: true }
@@ -198,6 +243,119 @@ test('hides tags when show_tags is disabled', () => {
   })
 
   expect(wrapper.find('.kanban-tags').exists()).toBe(false)
+})
+
+test('double-click on read-only tag pill applies user tag filter', async () => {
+  const store = createStore()
+  const config = { ...store.state.config, show_tags: true }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _user_tags: ',alpha,beta',
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.find('.tag-pill').trigger('dblclick')
+  expect(applyUserTagFilter).toHaveBeenCalledWith('alpha')
+  expect(frappe.set_route).not.toHaveBeenCalled()
+})
+
+test('double-click on card chrome opens the card form', async () => {
+  const store = createStore()
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.get('.drag-handle').trigger('dblclick')
+  expect(frappe.set_route).toHaveBeenCalledWith('Form', 'Task', 'TASK-1')
+})
+
+test('double-click on card actions does not open the card form', async () => {
+  const store = createStore()
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.get('.kanban-card-actions').trigger('dblclick')
+  expect(frappe.set_route).not.toHaveBeenCalled()
+})
+
+test('mounts editable CardTags when show_tags and can_write', async () => {
+  frappe.model.can_write.mockReturnValue(true)
+  const store = createStore()
+  const config = { ...store.state.config, show_tags: true }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _user_tags: ',alpha,beta,gamma,delta',
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+
+  expect(wrapper.find('.kanban-tags--editable').exists()).toBe(true)
+  expect(wrapper.findAll('.tag-pill')).toHaveLength(0)
+  expect(frappe.ui.TagEditor).toHaveBeenCalled()
+  expect(cur_list.get_tags_html).not.toHaveBeenCalled()
+})
+
+test('shows editable tags area when can_write even without tags', async () => {
+  frappe.model.can_write.mockReturnValue(true)
+  const store = createStore()
+  const config = { ...store.state.config, show_tags: true }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _user_tags: '',
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+
+  expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
+  expect(wrapper.find('.kanban-tags--editable').exists()).toBe(true)
+  expect(wrapper.find('.add-tags-btn').exists()).toBe(true)
 })
 
 test('offers a keyboard-operable move control', async () => {
@@ -621,6 +779,43 @@ test('collapses fields and tags slots while minimized; keeps header and meta', a
   vi.useRealTimers()
 })
 
+test('animates fields-slot max-height when minimize preference toggles', async () => {
+  const store = createStore()
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+
+  const slot = wrapper.get('.kanban-card-fields-slot').element
+  Object.defineProperty(slot, 'scrollHeight', {
+    configurable: true,
+    get: () => 120,
+  })
+
+  store.commit('SET_MINIMIZE_CARDS', true)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(slot.style.maxHeight).toBe('0px')
+
+  store.commit('SET_MINIMIZE_CARDS', false)
+  await flushPromises()
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  expect(slot.style.maxHeight).toBe('120px')
+})
+
 test('expands minimized card after hover delay and collapses after leave', async () => {
   vi.useFakeTimers()
   const store = createStore()
@@ -724,5 +919,349 @@ test('keeps expanded density while dragging and after remount until leave', asyn
   expect(store.state.densityHoldExpandedCard).toBeNull()
 
   remounted.unmount()
+  vi.useRealTimers()
+})
+
+test('expands minimized card on tag-drag hover after expand delay', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  store.commit('SET_ACTIVE_TAG_DRAG', {
+    tag: 'alpha',
+    sourceCardName: 'TASK-OTHER',
+    mode: 'copy',
+  })
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: '',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  store.commit('SET_TAG_DRAG_HOVER', 'TASK-1')
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+
+  store.commit('SET_TAG_DRAG_HOVER', null)
+  await flushPromises()
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('pointerenter expands during tag-drag after the same delay', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  store.commit('SET_ACTIVE_TAG_DRAG', {
+    tag: 'alpha',
+    sourceCardName: 'TASK-OTHER',
+    mode: 'copy',
+  })
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: '',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('marks minimized card as tag drop target; expands only after hover delay', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  store.commit('SET_ACTIVE_TAG_DRAG', {
+    tag: 'alpha',
+    sourceCardName: 'TASK-OTHER',
+    mode: 'copy',
+  })
+  store.commit('SET_TAG_DRAG_HOVER', 'TASK-1')
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: ',beta',
+      },
+      config: {
+        ...store.state.config,
+        show_tags: true,
+      },
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.classes()).toContain('kanban-card-tag-drop-allowed')
+
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).toContain('kanban-card-tag-drop-allowed')
+
+  wrapper.unmount()
+  const forbidden = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: ',alpha,beta',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  expect(forbidden.classes()).toContain('kanban-card-tag-drop-forbidden')
+  forbidden.unmount()
+  vi.useRealTimers()
+})
+
+test('expands minimized card when density hold targets it after tag drop', async () => {
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: ',beta',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-1')
+  await flushPromises()
+
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+
+  wrapper.unmount()
+})
+
+test('force-collapses tag-drag source even when local expand state was open', async () => {
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: ',alpha',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  store.commit('SET_ACTIVE_TAG_DRAG', {
+    tag: 'alpha',
+    sourceCardName: 'TASK-1',
+    mode: 'copy',
+  })
+  store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-1')
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  store.commit('CLEAR_ACTIVE_TAG_DRAG')
+  store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-1')
+  await flushPromises()
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.classes()).not.toContain('kanban-card--expanded')
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+  expect(store.state.densityForceCollapsedCards['TASK-1']).toBe(true)
+
+  wrapper.unmount()
+})
+
+test('keeps tag-drag source minimized after unmount/remount when force-collapsed', async () => {
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const card = {
+    name: 'TASK-1',
+    subject: 'First task',
+    status: 'Open',
+    priority: 'High',
+    _assign: {},
+    _user_tags: ',alpha',
+  }
+  const mountOpts = {
+    props: {
+      card,
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  }
+
+  const wrapper = mount(KanbanCard, mountOpts)
+  store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-1')
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-1')
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  wrapper.unmount()
+
+  const remounted = mount(KanbanCard, mountOpts)
+  expect(remounted.classes()).toContain('kanban-card--minimized')
+  expect(remounted.classes()).not.toContain('kanban-card--expanded')
+
+  remounted.unmount()
+})
+
+test('clears force-collapse and expands again on intentional hover', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: ',alpha',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-1')
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+
+  expect(store.state.densityForceCollapsedCards['TASK-1']).toBeUndefined()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('collapses tag-drag source after force-collapse while target hold expands goal', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const source = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-SOURCE',
+        subject: 'Source',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: ',alpha',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  const target = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'Target',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _user_tags: '',
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  store.commit('SET_ACTIVE_TAG_DRAG', {
+    tag: 'alpha',
+    sourceCardName: 'TASK-SOURCE',
+    mode: 'copy',
+  })
+  store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-SOURCE')
+  await flushPromises()
+
+  store.commit('CLEAR_ACTIVE_TAG_DRAG')
+  store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-SOURCE')
+  store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-1')
+  await flushPromises()
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+
+  expect(source.classes()).toContain('kanban-card--minimized')
+  expect(target.classes()).toContain('kanban-card--expanded')
+  expect(store.state.densityForceCollapsedCards['TASK-SOURCE']).toBe(true)
+  expect(store.state.densityHoldExpandedCard).toBe('TASK-1')
+
+  source.unmount()
+  target.unmount()
   vi.useRealTimers()
 })

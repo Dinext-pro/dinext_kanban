@@ -57,6 +57,10 @@ beforeEach(() => {
   frappe.show_alert.mockReset()
   frappe.update_user_info.mockClear()
   frappe.avatar_group.mockClear()
+  frappe.utils.get_link_title.mockReset()
+  frappe.utils.fetch_link_title.mockReset()
+  frappe.utils.get_link_title.mockReturnValue(null)
+  frappe.utils.fetch_link_title.mockImplementation(async (_doctype, name) => name)
   frappe.boot.user_info = {}
   frappe.call.mockImplementation(async ({ method }) => {
     if (method === 'quick_kanban.api.get_move_options') {
@@ -800,6 +804,119 @@ describe('board loading', () => {
     })
   })
 
+  test('hydrates missing Link titles after fetchKanban and bumps version', async () => {
+    const boardWithProject = {
+      ...boardDocument,
+      fields: '["name", "subject", "project"]',
+    }
+    frappe.get_meta.mockReturnValue({
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', fieldtype: 'Data', label: 'Subject', parent: 'Task' },
+        { fieldname: 'status', fieldtype: 'Select', label: 'Status', parent: 'Task' },
+        {
+          fieldname: 'project',
+          fieldtype: 'Link',
+          label: 'Project',
+          options: 'Project',
+          parent: 'Task',
+        },
+      ],
+    })
+    frappe.utils.fetch_link_title.mockImplementation(async () => 'Проект БалтХим')
+    frappe.call
+      .mockResolvedValueOnce({ message: boardWithProject })
+      .mockResolvedValueOnce({ message: { Open: { allowed: true, form_mode: 'quick_entry' } } })
+      .mockResolvedValueOnce({
+        message: {
+          keys: ['name', 'subject', 'status', 'project'],
+          values: [
+            ['TASK-1', 'Task 1', 'Open', 'PROJ-1'],
+            ['TASK-2', 'Task 2', 'Open', 'PROJ-1'],
+          ],
+          user_info: {},
+        },
+      })
+    const store = createStore()
+    frappe.get_meta.mockReturnValue({
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', fieldtype: 'Data', label: 'Subject', parent: 'Task' },
+        { fieldname: 'status', fieldtype: 'Select', label: 'Status', parent: 'Task' },
+        {
+          fieldname: 'project',
+          fieldtype: 'Link',
+          label: 'Project',
+          options: 'Project',
+          parent: 'Task',
+        },
+      ],
+    })
+
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+    expect(store.state.linkTitlesVersion).toBe(0)
+
+    await store.dispatch('fetchKanban', { args: { page_length: 100 } })
+    await vi.waitFor(() => expect(store.state.linkTitlesVersion).toBe(1))
+
+    expect(frappe.utils.fetch_link_title).toHaveBeenCalledWith('Project', 'PROJ-1')
+    expect(frappe.utils.fetch_link_title).toHaveBeenCalledTimes(1)
+  })
+
+  test('skips link title bump when titles are already cached', async () => {
+    const boardWithProject = {
+      ...boardDocument,
+      fields: '["name", "subject", "project"]',
+    }
+    frappe.get_meta.mockReturnValue({
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', fieldtype: 'Data', label: 'Subject', parent: 'Task' },
+        { fieldname: 'status', fieldtype: 'Select', label: 'Status', parent: 'Task' },
+        {
+          fieldname: 'project',
+          fieldtype: 'Link',
+          label: 'Project',
+          options: 'Project',
+          parent: 'Task',
+        },
+      ],
+    })
+    frappe.utils.get_link_title.mockReturnValue('Cached Project')
+    frappe.call
+      .mockResolvedValueOnce({ message: boardWithProject })
+      .mockResolvedValueOnce({ message: { Open: { allowed: true, form_mode: 'quick_entry' } } })
+      .mockResolvedValueOnce({
+        message: {
+          keys: ['name', 'subject', 'status', 'project'],
+          values: [['TASK-1', 'Task 1', 'Open', 'PROJ-1']],
+          user_info: {},
+        },
+      })
+    const store = createStore()
+    frappe.get_meta.mockReturnValue({
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', fieldtype: 'Data', label: 'Subject', parent: 'Task' },
+        { fieldname: 'status', fieldtype: 'Select', label: 'Status', parent: 'Task' },
+        {
+          fieldname: 'project',
+          fieldtype: 'Link',
+          label: 'Project',
+          options: 'Project',
+          parent: 'Task',
+        },
+      ],
+    })
+
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+    await store.dispatch('fetchKanban', { args: { page_length: 100 } })
+    await Promise.resolve()
+
+    expect(frappe.utils.fetch_link_title).not.toHaveBeenCalled()
+    expect(store.state.linkTitlesVersion).toBe(0)
+  })
+
   test('discards a slower response from obsolete filters', async () => {
     frappe.call.mockResolvedValueOnce({ message: boardDocument })
     const store = createStore()
@@ -1143,6 +1260,64 @@ describe('card moves', () => {
     expect(frappe.update_user_info).toHaveBeenCalledWith({
       'one@example.com': { fullname: 'One User' },
     })
+  })
+
+  test('updates a card field through frappe.db.set_value and clears the doc cache', async () => {
+    const store = hydratedStore()
+    frappe.db.set_value.mockResolvedValue({
+      message: {
+        name: 'TASK-1',
+        subject: 'Renamed',
+        modified: '2026-07-15 12:00:00',
+      },
+    })
+
+    await store.dispatch('updateCardField', {
+      cardName: 'TASK-1',
+      fieldname: 'subject',
+      value: 'Renamed',
+      previousValue: 'First task',
+    })
+
+    expect(frappe.db.set_value).toHaveBeenCalledWith('Task', 'TASK-1', {
+      subject: 'Renamed',
+    })
+    expect(store.state.columns[0].cards[0].subject).toBe('Renamed')
+    expect(store.state.columns[0].cards[0].modified).toBe('2026-07-15 12:00:00')
+    expect(frappe.model.clear_doc).toHaveBeenCalledWith('Task', 'TASK-1')
+  })
+
+  test('rolls back a failed field update', async () => {
+    const store = hydratedStore()
+    frappe.db.set_value.mockRejectedValue(new Error('no permission'))
+
+    await expect(store.dispatch('updateCardField', {
+      cardName: 'TASK-1',
+      fieldname: 'subject',
+      value: 'Renamed',
+      previousValue: 'First task',
+    })).rejects.toThrow('no permission')
+
+    expect(store.state.columns[0].cards[0].subject).toBe('First task')
+    expect(frappe.show_alert).toHaveBeenCalledWith({
+      message: 'Could not update the field.',
+      indicator: 'red',
+    })
+  })
+
+  test('blocks dragging while a card field is being edited', () => {
+    const store = hydratedStore()
+    store.commit('SET_MOVE_OPTIONS_BATCH', {
+      options: {},
+      generation: store.state.moveOptionsGeneration,
+    })
+    // ensure allow destinations somehow
+    store.commit('SET_ACTIVE_INLINE_EDIT', {
+      cardName: 'TASK-1',
+      fieldname: 'subject',
+    })
+    expect(store.getters.isCardInlineBusy('TASK-1')).toBe(true)
+    expect(store.getters.canDragCard('TASK-1')).toBe(false)
   })
 
   test('does not remove another card when rollback target is already absent', () => {
@@ -2206,5 +2381,174 @@ describe('hide column', () => {
 
     expect(store.state.columns).toHaveLength(1)
     expect(frappe.call).not.toHaveBeenCalled()
+  })
+})
+
+describe('persistTagTransfer', () => {
+  function seedTaggedCards(store) {
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['subject'],
+      display_fields: [],
+      show_tags: true,
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [
+          { name: 'TASK-1', subject: 'One', status: 'Open', _user_tags: ',alpha,beta', _assign: {} },
+          { name: 'TASK-2', subject: 'Two', status: 'Open', _user_tags: ',gamma', _assign: {} },
+        ],
+      },
+    ])
+  }
+
+  test('copy adds tag only on the target card', async () => {
+    const store = createStore()
+    seedTaggedCards(store)
+    frappe.call.mockClear()
+
+    const ok = await store.dispatch('persistTagTransfer', {
+      tag: 'alpha',
+      mode: 'copy',
+      doctype: 'Task',
+      sourceCardName: 'TASK-1',
+      targetCardName: 'TASK-2',
+    })
+
+    expect(ok).toBe(true)
+    expect(store.state.columns[0].cards[0]._user_tags).toBe(',alpha,beta')
+    expect(store.state.columns[0].cards[1]._user_tags).toBe(',gamma,alpha')
+    expect(frappe.call).toHaveBeenCalledTimes(1)
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'frappe.desk.doctype.tag.tag.add_tag',
+      args: { tag: 'alpha', dt: 'Task', dn: 'TASK-2' },
+    }))
+  })
+
+  test('move adds on target and removes from source', async () => {
+    const store = createStore()
+    seedTaggedCards(store)
+    frappe.call.mockClear()
+
+    const ok = await store.dispatch('persistTagTransfer', {
+      tag: 'alpha',
+      mode: 'move',
+      doctype: 'Task',
+      sourceCardName: 'TASK-1',
+      targetCardName: 'TASK-2',
+    })
+
+    expect(ok).toBe(true)
+    expect(store.state.columns[0].cards[0]._user_tags).toBe(',beta')
+    expect(store.state.columns[0].cards[1]._user_tags).toBe(',gamma,alpha')
+    expect(frappe.call).toHaveBeenCalledTimes(2)
+    expect(frappe.call).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      method: 'frappe.desk.doctype.tag.tag.add_tag',
+    }))
+    expect(frappe.call).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      method: 'frappe.desk.doctype.tag.tag.remove_tag',
+      args: { tag: 'alpha', dt: 'Task', dn: 'TASK-1' },
+    }))
+  })
+
+  test('forbidden drop does not call the API', async () => {
+    const store = createStore()
+    seedTaggedCards(store)
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-2',
+      fieldname: '_user_tags',
+      value: ',alpha,gamma',
+    })
+    frappe.call.mockClear()
+
+    const ok = await store.dispatch('persistTagTransfer', {
+      tag: 'alpha',
+      mode: 'copy',
+      doctype: 'Task',
+      sourceCardName: 'TASK-1',
+      targetCardName: 'TASK-2',
+    })
+
+    expect(ok).toBe(false)
+    expect(frappe.call).not.toHaveBeenCalled()
+  })
+
+  test('rolls back optimistic tags when add_tag fails', async () => {
+    const store = createStore()
+    seedTaggedCards(store)
+    frappe.call.mockRejectedValueOnce(new Error('boom'))
+
+    const ok = await store.dispatch('persistTagTransfer', {
+      tag: 'alpha',
+      mode: 'copy',
+      doctype: 'Task',
+      sourceCardName: 'TASK-1',
+      targetCardName: 'TASK-2',
+    })
+
+    expect(ok).toBe(false)
+    expect(store.state.columns[0].cards[1]._user_tags).toBe(',gamma')
+    expect(frappe.show_alert).toHaveBeenCalled()
+  })
+})
+
+describe('density force-collapse', () => {
+  test('FORCE_DENSITY_COLLAPSE clears hold on the same card', () => {
+    const store = createStore()
+    store.commit('SET_MINIMIZE_CARDS', true)
+    store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-1')
+    store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-1')
+
+    expect(store.state.densityForceCollapsedCards['TASK-1']).toBe(true)
+    expect(store.state.densityHoldExpandedCard).toBeNull()
+  })
+
+  test('SET_DENSITY_HOLD_EXPANDED clears force-collapse for that card', () => {
+    const store = createStore()
+    store.commit('SET_MINIMIZE_CARDS', true)
+    store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-1')
+    store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-2')
+    store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-2')
+
+    expect(store.state.densityForceCollapsedCards['TASK-1']).toBe(true)
+    expect(store.state.densityForceCollapsedCards['TASK-2']).toBeUndefined()
+    expect(store.state.densityHoldExpandedCard).toBe('TASK-2')
+  })
+
+  test('CLEAR_FORCE_DENSITY_COLLAPSE removes one or all cards', () => {
+    const store = createStore()
+    store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-1')
+    store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-2')
+    store.commit('CLEAR_FORCE_DENSITY_COLLAPSE', 'TASK-1')
+
+    expect(store.state.densityForceCollapsedCards['TASK-1']).toBeUndefined()
+    expect(store.state.densityForceCollapsedCards['TASK-2']).toBe(true)
+
+    store.commit('CLEAR_FORCE_DENSITY_COLLAPSE')
+    expect(store.state.densityForceCollapsedCards).toEqual({})
+  })
+
+  test('turning minimize off clears force-collapse and hold', () => {
+    const store = createStore()
+    store.commit('SET_MINIMIZE_CARDS', true)
+    store.commit('SET_DENSITY_HOLD_EXPANDED', 'TASK-1')
+    store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-2')
+    store.commit('SET_MINIMIZE_CARDS', false)
+
+    expect(store.state.densityHoldExpandedCard).toBeNull()
+    expect(store.state.densityForceCollapsedCards).toEqual({})
+  })
+
+  test('BEGIN_BOARD_CONTEXT clears force-collapse map', () => {
+    const store = createStore()
+    store.commit('FORCE_DENSITY_COLLAPSE', 'TASK-1')
+    store.commit('BEGIN_BOARD_CONTEXT')
+
+    expect(store.state.densityForceCollapsedCards).toEqual({})
   })
 })

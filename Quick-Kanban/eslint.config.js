@@ -24,11 +24,17 @@ export default [
         ...globals.browser,
         __: 'readonly',
         frappe: 'readonly',
+        $: 'readonly',
+        cur_list: 'readonly',
       },
     },
     rules: {
       'no-console': 'error',
-      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
       'vue/multi-word-component-names': 'off',
     },
   },
@@ -38,6 +44,9 @@ export default [
       globals: {
         ...globals.node,
         ...vitestGlobals,
+        frappe: 'readonly',
+        cur_list: 'readonly',
+        $: 'readonly',
       },
     },
   },
