@@ -28,7 +28,11 @@
         @dragstart="rememberDrag"
         @drop="drop"
       />
-      <p v-if="!loading && !error && columns.length === 0" class="kanban-state">
+      <AddColumnControl />
+      <p
+        v-if="!loading && !error && columns.length === 0 && !showAddColumn"
+        class="kanban-state"
+      >
         {{ __('No columns are configured for this board.') }}
       </p>
     </div>
@@ -43,10 +47,12 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, provide, watch } from "vue";
 import { useStore } from "vuex";
 import KanbanColumn from "./KanbanColumn.vue";
+import AddColumnControl from "./AddColumnControl.vue";
 import {
   createColumnSortable,
   destroyColumnSortable,
 } from "../../utils/columnSortable";
+import { createTagDragController } from "../../utils/tagDragDrop";
 import {
   animateCardRollback,
   captureCardRect,
@@ -62,6 +68,9 @@ const store = useStore();
 const columns = computed(() => store.getters.getColumns);
 const config = computed(() => store.getters.getConfig);
 const canEditBoard = computed(() => store.getters.canEditBoard);
+const showAddColumn = computed(
+  () => canEditBoard.value && (store.getters.getAddableColumns || []).length > 0,
+);
 const kanbanBoard = ref(null);
 const columnRefs = ref([])
 const loading = computed(() => store.state.loading)
@@ -71,6 +80,7 @@ const __ = globalThis.__
 let dragContext = null
 let hydrationToken = 0
 let columnSortable = null
+let tagDragController = null
 let onMouseDown
 let onMouseLeave
 let onMouseUp
@@ -80,6 +90,13 @@ let onPointerUp
 let onPointerCancel
 
 const currentBoardName = () => frappe.get_route()[3]
+
+tagDragController = createTagDragController({
+  store,
+  getDoctype: () => store.state.config?.ref_doctype || '',
+  onDrop: (payload) => store.dispatch('persistTagTransfer', payload),
+})
+provide('tagDragController', tagDragController)
 
 function clearActiveDragVisual() {
   store.commit('SET_ACTIVE_DRAG', null)
@@ -178,6 +195,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   teardownColumnSortable()
   unbindClickDrag();
+  tagDragController?.destroy()
+  tagDragController = null
   if (onPointerUp) {
     document.removeEventListener('pointerup', onPointerUp)
   }

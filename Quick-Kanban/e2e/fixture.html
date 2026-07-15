@@ -275,9 +275,9 @@
           fields: [
             { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', reqd: 1, parent: 'Task' },
             { fieldname: 'status', label: 'Status', fieldtype: 'Select', reqd: 1, no_copy: 1, parent: 'Task' },
-            { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
+            { fieldname: 'project', label: 'Project', fieldtype: 'Link', options: 'Project', parent: 'Task' },
+            { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', options: 'Low\nMedium\nHigh', parent: 'Task' },
             { fieldname: 'expected_end_date', label: 'Expected End Date', fieldtype: 'Date', parent: 'Task' },
-            { fieldname: 'project', label: 'Project', fieldtype: 'Link', parent: 'Task' },
           ],
         }),
         get_palette: () => ['--blue-100', '--blue-800'],
@@ -287,6 +287,32 @@
         model: {
           can_create: () => true,
           with_doctype: (doctype, callback) => Promise.resolve(callback?.()),
+          with_doc: (doctype, name) => {
+            window.__withDocCalls = window.__withDocCalls || []
+            window.__withDocCalls.push({ doctype, name })
+            const card = (window.quickKanbanInitialData?.cards || []).find(
+              (row) => row.name === name,
+            ) || { name }
+            return Promise.resolve({
+              doctype,
+              name,
+              docstatus: 0,
+              ...card,
+            })
+          },
+          clear_doc: (doctype, name) => {
+            window.__clearDocCalls = window.__clearDocCalls || []
+            window.__clearDocCalls.push({ doctype, name })
+          },
+          is_non_std_field: (fieldname) => ![
+            'name',
+            'owner',
+            'creation',
+            'modified',
+            'modified_by',
+            'docstatus',
+            'idx',
+          ].includes(fieldname),
           get_new_doc: (doctype) => {
             const doc = {
               doctype,
@@ -305,6 +331,33 @@
             return doc
           },
         },
+        db: {
+          set_value: (doctype, name, values) => {
+            window.__setValueCalls = window.__setValueCalls || []
+            window.__setValueCalls.push({ doctype, name, values })
+            if (window.__failNextSetValue) {
+              window.__failNextSetValue = false
+              return Promise.reject(new Error('set_value rejected by fixture'))
+            }
+            const card = (window.quickKanbanInitialData?.cards || []).find(
+              (row) => row.name === name,
+            )
+            if (card) {
+              Object.assign(card, values)
+            }
+            return Promise.resolve({
+              message: {
+                doctype,
+                name,
+                ...values,
+                modified: '2026-07-15 12:00:00',
+              },
+            })
+          },
+        },
+        perm: {
+          get_field_display_status: () => window.__fieldDisplayStatus || 'Write',
+        },
         new_doc: (doctype, defaults = {}) => {
           window.__lastNewDoc = { doctype, defaults, mode: 'quick_entry' }
           return Promise.resolve()
@@ -315,6 +368,10 @@
               route: args,
               routeOptions: { ...window.frappe.route_options },
             }
+            return Promise.resolve()
+          }
+          if (args[0] === 'Form') {
+            window.__lastFormRoute = args
             return Promise.resolve()
           }
           window.__lastNewDoc = {
@@ -413,6 +470,7 @@
         workflow: {
           workflows: {},
           setup() {},
+          is_read_only: () => Boolean(window.__workflowReadOnly),
         },
         meta: {
           docfield_list: {},
@@ -422,11 +480,98 @@
             )
             return field || null
           },
+          get_field: (doctype, fieldname) => {
+            const field = window.frappe.get_meta().fields.find(
+              (row) => row.fieldname === fieldname,
+            )
+            return field || {
+              fieldname,
+              fieldtype: 'Data',
+              label: fieldname,
+              parent: doctype,
+            }
+          },
+          get_docfield: (doctype, fieldname) => window.frappe.meta.get_field(doctype, fieldname),
         },
         ui: {
           form: {
             on: () => {},
             off: () => {},
+            make_control: ({ parent, df, value }) => {
+              window.__makeControlCalls = window.__makeControlCalls || []
+              window.__makeControlCalls.push({
+                fieldname: df.fieldname,
+                fieldtype: df.fieldtype,
+              })
+              const input = document.createElement(
+                df.fieldtype === 'Select' ? 'select' : 'input',
+              )
+              input.className = 'input-with-feedback form-control'
+              if (df.fieldtype === 'Select') {
+                String(df.options || '')
+                  .split('\n')
+                  .map((option) => option.trim())
+                  .filter(Boolean)
+                  .forEach((option) => {
+                    const node = document.createElement('option')
+                    node.value = option
+                    node.textContent = option
+                    input.appendChild(node)
+                  })
+              }
+              input.value = value ?? ''
+              const wrapper = document.createElement('div')
+              wrapper.className = 'frappe-control'
+              wrapper.appendChild(input)
+              const mount = parent?.append
+                ? parent
+                : parent?.[0]
+                  ? { append: (node) => parent[0].appendChild(node?.nodeType ? node : node[0]) }
+                  : null
+              if (mount?.append) {
+                mount.append(wrapper)
+              } else if (parent instanceof HTMLElement) {
+                parent.appendChild(wrapper)
+              }
+              const control = {
+                df,
+                value,
+                $wrapper: {
+                  0: wrapper,
+                  on(event, handler) {
+                    wrapper.addEventListener(event.replace(/\.kanban-inline$/, ''), handler)
+                  },
+                  off() {},
+                  remove() {
+                    wrapper.remove()
+                  },
+                },
+                $input: {
+                  0: input,
+                  trigger() {
+                    input.focus()
+                  },
+                },
+                toggle_label() {},
+                toggle_description() {},
+                set_focus() {
+                  input.focus()
+                },
+                set_value(next) {
+                  control.value = next
+                  input.value = next ?? ''
+                  return Promise.resolve()
+                },
+                get_value() {
+                  return control.value ?? input.value
+                },
+              }
+              input.addEventListener('change', () => {
+                control.value = input.value
+                df.change?.call(control)
+              })
+              return control
+            },
             make_quick_entry: (doctype, afterInsert, initCallback, doc) => {
               window.__lastNewDoc = {
                 doctype,
@@ -454,6 +599,42 @@
             },
           },
         },
+      }
+
+      window.$ = (target) => {
+        const element = target?.nodeType
+          ? target
+          : target?.[0] || target
+        return {
+          0: element,
+          length: element ? 1 : 0,
+          append(node) {
+            const child = node?.nodeType ? node : node?.[0]
+            if (element && child) {
+              element.appendChild(child)
+            }
+            return window.$(element)
+          },
+          empty() {
+            if (element) {
+              element.innerHTML = ''
+            }
+            return window.$(element)
+          },
+          on() {
+            return this
+          },
+          off() {
+            return this
+          },
+          trigger() {
+            return this
+          },
+          remove() {
+            element?.remove?.()
+            return this
+          },
+        }
       }
       window.cur_list = {
         get_args: () => ({ doctype: 'Task', page_length: 100 }),

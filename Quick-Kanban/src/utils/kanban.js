@@ -168,16 +168,124 @@ export function translateFieldValue(value, fieldMeta, translate = globalThis.__)
   return translate(String(value), null, fieldMeta?.parent)
 }
 
+export function isLinkLikeField(fieldMeta) {
+  const fieldtype = normalizeFieldtype(fieldMeta)
+  return fieldtype === 'Link' || fieldtype === 'DynamicLink'
+}
+
 export function getCardFieldDisplayValue(
   value,
   fieldMeta,
   translate = globalThis.__,
+  card = {},
+  formatter = globalThis.frappe?.format,
 ) {
   if (value === null || value === undefined || value === '') {
     return ''
   }
+  if (isLinkLikeField(fieldMeta) && formatter) {
+    const formatted = formatter(value, fieldMeta, { only_value: true }, card)
+    return formatted == null ? '' : String(formatted)
+  }
   const translated = translateFieldValue(value, fieldMeta, translate)
   return String(translated)
+}
+
+/**
+ * Link/Dynamic Link metas shown on cards (title, highlight, display fields).
+ * @param {object} [config]
+ * @returns {object[]}
+ */
+export function getCardLinkFieldMetas(config = {}) {
+  const metas = []
+  const seen = new Set()
+  const push = (meta) => {
+    if (!meta?.fieldname || seen.has(meta.fieldname)) {
+      return
+    }
+    seen.add(meta.fieldname)
+    metas.push(meta)
+  }
+  push(config.title_field_meta)
+  push(config.highlighted_field_meta)
+  for (const field of config.display_fields || []) {
+    push(field)
+  }
+  return metas
+}
+
+export function flattenCardsFromColumns(columns = []) {
+  return (columns || []).flatMap((column) => column?.cards || [])
+}
+
+/**
+ * Collect unique Link/Dynamic Link targets not yet in frappe._link_titles.
+ * @param {object[]} cards
+ * @param {object[]} fieldMetas
+ * @param {{ getLinkTitle?: Function }} [deps]
+ * @returns {{ doctype: string, name: string }[]}
+ */
+export function collectLinkTitleTargets(
+  cards,
+  fieldMetas,
+  { getLinkTitle = globalThis.frappe?.utils?.get_link_title } = {},
+) {
+  const seen = new Set()
+  const targets = []
+
+  for (const card of cards || []) {
+    for (const fieldMeta of fieldMetas || []) {
+      if (!isLinkLikeField(fieldMeta)) {
+        continue
+      }
+
+      const rawName = card?.[fieldMeta.fieldname]
+      if (rawName === null || rawName === undefined || rawName === '') {
+        continue
+      }
+
+      const fieldtype = normalizeFieldtype(fieldMeta)
+      const doctype = fieldtype === 'DynamicLink'
+        ? (fieldMeta.options ? card?.[fieldMeta.options] : null)
+        : fieldMeta.options
+      if (!doctype) {
+        continue
+      }
+
+      const name = String(rawName)
+      const cacheKey = `${doctype}::${name}`
+      if (seen.has(cacheKey)) {
+        continue
+      }
+      seen.add(cacheKey)
+
+      if (getLinkTitle?.(doctype, name)) {
+        continue
+      }
+
+      targets.push({ doctype, name })
+    }
+  }
+
+  return targets
+}
+
+/**
+ * Fetch missing link titles into frappe._link_titles via Frappe helpers.
+ * @param {{ doctype: string, name: string }[]} targets
+ * @param {{ fetchLinkTitle?: Function }} [deps]
+ * @returns {Promise<unknown[]>}
+ */
+export function hydrateLinkTitles(
+  targets,
+  { fetchLinkTitle = globalThis.frappe?.utils?.fetch_link_title } = {},
+) {
+  if (!targets?.length || !fetchLinkTitle) {
+    return Promise.resolve([])
+  }
+  return Promise.all(
+    targets.map(({ doctype, name }) => fetchLinkTitle(doctype, name)),
+  )
 }
 
 export function getColumnDisplayName(
@@ -193,6 +301,74 @@ export function getColumnDisplayName(
     return translate(columnName, null, statusFieldMeta.parent)
   }
   return columnName
+}
+
+/** Select/Autocomplete options from DocField meta (newline-separated). */
+export function parseSelectOptions(fieldMeta) {
+  const fieldtype = normalizeFieldtype(fieldMeta)
+  if (fieldtype !== 'Select' && fieldtype !== 'Autocomplete') {
+    return []
+  }
+  const raw = fieldMeta?.options
+  if (raw == null || raw === '') {
+    return []
+  }
+  return String(raw)
+    .split('\n')
+    .map((value) => value.trim())
+    .filter(Boolean)
+}
+
+/**
+ * Columns that can be added to the board: unused Select options (add) and
+ * Archived columns (restore). Active column names are excluded.
+ */
+export function getAddableColumnCandidates({
+  options = [],
+  activeNames = [],
+  archivedColumns = [],
+  statusFieldMeta = null,
+  translate = globalThis.__,
+} = {}) {
+  const active = new Set(
+    (activeNames || []).filter(Boolean).map((name) => String(name)),
+  )
+  const archivedByName = new Map(
+    (archivedColumns || [])
+      .filter((column) => column?.column_name)
+      .map((column) => [String(column.column_name), column]),
+  )
+  const seen = new Set()
+  const candidates = []
+
+  function pushCandidate(columnName, mode) {
+    if (!columnName || active.has(columnName) || seen.has(columnName)) {
+      return
+    }
+    seen.add(columnName)
+    candidates.push({
+      column_name: columnName,
+      display_name: getColumnDisplayName(columnName, statusFieldMeta, translate),
+      mode,
+    })
+  }
+
+  for (const option of options || []) {
+    const columnName = String(option)
+    if (archivedByName.has(columnName)) {
+      pushCandidate(columnName, 'restore')
+    } else {
+      pushCandidate(columnName, 'add')
+    }
+  }
+
+  for (const column of archivedColumns || []) {
+    const columnName = column?.column_name
+    if (!columnName) continue
+    pushCandidate(String(columnName), 'restore')
+  }
+
+  return candidates
 }
 
 export function resolveColorField(metaByField = {}) {
@@ -290,6 +466,32 @@ export function normalizeBoardConfig(board, meta = {}) {
     show_labels: Boolean(board.show_labels),
     show_tags: Boolean(board.custom_show_tags),
   }
+}
+
+/**
+ * Normalize `_user_tags` / TagEditor value to a comma-separated list without a leading comma.
+ * @param {string|null|undefined} userTags
+ * @returns {string} e.g. "tag1,tag2"
+ */
+export function normalizeUserTagsForEditor(userTags) {
+  if (!userTags) {
+    return ''
+  }
+  return String(userTags)
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .join(',')
+}
+
+/**
+ * Convert a TagEditor / comma list into the list-view `_user_tags` shape.
+ * @param {string|null|undefined} userTags
+ * @returns {string} e.g. ",tag1,tag2" or ""
+ */
+export function toListUserTags(userTags) {
+  const normalized = normalizeUserTagsForEditor(userTags)
+  return normalized ? `,${normalized}` : ''
 }
 
 /**
@@ -444,4 +646,25 @@ export function formatCardField(
     ? formatter(formatValue, fieldMeta, {}, card)
     : String(formatValue)
   return DOMPurify.sanitize(String(formatted), CARD_FIELD_SANITIZE_CONFIG)
+}
+
+/**
+ * Resolve link titles for cards using board field metas, then return whether
+ * any fetches ran (caller can bump a reactive version for Vue re-render).
+ * @param {object[]} cards
+ * @param {object} config
+ * @param {{
+ *   getLinkTitle?: Function,
+ *   fetchLinkTitle?: Function,
+ * }} [deps]
+ * @returns {Promise<boolean>} true when at least one title was requested
+ */
+export async function resolveCardLinkTitles(cards, config, deps = {}) {
+  const fieldMetas = getCardLinkFieldMetas(config)
+  const targets = collectLinkTitleTargets(cards, fieldMetas, deps)
+  if (!targets.length) {
+    return false
+  }
+  await hydrateLinkTitles(targets, deps)
+  return true
 }

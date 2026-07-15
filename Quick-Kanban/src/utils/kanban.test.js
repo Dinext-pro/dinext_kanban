@@ -1,21 +1,30 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   attachColumnDisplayNames,
+  collectLinkTitleTargets,
   formatCardField,
+  getAddableColumnCandidates,
   getCardFieldDisplayValue,
+  getCardLinkFieldMetas,
   getCardTagsHtml,
   getColumnDisplayName,
   getColumnKey,
   getIndicatorClass,
   groupCardsByColumn,
+  hydrateLinkTitles,
   isActiveColumn,
+  isLinkLikeField,
   isNearScrollEnd,
   normalizeBoardConfig,
+  normalizeUserTagsForEditor,
   parseCardAccentColor,
+  parseSelectOptions,
+  resolveCardLinkTitles,
   resolveColorField,
   readMinimizeCardsPreference,
   minimizeCardsStorageKey,
   shouldTranslateFieldValue,
+  toListUserTags,
   translateFieldLabel,
   translateFieldValue,
   writeMinimizeCardsPreference,
@@ -38,6 +47,22 @@ function mockTranslate(message, _values, context) {
   const key = context ? `${message}::${context}` : message
   return translationMap[key] || translationMap[message] || message
 }
+
+describe('normalizeUserTagsForEditor / toListUserTags', () => {
+  test('strips leading commas and blank segments for the editor', () => {
+    expect(normalizeUserTagsForEditor(',alpha,beta')).toBe('alpha,beta')
+    expect(normalizeUserTagsForEditor('alpha, beta,')).toBe('alpha,beta')
+    expect(normalizeUserTagsForEditor('')).toBe('')
+    expect(normalizeUserTagsForEditor(null)).toBe('')
+  })
+
+  test('rebuilds list-style _user_tags with a leading comma', () => {
+    expect(toListUserTags('alpha,beta')).toBe(',alpha,beta')
+    expect(toListUserTags(',alpha,beta')).toBe(',alpha,beta')
+    expect(toListUserTags('')).toBe('')
+    expect(toListUserTags(null)).toBe('')
+  })
+})
 
 describe('getCardTagsHtml', () => {
   test('delegates to list get_tags_html with a limit of three colored pills', () => {
@@ -90,6 +115,52 @@ describe('isActiveColumn', () => {
     expect(isActiveColumn({ column_name: 'Open', status: 'Active' })).toBe(true)
     expect(isActiveColumn({ column_name: 'Open', status: 'Archived' })).toBe(false)
     expect(isActiveColumn(null)).toBe(true)
+  })
+})
+
+describe('parseSelectOptions', () => {
+  test('splits Select options and ignores blank lines', () => {
+    expect(parseSelectOptions({
+      fieldtype: 'Select',
+      options: '\nOpen\n\nDone\n ',
+    })).toEqual(['Open', 'Done'])
+  })
+
+  test('returns empty for non-Select fields', () => {
+    expect(parseSelectOptions({ fieldtype: 'Data', options: 'Open\nDone' })).toEqual([])
+  })
+})
+
+describe('getAddableColumnCandidates', () => {
+  const statusFieldMeta = {
+    fieldname: 'status',
+    fieldtype: 'Select',
+    parent: 'Task',
+    options: 'Open\nWorking\nDone',
+  }
+
+  test('lists unused options as add and archived as restore', () => {
+    expect(getAddableColumnCandidates({
+      options: parseSelectOptions(statusFieldMeta),
+      activeNames: ['Open'],
+      archivedColumns: [{ column_name: 'Done', status: 'Archived' }],
+      statusFieldMeta,
+      translate: mockTranslate,
+    })).toEqual([
+      { column_name: 'Working', display_name: 'Working', mode: 'add' },
+      { column_name: 'Done', display_name: 'Готово', mode: 'restore' },
+    ])
+  })
+
+  test('includes archived columns missing from Select options', () => {
+    expect(getAddableColumnCandidates({
+      options: ['Open'],
+      activeNames: ['Open'],
+      archivedColumns: [{ column_name: 'Legacy', status: 'Archived' }],
+      statusFieldMeta: { fieldtype: 'Select', parent: 'Task' },
+    })).toEqual([
+      { column_name: 'Legacy', display_name: 'Legacy', mode: 'restore' },
+    ])
   })
 })
 
@@ -449,6 +520,133 @@ describe('translation helpers', () => {
       fieldtype: 'Select',
       parent: 'Task',
     }, mockTranslate)).toBe('Высокий')
+  })
+
+  test('resolves Link display text via only_value formatter', () => {
+    const formatter = vi.fn(() => 'Проект БалтХим')
+    expect(getCardFieldDisplayValue(
+      'PROJ-1',
+      { fieldname: 'project', fieldtype: 'Link', options: 'Project' },
+      mockTranslate,
+      {},
+      formatter,
+    )).toBe('Проект БалтХим')
+    expect(formatter).toHaveBeenCalledWith(
+      'PROJ-1',
+      expect.objectContaining({ fieldtype: 'Link' }),
+      { only_value: true },
+      {},
+    )
+  })
+})
+
+describe('link title hydration', () => {
+  test('detects Link and Dynamic Link fieldtypes', () => {
+    expect(isLinkLikeField({ fieldtype: 'Link' })).toBe(true)
+    expect(isLinkLikeField({ fieldtype: 'Dynamic Link' })).toBe(true)
+    expect(isLinkLikeField({ fieldtype: 'Data' })).toBe(false)
+  })
+
+  test('getCardLinkFieldMetas dedupes title, highlight, and display fields', () => {
+    const metas = getCardLinkFieldMetas({
+      title_field_meta: { fieldname: 'project', fieldtype: 'Link', options: 'Project' },
+      highlighted_field_meta: { fieldname: 'priority', fieldtype: 'Select' },
+      display_fields: [
+        { fieldname: 'project', fieldtype: 'Link', options: 'Project' },
+        { fieldname: 'customer', fieldtype: 'Link', options: 'Customer' },
+      ],
+    })
+    expect(metas.map((meta) => meta.fieldname)).toEqual([
+      'project',
+      'priority',
+      'customer',
+    ])
+  })
+
+  test('collectLinkTitleTargets dedupes and skips cached titles', () => {
+    const getLinkTitle = vi.fn((doctype, name) => (
+      doctype === 'Project' && name === 'CACHED' ? 'Cached Title' : null
+    ))
+    const targets = collectLinkTitleTargets(
+      [
+        { project: 'CACHED', customer: 'CUST-1' },
+        { project: 'PROJ-2', customer: 'CUST-1' },
+        { project: '', customer: null },
+      ],
+      [
+        { fieldname: 'project', fieldtype: 'Link', options: 'Project' },
+        { fieldname: 'customer', fieldtype: 'Link', options: 'Customer' },
+        { fieldname: 'subject', fieldtype: 'Data' },
+      ],
+      { getLinkTitle },
+    )
+    expect(targets).toEqual([
+      { doctype: 'Customer', name: 'CUST-1' },
+      { doctype: 'Project', name: 'PROJ-2' },
+    ])
+  })
+
+  test('collectLinkTitleTargets resolves Dynamic Link doctype from the card', () => {
+    const targets = collectLinkTitleTargets(
+      [{ link: 'TASK-1', link_doctype: 'Task' }],
+      [{
+        fieldname: 'link',
+        fieldtype: 'Dynamic Link',
+        options: 'link_doctype',
+      }],
+      { getLinkTitle: () => null },
+    )
+    expect(targets).toEqual([{ doctype: 'Task', name: 'TASK-1' }])
+  })
+
+  test('hydrateLinkTitles fetches each missing target', async () => {
+    const fetchLinkTitle = vi.fn(async (doctype, name) => `${doctype}:${name}`)
+    await hydrateLinkTitles(
+      [
+        { doctype: 'Project', name: 'A' },
+        { doctype: 'Project', name: 'B' },
+      ],
+      { fetchLinkTitle },
+    )
+    expect(fetchLinkTitle).toHaveBeenCalledTimes(2)
+    expect(fetchLinkTitle).toHaveBeenCalledWith('Project', 'A')
+    expect(fetchLinkTitle).toHaveBeenCalledWith('Project', 'B')
+  })
+
+  test('resolveCardLinkTitles returns false when nothing to fetch', async () => {
+    const fetchLinkTitle = vi.fn()
+    const didFetch = await resolveCardLinkTitles(
+      [{ project: 'CACHED' }],
+      {
+        display_fields: [
+          { fieldname: 'project', fieldtype: 'Link', options: 'Project' },
+        ],
+      },
+      {
+        getLinkTitle: () => 'Cached',
+        fetchLinkTitle,
+      },
+    )
+    expect(didFetch).toBe(false)
+    expect(fetchLinkTitle).not.toHaveBeenCalled()
+  })
+
+  test('resolveCardLinkTitles fetches and returns true for misses', async () => {
+    const fetchLinkTitle = vi.fn(async () => 'Title')
+    const didFetch = await resolveCardLinkTitles(
+      [{ project: 'PROJ-1' }],
+      {
+        display_fields: [
+          { fieldname: 'project', fieldtype: 'Link', options: 'Project' },
+        ],
+      },
+      {
+        getLinkTitle: () => null,
+        fetchLinkTitle,
+      },
+    )
+    expect(didFetch).toBe(true)
+    expect(fetchLinkTitle).toHaveBeenCalledWith('Project', 'PROJ-1')
   })
 })
 
