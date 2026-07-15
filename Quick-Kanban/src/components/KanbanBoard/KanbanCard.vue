@@ -1,5 +1,6 @@
 <template>
   <article
+    ref="cardRoot"
     class="kanban-card"
     :class="[moveFlashClasses, cardColorClass, densityClasses, tagDropClasses]"
     :style="cardAccentStyle"
@@ -193,6 +194,7 @@ const props = defineProps({
 const store = useStore()
 const scrollToMovedCard = inject('scrollToMovedCard', null)
 const __ = globalThis.__
+const cardRoot = ref(null)
 const moveMenuButton = ref(null)
 const moveMenuPanel = ref(null)
 const moveMenuOpen = ref(false)
@@ -277,6 +279,10 @@ function holdExpandedDensity() {
 
 function clearDensityHold() {
   store.commit('CLEAR_DENSITY_HOLD_EXPANDED', props.card.name)
+}
+
+function isPointerOverCard() {
+  return Boolean(cardRoot.value?.matches?.(':hover'))
 }
 
 function expandIntentionally() {
@@ -564,12 +570,19 @@ watch(isThisCardTagDragSource, (dragging) => {
 })
 
 watch(isThisCardEditing, (editing) => {
-  if (!editing || !minimizeCards.value) {
+  if (!minimizeCards.value) {
     return
   }
-  clearExpandTimers()
-  expandIntentionally()
-  holdExpandedDensity()
+  if (editing) {
+    clearExpandTimers()
+    expandIntentionally()
+    holdExpandedDensity()
+    return
+  }
+  // Leave-while-editing skipped collapse; if the pointer already left, resume it.
+  if (!isPointerOverCard()) {
+    scheduleCollapseForHoverLeave()
+  }
 })
 
 watch(forceCollapsed, (forced) => {

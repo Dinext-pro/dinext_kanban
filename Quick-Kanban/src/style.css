@@ -836,6 +836,11 @@
   opacity: 0.45;
 }
 
+#kanbanapp .kanban-tag-layout-animating {
+  will-change: transform;
+  pointer-events: none;
+}
+
 /* Ghost lives on document.body (outside #kanbanapp) so it tracks the cursor.
    Background/color come from the source pill via inline styles. */
 .kanban-tag-drag-ghost {
@@ -1066,13 +1071,21 @@ html.kanban-tag-drag-move * {
   z-index: 20;
 }
 
-#kanbanapp .kanban-inline-control .awesomplete > ul {
+#kanbanapp .kanban-inline-control .awesomplete > ul,
+#kanbanapp .kanban-inline-control .awesomplete > [role='listbox'] {
   z-index: 40;
-  min-width: 100%;
+  width: max-content;
+  min-width: max(10rem, 100%);
   max-width: min(16rem, 80vw);
   background: var(--fg-color, var(--card-bg, #fff));
   border: 1px solid var(--border-color, var(--gray-300));
   box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .kanban-inline-control .awesomplete > ul > li,
+#kanbanapp .kanban-inline-control .awesomplete [role='option'] {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 #kanbanapp .kanban-inline-control .clearfix,
@@ -1123,10 +1136,15 @@ html.kanban-tag-drag-move * {
   background: transparent;
 }
 
-/* Expanded native Select listbox fallback (size > 1); size=1 keeps hide-chrome above. */
+/* Expanded native Select listbox fallback (size > 1); out of flow so highlight stays narrow. */
 #kanbanapp .kanban-inline-control select[size]:not([size='1']) {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   z-index: 40;
+  width: max-content;
+  min-width: max(10rem, 100%);
+  max-width: min(16rem, 80vw);
   height: auto;
   min-height: var(--kanban-inline-edit-height, 1.35em);
   padding: 0.15em 0.25em;

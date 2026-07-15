@@ -11,7 +11,19 @@ vi.mock('../../utils/listNavigation', async () => {
   }
 })
 
+vi.mock('../../utils/tagLayoutAnimation', () => ({
+  captureTagLayoutPositions: vi.fn(() => new Map([
+    ['pill:alpha', { left: 80, top: 10, width: 40, height: 22 }],
+  ])),
+  scheduleTagLayoutAnimation: vi.fn(() => Promise.resolve(true)),
+  isTagLayoutAnimating: vi.fn(() => false),
+}))
+
 import { applyUserTagFilter } from '../../utils/listNavigation'
+import {
+  captureTagLayoutPositions,
+  scheduleTagLayoutAnimation,
+} from '../../utils/tagLayoutAnimation'
 
 function createStore() {
   const store = createKanbanStore()
@@ -46,6 +58,12 @@ beforeEach(() => {
   frappe.ui.TagEditor.mockClear()
   frappe.model.can_write.mockReturnValue(true)
   applyUserTagFilter.mockClear()
+  captureTagLayoutPositions.mockClear()
+  scheduleTagLayoutAnimation.mockClear()
+  vi.stubGlobal(
+    'requestAnimationFrame',
+    (cb) => globalThis.setTimeout(() => cb(0), 0),
+  )
 })
 
 test('mounts TagEditor with doctype, docname and normalized tags', async () => {
@@ -218,4 +236,235 @@ test('double-click on remove button does not apply user tag filter', async () =>
 
   await wrapper.find('.remove-btn').trigger('dblclick')
   expect(applyUserTagFilter).not.toHaveBeenCalled()
+})
+
+test('remove-button click schedules tag layout animation', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha,beta',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+  captureTagLayoutPositions.mockClear()
+  scheduleTagLayoutAnimation.mockClear()
+
+  await wrapper.find('.remove-btn').trigger('click')
+  await flushPromises()
+
+  expect(captureTagLayoutPositions).toHaveBeenCalledTimes(1)
+  expect(scheduleTagLayoutAnimation).toHaveBeenCalledTimes(1)
+})
+
+test('add-tags-button click schedules tag layout animation', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+  captureTagLayoutPositions.mockClear()
+  scheduleTagLayoutAnimation.mockClear()
+
+  await wrapper.find('.add-tags-btn').trigger('click')
+  await flushPromises()
+
+  expect(captureTagLayoutPositions).toHaveBeenCalledTimes(1)
+  expect(scheduleTagLayoutAnimation).toHaveBeenCalledTimes(1)
+})
+
+test('userTags prop refresh schedules tag layout animation', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+  captureTagLayoutPositions.mockClear()
+  scheduleTagLayoutAnimation.mockClear()
+
+  await wrapper.setProps({ userTags: ',alpha,beta' })
+  await flushPromises()
+
+  expect(captureTagLayoutPositions).toHaveBeenCalled()
+  expect(scheduleTagLayoutAnimation).toHaveBeenCalled()
+})
+
+test('add-tags-button click sets activeInlineEdit for _user_tags', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+
+  await wrapper.find('.add-tags-btn').trigger('click')
+  await flushPromises()
+
+  expect(store.state.activeInlineEdit).toEqual({
+    cardName: 'TASK-1',
+    fieldname: '_user_tags',
+  })
+  expect(store.state.densityHoldExpandedCard).toBe('TASK-1')
+})
+
+test('pointerdown on tags-input sets activeInlineEdit for _user_tags', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+
+  wrapper.find('input.tags-input').element.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true,
+    button: 0,
+    pointerId: 1,
+  }))
+  await flushPromises()
+
+  expect(store.state.activeInlineEdit).toEqual({
+    cardName: 'TASK-1',
+    fieldname: '_user_tags',
+  })
+})
+
+test('focus alone on tags-input does not set activeInlineEdit', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+
+  wrapper.find('input.tags-input').element.focus()
+  await flushPromises()
+
+  expect(store.state.activeInlineEdit).toBeNull()
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+})
+
+test('blur on tags-input clears activeInlineEdit', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    attachTo: document.body,
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+
+  await wrapper.find('.add-tags-btn').trigger('click')
+  const input = wrapper.find('input.tags-input').element
+  input.focus()
+  await flushPromises()
+  expect(store.state.activeInlineEdit).not.toBeNull()
+  expect(document.activeElement).toBe(input)
+
+  input.blur()
+  await flushPromises()
+
+  expect(store.state.activeInlineEdit).toBeNull()
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+  wrapper.unmount()
+})
+
+test('pointerdown outside the card ends tag edit', async () => {
+  const store = createStore()
+  const host = document.createElement('article')
+  host.className = 'kanban-card'
+  host.setAttribute('data-card-name', 'TASK-1')
+  document.body.appendChild(host)
+
+  const wrapper = mount(CardTags, {
+    attachTo: host,
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+
+  await wrapper.find('.add-tags-btn').trigger('click')
+  const input = wrapper.find('input.tags-input').element
+  input.focus()
+  await flushPromises()
+  expect(store.state.activeInlineEdit).toEqual({
+    cardName: 'TASK-1',
+    fieldname: '_user_tags',
+  })
+
+  document.body.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true,
+    button: 0,
+    pointerId: 1,
+  }))
+  await flushPromises()
+
+  expect(store.state.activeInlineEdit).toBeNull()
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+
+  wrapper.unmount()
+  host.remove()
+})
+
+test('another activeInlineEdit field blurs tags-input', async () => {
+  const store = createStore()
+  const wrapper = mount(CardTags, {
+    attachTo: document.body,
+    props: {
+      card: store.state.columns[0].cards[0],
+      doctype: 'Task',
+      userTags: ',alpha',
+    },
+    global: { plugins: [store] },
+  })
+  await flushPromises()
+
+  await wrapper.find('.add-tags-btn').trigger('click')
+  const input = wrapper.find('input.tags-input').element
+  input.focus()
+  await flushPromises()
+  expect(document.activeElement).toBe(input)
+
+  store.commit('SET_ACTIVE_INLINE_EDIT', {
+    cardName: 'TASK-1',
+    fieldname: 'subject',
+  })
+  await flushPromises()
+
+  expect(document.activeElement).not.toBe(input)
+  expect(store.state.activeInlineEdit).toEqual({
+    cardName: 'TASK-1',
+    fieldname: 'subject',
+  })
+  wrapper.unmount()
 })
