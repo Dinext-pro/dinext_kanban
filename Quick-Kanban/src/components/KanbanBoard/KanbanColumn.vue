@@ -451,7 +451,7 @@ function handleNativeScroll(event) {
   }
 }
 
-function startCreate(columnName) {
+function startCreate(_columnName) {
   store.dispatch('startCreateCard', {
     columnIndex: props.columnIndex,
     column: props.column,

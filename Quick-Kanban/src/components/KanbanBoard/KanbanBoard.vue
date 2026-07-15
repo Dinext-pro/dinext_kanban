@@ -52,6 +52,7 @@ import {
   createColumnSortable,
   destroyColumnSortable,
 } from "../../utils/columnSortable";
+import { createTagDragController } from "../../utils/tagDragDrop";
 import {
   animateCardRollback,
   captureCardRect,
@@ -79,6 +80,7 @@ const __ = globalThis.__
 let dragContext = null
 let hydrationToken = 0
 let columnSortable = null
+let tagDragController = null
 let onMouseDown
 let onMouseLeave
 let onMouseUp
@@ -88,6 +90,13 @@ let onPointerUp
 let onPointerCancel
 
 const currentBoardName = () => frappe.get_route()[3]
+
+tagDragController = createTagDragController({
+  store,
+  getDoctype: () => store.state.config?.ref_doctype || '',
+  onDrop: (payload) => store.dispatch('persistTagTransfer', payload),
+})
+provide('tagDragController', tagDragController)
 
 function clearActiveDragVisual() {
   store.commit('SET_ACTIVE_DRAG', null)
@@ -186,6 +195,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   teardownColumnSortable()
   unbindClickDrag();
+  tagDragController?.destroy()
+  tagDragController = null
   if (onPointerUp) {
     document.removeEventListener('pointerup', onPointerUp)
   }

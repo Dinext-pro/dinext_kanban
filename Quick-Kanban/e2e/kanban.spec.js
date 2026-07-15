@@ -1217,3 +1217,159 @@ test('persists column order when the board is reordered with write access', asyn
   expect(lastCall.board_name).toBe('Browser Board')
   expect(lastCall.order).toBe(JSON.stringify(['Done', 'Open']))
 })
+
+test('opens inline editor after with_doc and saves through set_value', async ({ page }) => {
+  const card = page.getByRole('listitem').filter({ hasText: 'First task' })
+  const title = card.locator('.kanban-inline-field--title')
+  await expect(title).toBeVisible()
+  const displayMetrics = await title.locator('.kanban-inline-display').evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const styles = getComputedStyle(el)
+    return {
+      height: rect.height,
+      width: rect.width,
+      fontSize: styles.fontSize,
+    }
+  })
+  await title.click()
+  await expect.poll(() =>
+    page.evaluate(() => window.__withDocCalls?.length || 0),
+  ).toBeGreaterThan(0)
+  const editing = page.locator('.kanban-inline-field--title.is-editing')
+  await expect(editing.locator('input')).toBeVisible()
+  const controlMetrics = await editing.locator('.kanban-inline-control').evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const input = el.querySelector('input, textarea, select')
+    const styles = input ? getComputedStyle(input) : getComputedStyle(el)
+    return {
+      height: rect.height,
+      width: rect.width,
+      fontSize: styles.fontSize,
+      outlineStyle: styles.outlineStyle,
+      borderTopWidth: styles.borderTopWidth,
+    }
+  })
+  expect(Math.abs(controlMetrics.height - displayMetrics.height)).toBeLessThanOrEqual(2)
+  expect(Math.abs(controlMetrics.width - displayMetrics.width)).toBeLessThanOrEqual(2)
+  expect(controlMetrics.fontSize).toBe(displayMetrics.fontSize)
+  expect(controlMetrics.outlineStyle).toBe('none')
+  expect(controlMetrics.borderTopWidth).toBe('0px')
+
+  await editing.locator('input').fill('Renamed task')
+  await editing.locator('input').dispatchEvent('change')
+
+  await expect.poll(() =>
+    page.evaluate(() => window.__setValueCalls?.at(-1)),
+  ).toMatchObject({
+    doctype: 'Task',
+    name: 'TASK-1',
+    values: { subject: 'Renamed task' },
+  })
+  await expect(page.getByLabel('Cards in Open')).toContainText('Renamed task')
+})
+
+test('double-click on title opens the card form and Link opens the linked record', async ({ page }) => {
+  await page
+    .getByRole('listitem')
+    .filter({ hasText: 'First task' })
+    .locator('.kanban-inline-field--title')
+    .dispatchEvent('dblclick')
+  await expect.poll(() =>
+    page.evaluate(() => window.__lastFormRoute),
+  ).toEqual(['Form', 'Task', 'TASK-1'])
+
+  await page.locator('.kanban-card-fields [data-fieldtype="Link"] .kanban-inline-field')
+    .first()
+    .dispatchEvent('dblclick')
+  await expect.poll(() =>
+    page.evaluate(() => window.__lastFormRoute),
+  ).toEqual(['Form', 'Project', 'TEST-PROJECT'])
+})
+
+test('single click on Link opens editor without form navigation', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__lastFormRoute = null
+    window.__withDocCalls = []
+  })
+  const linkField = page.locator('.kanban-card-fields [data-fieldtype="Link"] .kanban-inline-field').first()
+  await expect(linkField.locator('a')).not.toHaveAttribute('href', /./)
+  const displayMetrics = await linkField.locator('.kanban-inline-display').evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const styles = getComputedStyle(el)
+    return {
+      height: rect.height,
+      width: rect.width,
+      fontSize: styles.fontSize,
+    }
+  })
+  await linkField.click()
+  await expect.poll(() =>
+    page.evaluate(() => window.__withDocCalls?.some((call) => call.name === 'TASK-1')),
+  ).toBe(true)
+  await expect(linkField).toHaveClass(/is-editing/)
+  await expect.poll(() =>
+    page.evaluate(() => window.__lastFormRoute),
+  ).toBeNull()
+
+  const cardOverflow = await linkField.evaluate((el) => {
+    const card = el.closest('.kanban-card')
+    return card ? getComputedStyle(card).overflow : null
+  })
+  expect(cardOverflow).toBe('visible')
+
+  const controlMetrics = await linkField.locator('.kanban-inline-control').evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const input = el.querySelector('input, textarea, select')
+    const styles = input ? getComputedStyle(input) : getComputedStyle(el)
+    return {
+      height: rect.height,
+      width: rect.width,
+      fontSize: styles.fontSize,
+    }
+  })
+  expect(Math.abs(controlMetrics.height - displayMetrics.height)).toBeLessThanOrEqual(2)
+  expect(Math.abs(controlMetrics.width - displayMetrics.width)).toBeLessThanOrEqual(2)
+  expect(controlMetrics.fontSize).toBe(displayMetrics.fontSize)
+})
+
+test('double-click on highlight opens the card form; single click edits after with_doc', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__lastFormRoute = null
+    window.__withDocCalls = []
+  })
+  const highlight = page.locator('.kanban-inline-field--highlight').first()
+  await highlight.dispatchEvent('dblclick')
+  await expect.poll(() =>
+    page.evaluate(() => window.__lastFormRoute),
+  ).toEqual(['Form', 'Task', 'TASK-1'])
+
+  await page.evaluate(() => {
+    window.__lastFormRoute = null
+    window.__withDocCalls = []
+  })
+  await highlight.click()
+  await expect.poll(() =>
+    page.evaluate(() => window.__withDocCalls?.some((call) => call.name === 'TASK-1')),
+  ).toBe(true)
+  const select = page.locator('.kanban-inline-field--highlight.is-editing select')
+  await expect(select).toBeVisible()
+  await expect.poll(async () => {
+    const size = await select.evaluate((el) => Number(el.size) || 1)
+    const optionsVisible = await select.locator('option').count()
+    return size > 1 || optionsVisible > 0
+  }).toBe(true)
+})
+
+test('double-click on card chrome opens the card form', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__lastFormRoute = null
+  })
+  await page
+    .getByRole('listitem')
+    .filter({ hasText: 'First task' })
+    .locator('.drag-handle')
+    .dispatchEvent('dblclick')
+  await expect.poll(() =>
+    page.evaluate(() => window.__lastFormRoute),
+  ).toEqual(['Form', 'Task', 'TASK-1'])
+})

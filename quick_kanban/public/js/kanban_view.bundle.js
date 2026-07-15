@@ -40,6 +40,64 @@ function loadStylesheet(href) {
     });
 }
 
+function removeStaleQuickKanbanScripts(href) {
+    document.querySelectorAll("script[src*='quick_kanban.bundle']").forEach((script) => {
+        const src = script.getAttribute("src") || "";
+        if (src.includes("quick_kanban.bundle") && src !== href) {
+            bootstrap?.forgetScript?.(src);
+            script.remove();
+        }
+    });
+}
+
+/**
+ * nginx caches /assets/* for 1y, including assets.json. Desk boot can also
+ * keep a stale assets map for the whole SPA session. Refresh the map with a
+ * cache-busted fetch so rebuilds load the new hashed quick_kanban bundle.
+ */
+async function refreshQuickKanbanAssetMap() {
+    try {
+        const response = await fetch(`/assets/assets.json?v=${Date.now()}`, {
+            credentials: "same-origin",
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            return;
+        }
+        const assets = await response.json();
+        if (!assets || typeof assets !== "object") {
+            return;
+        }
+        frappe.boot = frappe.boot || {};
+        frappe.boot.assets_json = {
+            ...(frappe.boot.assets_json || {}),
+            ...assets,
+        };
+    } catch {
+        // Fall back to whatever boot already has.
+    }
+}
+
+async function ensureQuickKanbanBundle() {
+    await refreshQuickKanbanAssetMap();
+    const cssUrl = frappe.assets.bundled_asset("quick_kanban.bundle.css");
+    const bundleUrl = frappe.assets.bundled_asset("quick_kanban.bundle.js");
+    const existing = document.querySelector("script[src*='quick_kanban.bundle']");
+    const existingSrc = existing?.getAttribute("src") || "";
+    if (existingSrc && existingSrc !== bundleUrl) {
+        window.unmountQuickKanban?.();
+        delete window.mountQuickKanban;
+        delete window.hydrateQuickKanban;
+        delete window.isQuickKanbanMountedOn;
+        removeStaleQuickKanbanScripts(bundleUrl);
+    }
+    await loadStylesheet(cssUrl);
+    const hasCurrentScript = Boolean(document.querySelector(`script[src="${bundleUrl}"]`));
+    if (!hasCurrentScript || !window.mountQuickKanban) {
+        await loadScript(bundleUrl);
+    }
+}
+
 function loadScript(src) {
     if (bootstrap?.loadScript) {
         return bootstrap.loadScript(src);
@@ -289,12 +347,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             window.unmountQuickKanban?.();
             window.quickKanbanInitialData = initialData;
             try {
-                if (!window.mountQuickKanban) {
-                    const cssUrl = frappe.assets.bundled_asset("quick_kanban.bundle.css");
-                    const bundleUrl = frappe.assets.bundled_asset("quick_kanban.bundle.js");
-                    await loadStylesheet(cssUrl);
-                    await loadScript(bundleUrl);
-                }
+                await ensureQuickKanbanBundle();
                 window.mountQuickKanban?.(mountNode);
                 this.setup_minimize_cards_control();
             } catch {
@@ -313,10 +366,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         window.quickKanbanInitialData = initialData;
         this.$result.html(`<div id="kanbanapp"></div>`);
         try {
-            const cssUrl = frappe.assets.bundled_asset("quick_kanban.bundle.css");
-            const bundleUrl = frappe.assets.bundled_asset("quick_kanban.bundle.js");
-            await loadStylesheet(cssUrl);
-            await loadScript(bundleUrl);
+            await ensureQuickKanbanBundle();
             window.mountQuickKanban?.(this.$result.find("#kanbanapp")[0]);
             this.setup_minimize_cards_control();
         } catch {
