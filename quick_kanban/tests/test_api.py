@@ -8,7 +8,12 @@ from frappe.desk.doctype.todo.todo import ToDo
 from frappe.tests.utils import FrappeTestCase, patch_hooks
 from frappe.utils import get_datetime
 
-from quick_kanban.api import get_column_totals, move_card
+from quick_kanban.api import (
+    get_column_totals,
+    move_card,
+    set_column_widths,
+    update_column_order,
+)
 from quick_kanban.tests.test_move_policy import BOARD_NAME, ensure_todo_kanban_board
 from quick_kanban import hooks
 
@@ -370,6 +375,69 @@ class TestColumnTotals(FrappeTestCase):
             limit_page_length=0,
         )
         self.assertEqual(result, {"Open": 5, "Done": 0})
+
+
+class TestColumnWidths(FrappeTestCase):
+    def setUp(self):
+        frappe.set_user("Administrator")
+        self.board_name = ensure_todo_kanban_board()
+
+    def test_set_column_widths_persists_on_board_columns(self):
+        board = set_column_widths(self.board_name, {"Open": 320, "Closed": 280})
+        widths = {
+            column.column_name: column.custom_column_width for column in board.columns
+        }
+        self.assertEqual(widths["Open"], 320)
+        self.assertEqual(widths["Closed"], 280)
+
+        reloaded = frappe.get_doc("Kanban Board", self.board_name)
+        reloaded_widths = {
+            column.column_name: column.custom_column_width for column in reloaded.columns
+        }
+        self.assertEqual(reloaded_widths["Open"], 320)
+        self.assertEqual(reloaded_widths["Closed"], 280)
+
+    def test_set_column_widths_rejects_out_of_range_values(self):
+        with self.assertRaises(frappe.ValidationError):
+            set_column_widths(self.board_name, {"Open": 0})
+        with self.assertRaises(frappe.ValidationError):
+            set_column_widths(self.board_name, {"Open": 10001})
+
+    def test_set_column_widths_requires_board_write(self):
+        board = Mock()
+        board.columns = [SimpleNamespace(column_name="Open", custom_column_width=250)]
+        board.check_permission.side_effect = frappe.PermissionError
+
+        with patch("quick_kanban.api.frappe.get_doc", return_value=board):
+            with self.assertRaises(frappe.PermissionError):
+                set_column_widths(self.board_name, {"Open": 300})
+
+        board.check_permission.assert_called_once_with("write")
+        board.save.assert_not_called()
+
+    def test_update_column_order_preserves_custom_column_width(self):
+        set_column_widths(self.board_name, {"Open": 333, "Closed": 222})
+        board = update_column_order(
+            self.board_name,
+            frappe.as_json(["Closed", "Open"]),
+        )
+        widths = {
+            column.column_name: column.custom_column_width for column in board.columns
+        }
+        self.assertEqual(
+            [column.column_name for column in board.columns][:2],
+            ["Closed", "Open"],
+        )
+        self.assertEqual(widths["Open"], 333)
+        self.assertEqual(widths["Closed"], 222)
+
+    def test_override_whitelisted_update_column_order_is_registered(self):
+        self.assertEqual(
+            hooks.override_whitelisted_methods[
+                "frappe.desk.doctype.kanban_board.kanban_board.update_column_order"
+            ],
+            "quick_kanban.api.update_column_order",
+        )
 
 
 class TestDeskAssets(FrappeTestCase):

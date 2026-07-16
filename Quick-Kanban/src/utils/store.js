@@ -731,6 +731,20 @@ export function createKanbanStore() {
       UPDATE_COLUMN_INDICATOR(state, { columnIndex, indicator }) {
         state.columns[columnIndex].indicator = indicator
       },
+      UPDATE_COLUMN_WIDTHS(state, widthsByName) {
+        if (!widthsByName || typeof widthsByName !== 'object') {
+          return
+        }
+        state.columns = state.columns.map((column) => {
+          if (!(column.column_name in widthsByName)) {
+            return column
+          }
+          return {
+            ...column,
+            custom_column_width: widthsByName[column.column_name],
+          }
+        })
+      },
       UPDATE_CARD_ASSIGNMENTS(state, { cardName, assignments }) {
         for (const column of state.columns) {
           const card = column.cards.find(({ name }) => name === cardName)
@@ -2131,6 +2145,56 @@ export function createKanbanStore() {
           commit('REORDER_COLUMNS', previousOrder)
           frappe.show_alert({
             message: __('Could not reorder the columns.'),
+            indicator: 'red',
+          })
+          throw error
+        }
+      },
+      async setColumnWidths({ commit, state, getters }, widths) {
+        if (!getters.canEditBoard) {
+          return
+        }
+        if (!widths || typeof widths !== 'object' || !Object.keys(widths).length) {
+          return
+        }
+
+        const previousWidths = {}
+        for (const column of state.columns) {
+          if (column.column_name in widths) {
+            previousWidths[column.column_name] = column.custom_column_width
+          }
+        }
+
+        commit('UPDATE_COLUMN_WIDTHS', widths)
+        try {
+          const response = await frappe.call({
+            method: 'quick_kanban.api.set_column_widths',
+            args: {
+              board_name: state.config.board_name,
+              widths,
+            },
+          })
+          const savedBoard = response.message
+          if (savedBoard?.columns) {
+            commit(
+              'SET_COLUMNS',
+              mergeColumnsPreservingCards(
+                savedBoard.columns,
+                state.columns,
+                state.config,
+              ),
+            )
+            syncCachedListBoardColumns(savedBoard)
+          } else {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: state.columns.map(({ cards: _cards, ...columnMeta }) => columnMeta),
+            })
+          }
+        } catch (error) {
+          commit('UPDATE_COLUMN_WIDTHS', previousWidths)
+          frappe.show_alert({
+            message: __('Could not update the column width.'),
             indicator: 'red',
           })
           throw error

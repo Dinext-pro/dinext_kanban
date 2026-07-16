@@ -1,6 +1,8 @@
+import json
+
 import frappe
 from frappe import _
-from frappe.utils import get_datetime
+from frappe.utils import cint, get_datetime
 
 from quick_kanban.move_policy import (
 	BoardContext,
@@ -10,6 +12,93 @@ from quick_kanban.move_policy import (
 	resolve_workflow_action,
 )
 from quick_kanban.validation import validate_mandatory_for_move
+
+COLUMN_WIDTH_MIN = 1
+COLUMN_WIDTH_MAX = 10000
+COLUMN_CHILD_COPY_FIELDS = (
+	"column_name",
+	"status",
+	"order",
+	"indicator",
+	"custom_column_width",
+)
+
+
+def _normalize_column_width(value):
+	width = cint(value)
+	if width < COLUMN_WIDTH_MIN or width > COLUMN_WIDTH_MAX:
+		frappe.throw(
+			_("Column width must be between {0} and {1} pixels.").format(
+				COLUMN_WIDTH_MIN,
+				COLUMN_WIDTH_MAX,
+			)
+		)
+	return width
+
+
+def _column_row_dict(column):
+	row = {}
+	for fieldname in COLUMN_CHILD_COPY_FIELDS:
+		if fieldname == "custom_column_width":
+			value = column.get(fieldname)
+			if value in (None, ""):
+				continue
+			row[fieldname] = cint(value)
+			continue
+		row[fieldname] = column.get(fieldname)
+	return row
+
+
+@frappe.whitelist(methods=["POST"])
+def set_column_widths(board_name, widths):
+	"""Persist column widths on Kanban Board Column rows."""
+	widths = frappe.parse_json(widths) if isinstance(widths, str) else widths
+	if not isinstance(widths, dict) or not widths:
+		frappe.throw(_("Column widths must be a non-empty object."))
+
+	board = frappe.get_doc("Kanban Board", board_name)
+	board.check_permission("write")
+
+	normalized = {
+		str(column_name): _normalize_column_width(width)
+		for column_name, width in widths.items()
+	}
+	updated = False
+	for column in board.columns:
+		if column.column_name not in normalized:
+			continue
+		column.custom_column_width = normalized[column.column_name]
+		updated = True
+
+	if not updated:
+		frappe.throw(_("No matching columns found to update."))
+
+	board.save()
+	return board
+
+
+@frappe.whitelist()
+def update_column_order(board_name, order):
+	"""Set column order while preserving custom column fields (e.g. width)."""
+	board = frappe.get_doc("Kanban Board", board_name)
+	order = json.loads(order) if isinstance(order, str) else order
+	old_columns = list(board.columns)
+	new_columns = []
+
+	for col in order:
+		for column in list(old_columns):
+			if col == column.column_name:
+				new_columns.append(column)
+				old_columns.remove(column)
+
+	new_columns.extend(old_columns)
+
+	board.columns = []
+	for col in new_columns:
+		board.append("columns", _column_row_dict(col))
+
+	board.save()
+	return board
 
 
 @frappe.whitelist()

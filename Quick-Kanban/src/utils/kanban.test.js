@@ -1,7 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   attachColumnDisplayNames,
+  clampColumnWidthForResize,
   collectLinkTitleTargets,
+  DEFAULT_COLUMN_WIDTH_PX,
   formatCardField,
   getAddableColumnCandidates,
   getCardFieldDisplayValue,
@@ -9,6 +11,7 @@ import {
   getCardTagsHtml,
   getColumnDisplayName,
   getColumnKey,
+  getColumnWidthBounds,
   getIndicatorClass,
   groupCardsByColumn,
   hydrateLinkTitles,
@@ -21,6 +24,7 @@ import {
   parseSelectOptions,
   resolveCardLinkTitles,
   resolveColorField,
+  resolveColumnWidthPx,
   readMinimizeCardsPreference,
   minimizeCardsStorageKey,
   shouldTranslateFieldValue,
@@ -714,5 +718,20 @@ describe('collapsed columns preference', () => {
     writeCollapsedColumnsPreference('Task Board', {}, storage)
     expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({})
     expect(storage.data['quick_kanban:collapsed_columns:Task Board']).toBeUndefined()
+  })
+})
+
+describe('column width helpers', () => {
+  test('resolveColumnWidthPx uses stored width or default without clamping', () => {
+    expect(resolveColumnWidthPx({ custom_column_width: 420 })).toBe(420)
+    expect(resolveColumnWidthPx({})).toBe(DEFAULT_COLUMN_WIDTH_PX)
+    expect(resolveColumnWidthPx({ custom_column_width: 40 })).toBe(40)
+  })
+
+  test('clampColumnWidthForResize clamps only against the current viewport', () => {
+    expect(getColumnWidthBounds(1000)).toEqual({ min: 150, max: 500 })
+    expect(clampColumnWidthForResize(100, 1000)).toBe(150)
+    expect(clampColumnWidthForResize(800, 1000)).toBe(500)
+    expect(clampColumnWidthForResize(320, 1000)).toBe(320)
   })
 })
