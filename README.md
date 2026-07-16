@@ -21,6 +21,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски.
 - Настройка цвета колонок и выделение значений выбранного поля.
 - Сжатие колонок по ширине (меню **Сжать** / **Открыть**, двойной клик, auto-expand при задержке курсора во время DnD карточки); состояние хранится локально на доску.
+- Изменение ширины колонок перетаскиванием за правый край (для пользователей с правом записи на `Kanban Board`); с зажатым Shift — та же ширина применяется ко всем колонкам; значение сохраняется в `Kanban Board Column.custom_column_width`.
 - Скрытие колонок с доски через меню колонки (для пользователей с правом записи на `Kanban Board`); элемент **Добавить колонку** после последней видимой колонки возвращает скрытые колонки и добавляет новые из допустимых значений Select-поля доски.
 - Расцветка карточек по полю `color` (fieldtype `Color`) в целевом DocType: цветная полоска слева и лёгкий tint фона.
 - Просмотр и изменение назначенных пользователей через стандартный Assign To Dialog.
@@ -229,6 +230,19 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 Состояние сжатых колонок запоминается в `localStorage` отдельно для каждой Kanban Board (`quick_kanban:collapsed_columns:{board_name}`).
 
+### Ширина колонок
+
+При праве **write** на документ `Kanban Board` у правого края развёрнутой колонки доступен resize-handle:
+
+- перетаскивание меняет ширину текущей колонки;
+- с зажатым **Shift** (в том числе на Mac) все видимые колонки доски получают ту же абсолютную ширину в пикселях;
+- во время drag ширина ограничивается диапазоном **15–50%** ширины окна (`window.innerWidth`); после сохранения ограничение больше не применяется (в том числе при изменении размера окна или повторном открытии доски);
+- значение сохраняется на уровне child-строки `Kanban Board Column` в Custom Field `custom_column_width` (Int, px, по умолчанию `250`) через `quick_kanban.api.set_column_widths`;
+- переупорядочивание колонок не сбрасывает ширину: `update_column_order` переопределён в `quick_kanban`, чтобы копировать `custom_column_width` при пересборке child-строк;
+- у сжатой колонки визуально остаётся `52px`; сохранённая ширина не меняется и снова применяется после раскрытия.
+
+**Сжать ≠ изменить ширину:** сжатие — локальный UI-режим; ресайз за край — серверная настройка ширины колонки на доске.
+
 ### Скрытие колонок
 
 В меню колонки (иконка «⋯» в заголовке) рядом с выбором цвета и сжатием доступен пункт **Скрыть**, если у пользователя есть право **write** на документ `Kanban Board`.
@@ -240,7 +254,7 @@ cd ../frappe && yarn run production --apps quick_kanban
 - выбор значения, которого ещё нет на доске, добавляет колонку через штатный API Frappe `add_column` и подгружает карточки;
 - альтернативно колонку можно вернуть через форму записи Kanban Board (из диалога Kanban Settings — кнопка **Open Kanban Board** / **Открыть Kanban-доску**): в child-таблице колонок смените Status на `Active`, сохраните и обновите Kanban-представление.
 
-**Сжать ≠ Скрыть:** сжатие только сужает колонку в UI и хранится локально; скрытие архивирует колонку на сервере и убирает её с доски.
+**Сжать ≠ Скрыть ≠ ширина:** сжатие только сужает колонку в UI и хранится локально; ресайз сохраняет ширину на `Kanban Board Column`; скрытие архивирует колонку на сервере и убирает её с доски.
 
 ### Метки на карточках
 
@@ -382,9 +396,10 @@ bench --site <site-name> clear-cache
 - [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
 - [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
 - [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы подсчёта и перемещения карточек.
-- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`CardTags`, `listNavigation.applyUserTagFilter`, `tagDragDrop`, density state в Vuex).
+- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы подсчёта, перемещения карточек и ширины колонок (`set_column_widths`, override `update_column_order`).
+- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`CardTags`, `listNavigation.applyUserTagFilter`, `tagDragDrop`, density state и resize колонок в Vuex).
 - [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Field **Show Tags** на Kanban Board.
+- [`quick_kanban/quick_kanban/custom/kanban_board_column.json`](quick_kanban/quick_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
 
 После каждого commit локальный `post-commit` hook формирует предложение для документации в `../dinext-docs/doc-proposals/inbox/`. Повторная установка hook:
 
@@ -420,7 +435,7 @@ dinext_kanban/
 │   ├── public/
 │   │   ├── css/                # Собранные и подключаемые стили
 │   │   └── js/                 # Bootstrap, KanbanView override и Vue bundle
-│   ├── quick_kanban/custom/    # Custom Field на Kanban Board (в т.ч. Show Tags)
+│   ├── quick_kanban/custom/    # Custom Field: Show Tags (Board), Column Width (Column)
 │   ├── tests/                  # Backend-тесты Frappe
 │   ├── translations/           # CSV-переводы (ru)
 │   ├── api.py                  # Permission-aware API доски

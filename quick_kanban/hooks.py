@@ -163,10 +163,11 @@ doctype_js = {"Kanban Board" : "public/js/kanban_highlight.js"}
 
 # Overriding Methods
 # ------------------------------
-#
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "quick_kanban.event.get_events"
-# }
+override_whitelisted_methods = {
+	"frappe.desk.doctype.kanban_board.kanban_board.update_column_order": (
+		"quick_kanban.api.update_column_order"
+	),
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,

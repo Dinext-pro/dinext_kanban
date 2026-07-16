@@ -101,6 +101,28 @@ test('does not mark the column title draggable without board write access', () =
   expect(wrapper.get('h2.column-title').attributes('title')).toBeUndefined()
 })
 
+test('shows a resize handle only when the board can be edited', () => {
+  const editable = mountColumn(undefined, { boardPerms: { write: true } })
+  expect(editable.wrapper.find('.kanban-column-resize-handle').exists()).toBe(true)
+
+  const readonly = mountColumn(undefined, { boardPerms: { write: false } })
+  expect(readonly.wrapper.find('.kanban-column-resize-handle').exists()).toBe(false)
+})
+
+test('applies stored column width without viewport clamping', () => {
+  const { wrapper } = mountColumn({
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'Blue',
+    custom_column_width: 420,
+    cards: [],
+  }, { boardPerms: { write: true } })
+
+  expect(wrapper.attributes('style')).toContain('width: 420px')
+  expect(wrapper.attributes('style')).toContain('flex-basis: 420px')
+})
+
 test('uses labelled buttons for adding cards and choosing colors', async () => {
   const { wrapper, store } = mountColumn()
   const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)

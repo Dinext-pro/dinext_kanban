@@ -178,6 +178,17 @@
         </div>
       </template>
     </VirtualList>
+
+    <div
+      v-if="canEditBoard && !collapsed"
+      class="kanban-column-resize-handle"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-label="__('Drag to resize column', [], COLUMN_CTX)"
+      :title="__('Drag to resize column. Hold Shift to resize all columns.', [], COLUMN_CTX)"
+      @pointerdown.stop.prevent="onResizePointerDown"
+      @dblclick.stop
+    />
   </section>
 </template>
 
@@ -187,11 +198,13 @@ import { useStore } from "vuex";
 import VirtualList from "vue-virtual-draglist";
 import { getIndicators } from "../../utils/colors";
 import {
+  clampColumnWidthForResize,
   COLUMN_DRAG_EXPAND_DELAY_MS,
   getColumnKey,
   getIndicatorClass,
   isNearScrollEnd,
   QUICK_KANBAN_COLUMN_TRANSLATION_CONTEXT,
+  resolveColumnWidthPx,
 } from "../../utils/kanban";
 import { openColumnListView } from "../../utils/listNavigation";
 import { useDismissibleMenu } from "../../utils/menu";
@@ -208,9 +221,11 @@ const colorMenuPanel = ref(null)
 const colorMenuOpen = ref(false)
 const columnMenuStyle = ref({})
 const columnRootRef = ref(null)
+const resizePreviewWidth = ref(null)
 const __ = globalThis.__
 const indicators = computed(() => getIndicators())
 let expandOnDragTimer = null
+let resizeSession = null
 
 useDismissibleMenu({
   isOpen: colorMenuOpen,
@@ -284,9 +299,16 @@ const columnDropClasses = computed(() => {
     'kanban-column-drop-forbidden': !allowed,
   }
 })
+const columnWidthPx = computed(() => {
+  if (Number.isFinite(resizePreviewWidth.value)) {
+    return resizePreviewWidth.value
+  }
+  return resolveColumnWidthPx(props.column)
+})
 const columnClasses = computed(() => ({
   ...columnDropClasses.value,
   'kanban-column--collapsed': collapsed.value,
+  'kanban-column--resizing': Number.isFinite(resizePreviewWidth.value),
 }))
 const showForbiddenOverlay = computed(() => {
   if (!activeDrag.value?.cardName) {
@@ -423,8 +445,126 @@ function onColumnDragLeave(event) {
   }
 }
 
+function endResizeSession() {
+  if (!resizeSession) {
+    return
+  }
+  const { pointerId, onMove, onUp, onCancel } = resizeSession
+  window.removeEventListener('pointermove', onMove)
+  window.removeEventListener('pointerup', onUp)
+  window.removeEventListener('pointercancel', onCancel)
+  document.body.classList.remove('kanban-column-resize-active')
+  try {
+    columnRootRef.value?.releasePointerCapture?.(pointerId)
+  } catch {
+    // Pointer may already be released.
+  }
+  resizeSession = null
+}
+
+function applyResizePreview(widthPx, resizeAll, previousWidths) {
+  const nextWidth = clampColumnWidthForResize(widthPx)
+  resizePreviewWidth.value = nextWidth
+  if (resizeAll) {
+    const widths = {}
+    for (const column of store.state.columns) {
+      widths[column.column_name] = nextWidth
+    }
+    store.commit('UPDATE_COLUMN_WIDTHS', widths)
+    return nextWidth
+  }
+  store.commit('UPDATE_COLUMN_WIDTHS', {
+    ...previousWidths,
+    [props.column.column_name]: nextWidth,
+  })
+  return nextWidth
+}
+
+function onResizePointerDown(event) {
+  if (!canEditBoard.value || collapsed.value || event.button !== 0) {
+    return
+  }
+  const startX = event.clientX
+  const startWidth = resolveColumnWidthPx(props.column)
+  const previousWidths = Object.fromEntries(
+    store.state.columns.map((column) => [
+      column.column_name,
+      column.custom_column_width,
+    ]),
+  )
+
+  const onMove = (moveEvent) => {
+    const delta = moveEvent.clientX - startX
+    applyResizePreview(startWidth + delta, moveEvent.shiftKey, previousWidths)
+  }
+
+  const finish = async (endEvent) => {
+    const delta = endEvent.clientX - startX
+    const resizeAll = Boolean(endEvent.shiftKey)
+    const nextWidth = clampColumnWidthForResize(startWidth + delta)
+    endResizeSession()
+    resizePreviewWidth.value = null
+
+    if (!resizeAll && nextWidth === startWidth) {
+      store.commit('UPDATE_COLUMN_WIDTHS', previousWidths)
+      return
+    }
+
+    const widths = resizeAll
+      ? Object.fromEntries(
+        store.state.columns.map((column) => [column.column_name, nextWidth]),
+      )
+      : { [props.column.column_name]: nextWidth }
+
+    store.commit('UPDATE_COLUMN_WIDTHS', {
+      ...previousWidths,
+      ...widths,
+    })
+
+    try {
+      await store.dispatch('setColumnWidths', widths)
+    } catch {
+      store.commit('UPDATE_COLUMN_WIDTHS', previousWidths)
+    }
+  }
+
+  const onUp = (upEvent) => {
+    finish(upEvent)
+  }
+  const onCancel = (cancelEvent) => {
+    endResizeSession()
+    resizePreviewWidth.value = null
+    store.commit('UPDATE_COLUMN_WIDTHS', previousWidths)
+    cancelEvent.preventDefault?.()
+  }
+
+  resizeSession = {
+    pointerId: event.pointerId,
+    onMove,
+    onUp,
+    onCancel,
+  }
+  document.body.classList.add('kanban-column-resize-active')
+  columnRootRef.value?.setPointerCapture?.(event.pointerId)
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onCancel)
+  applyResizePreview(startWidth, event.shiftKey, previousWidths)
+}
+
 onBeforeUnmount(() => {
   clearExpandOnDragTimer()
+  if (resizeSession) {
+    const previousWidths = Object.fromEntries(
+      store.state.columns.map((column) => [
+        column.column_name,
+        column.custom_column_width,
+      ]),
+    )
+    endResizeSession()
+    resizePreviewWidth.value = null
+    store.commit('UPDATE_COLUMN_WIDTHS', previousWidths)
+  }
 })
 
 function drag(evt) {
@@ -464,10 +604,17 @@ function openListForColumn() {
 
 function getColumnStyle(columnIndicator) {
   const color = getIndicatorClass(columnIndicator);
-  return {
+  const style = {
     backgroundColor: `var(--kanban-column-${color})`,
     color: `var(--text-on-${color}, var(--text-color))`,
-  };
+  }
+  if (!collapsed.value) {
+    const widthPx = columnWidthPx.value
+    style.width = `${widthPx}px`
+    style.flexBasis = `${widthPx}px`
+    style.maxWidth = 'none'
+  }
+  return style
 }
 
 function setIndicator(indicator) {

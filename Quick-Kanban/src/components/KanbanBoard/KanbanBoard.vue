@@ -305,6 +305,7 @@ const bindClickDrag = () => {
       ".kanban-column .add-card",
       ".kanban-column .kanban-card",
       ".kanban-card-wrapper",
+      ".kanban-column-resize-handle",
     ];
     if (ignoreEl.some((el) => e.target.closest(el))) return;
 

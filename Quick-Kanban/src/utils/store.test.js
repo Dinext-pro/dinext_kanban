@@ -1890,6 +1890,73 @@ describe('column indicator', () => {
   })
 })
 
+describe('column widths', () => {
+  test('setColumnWidths updates store and syncs cached board columns', async () => {
+    window.cur_list = {
+      board_name: 'Task Board',
+      board: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', custom_column_width: 250 },
+          { name: 'done', column_name: 'Done', custom_column_width: 250 },
+        ],
+      },
+      get_args: vi.fn(() => ({ doctype: 'Task' })),
+    }
+    frappe.call.mockResolvedValue({
+      message: {
+        name: 'Task Board',
+        columns: [
+          { name: 'open', column_name: 'Open', custom_column_width: 360 },
+          { name: 'done', column_name: 'Done', custom_column_width: 360 },
+        ],
+      },
+    })
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: [],
+      highlight_table: [],
+    })
+    store.commit('SET_BOARD_PERMS', { write: true })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', custom_column_width: 250, cards: [] },
+      { name: 'done', column_name: 'Done', custom_column_width: 250, cards: [] },
+    ])
+
+    await store.dispatch('setColumnWidths', { Open: 360, Done: 360 })
+
+    expect(store.state.columns.map((column) => column.custom_column_width)).toEqual([360, 360])
+    expect(window.cur_list.board.columns.map((column) => column.custom_column_width)).toEqual([
+      360,
+      360,
+    ])
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'quick_kanban.api.set_column_widths',
+      args: {
+        board_name: 'Task Board',
+        widths: { Open: 360, Done: 360 },
+      },
+    }))
+  })
+
+  test('setColumnWidths is a no-op without board write access', async () => {
+    const store = createStore()
+    store.commit('SET_BOARD_PERMS', { write: false })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', custom_column_width: 250, cards: [] },
+    ])
+
+    await store.dispatch('setColumnWidths', { Open: 400 })
+
+    expect(frappe.call).not.toHaveBeenCalled()
+    expect(store.state.columns[0].custom_column_width).toBe(250)
+  })
+})
+
 describe('hide column', () => {
   test('hydrateFromList omits Archived columns', async () => {
     const store = createStore()

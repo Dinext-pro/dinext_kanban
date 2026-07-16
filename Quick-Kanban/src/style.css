@@ -165,7 +165,7 @@
   gap: 8px;
   flex: 0 0 250px;
   width: 250px;
-  max-width: 350px;
+  max-width: none;
   padding: 0;
   max-height: calc(
     100vh - var(--navbar-height) - var(--page-bottom-margin)
@@ -177,6 +177,45 @@
     width 220ms ease,
     flex-basis 220ms ease,
     max-width 220ms ease;
+}
+
+#kanbanapp .kanban-column--resizing {
+  transition: none;
+}
+
+#kanbanapp .kanban-column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 3;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+#kanbanapp .kanban-column-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+#kanbanapp .kanban-column:hover > .kanban-column-resize-handle::after,
+#kanbanapp .kanban-column--resizing > .kanban-column-resize-handle::after {
+  background: var(--gray-500, var(--text-muted));
+}
+
+body.kanban-column-resize-active,
+body.kanban-column-resize-active * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 #kanbanapp .kanban-column--collapsed {

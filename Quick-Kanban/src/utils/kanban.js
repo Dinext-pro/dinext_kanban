@@ -14,6 +14,36 @@ export const CARD_COLLAPSE_DELAY_MS = 300
 export const CARD_DENSITY_ANIMATION_MS = 200
 export const COLUMN_COLLAPSE_ANIMATION_MS = 220
 export const COLUMN_DRAG_EXPAND_DELAY_MS = 400
+export const DEFAULT_COLUMN_WIDTH_PX = 250
+export const COLUMN_WIDTH_MIN_VIEWPORT_RATIO = 0.15
+export const COLUMN_WIDTH_MAX_VIEWPORT_RATIO = 0.5
+
+export function getColumnWidthBounds(viewportWidth = globalThis.window?.innerWidth) {
+  const width = Number(viewportWidth)
+  const safeWidth = Number.isFinite(width) && width > 0 ? width : DEFAULT_COLUMN_WIDTH_PX / COLUMN_WIDTH_MIN_VIEWPORT_RATIO
+  return {
+    min: Math.round(safeWidth * COLUMN_WIDTH_MIN_VIEWPORT_RATIO),
+    max: Math.round(safeWidth * COLUMN_WIDTH_MAX_VIEWPORT_RATIO),
+  }
+}
+
+/** Clamp only while the user is actively resizing a column. */
+export function clampColumnWidthForResize(widthPx, viewportWidth = globalThis.window?.innerWidth) {
+  const { min, max } = getColumnWidthBounds(viewportWidth)
+  const width = Math.round(Number(widthPx))
+  if (!Number.isFinite(width)) {
+    return min
+  }
+  return Math.min(max, Math.max(min, width))
+}
+
+export function resolveColumnWidthPx(column) {
+  const stored = Number(column?.custom_column_width)
+  if (Number.isFinite(stored) && stored > 0) {
+    return Math.round(stored)
+  }
+  return DEFAULT_COLUMN_WIDTH_PX
+}
 
 export function minimizeCardsStorageKey(boardName) {
   return `${MINIMIZE_CARDS_STORAGE_PREFIX}${boardName || ''}`
