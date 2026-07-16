@@ -197,6 +197,7 @@ describe('normalizeBoardConfig', () => {
       highlight_table: [],
       show_labels: true,
       show_tags: false,
+      show_extra_info: false,
       title_field_meta: { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
       status_field_meta: { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
       highlighted_field_meta: { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
@@ -222,6 +223,27 @@ describe('normalizeBoardConfig', () => {
 
     expect(enabled.show_tags).toBe(true)
     expect(disabled.show_tags).toBe(false)
+  })
+
+  test('maps custom_show_extra_info to show_extra_info', () => {
+    const enabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_extra_info: 1,
+    }, { title_field: 'subject', fields: [] })
+
+    const disabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_extra_info: 0,
+    }, { title_field: 'subject', fields: [] })
+
+    expect(enabled.show_extra_info).toBe(true)
+    expect(disabled.show_extra_info).toBe(false)
   })
 
   test('falls back to useful card fields when fields JSON is invalid', () => {

@@ -150,6 +150,48 @@ def get_column_totals(
 	return totals
 
 
+@frappe.whitelist()
+@frappe.read_only()
+def get_attachment_counts(doctype, names):
+	"""Return File attachment counts keyed by document name."""
+	names = frappe.parse_json(names) if isinstance(names, str) else names
+	if not names:
+		return {}
+	if not isinstance(names, (list, tuple)):
+		frappe.throw(_("Document names must be a list."))
+
+	unique_names = []
+	seen = set()
+	for name in names:
+		key = str(name or "").strip()
+		if not key or key in seen:
+			continue
+		seen.add(key)
+		unique_names.append(key)
+
+	if not unique_names:
+		return {}
+
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("You cannot read this document type."), frappe.PermissionError)
+
+	counts = {name: 0 for name in unique_names}
+	files = frappe.get_all(
+		"File",
+		filters={
+			"attached_to_doctype": doctype,
+			"attached_to_name": ("in", unique_names),
+		},
+		fields=["attached_to_name"],
+		limit_page_length=0,
+	)
+	for row in files:
+		attached_name = row.get("attached_to_name")
+		if attached_name in counts:
+			counts[attached_name] += 1
+	return counts
+
+
 @frappe.whitelist(methods=["POST"])
 def get_move_options(board_name, names):
 	return build_move_options(board_name, names)

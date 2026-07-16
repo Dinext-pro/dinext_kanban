@@ -9,6 +9,7 @@ from frappe.tests.utils import FrappeTestCase, patch_hooks
 from frappe.utils import get_datetime
 
 from quick_kanban.api import (
+    get_attachment_counts,
     get_column_totals,
     move_card,
     set_column_widths,
@@ -438,6 +439,60 @@ class TestColumnWidths(FrappeTestCase):
             ],
             "quick_kanban.api.update_column_order",
         )
+
+
+class TestGetAttachmentCounts(FrappeTestCase):
+    def test_empty_names_returns_empty_dict(self):
+        self.assertEqual(get_attachment_counts("ToDo", []), {})
+        self.assertEqual(get_attachment_counts("ToDo", "[]"), {})
+
+    def test_counts_files_per_document(self):
+        frappe.set_user("Administrator")
+        todo_a = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Attachment count A",
+                "status": "Open",
+            }
+        ).insert()
+        todo_b = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Attachment count B",
+                "status": "Open",
+            }
+        ).insert()
+        for index in range(2):
+            frappe.get_doc(
+                {
+                    "doctype": "File",
+                    "file_name": f"count-a-{index}.txt",
+                    "content": f"a{index}",
+                    "attached_to_doctype": "ToDo",
+                    "attached_to_name": todo_a.name,
+                    "is_private": 1,
+                }
+            ).insert()
+        frappe.get_doc(
+            {
+                "doctype": "File",
+                "file_name": "count-b-0.txt",
+                "content": "b0",
+                "attached_to_doctype": "ToDo",
+                "attached_to_name": todo_b.name,
+                "is_private": 1,
+            }
+        ).insert()
+
+        counts = get_attachment_counts("ToDo", [todo_a.name, todo_b.name, "MISSING"])
+        self.assertEqual(counts[todo_a.name], 2)
+        self.assertEqual(counts[todo_b.name], 1)
+        self.assertEqual(counts["MISSING"], 0)
+
+    def test_requires_read_permission_on_doctype(self):
+        with patch("quick_kanban.api.frappe.has_permission", return_value=False):
+            with self.assertRaises(frappe.PermissionError):
+                get_attachment_counts("ToDo", ["TASK-1"])
 
 
 class TestDeskAssets(FrappeTestCase):

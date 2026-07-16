@@ -26,6 +26,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Расцветка карточек по полю `color` (fieldtype `Color`) в целевом DocType: цветная полоска слева и лёгкий tint фона.
 - Просмотр и изменение назначенных пользователей через стандартный Assign To Dialog.
 - Отображение меток (`_user_tags`) на карточке при включённом **Show Tags** / **Показывать теги** на Kanban Board; при праве записи — добавление и удаление через стандартный `frappe.ui.TagEditor`.
+- Ряд **Доп. информация** на карточке при включённом **Extra Info** / **Доп. информация** (`custom_show_extra_info`): копирование ссылки на форму, like, комментарии (счётчик → форма), файлы (список, загрузка, preview/`preview_attachment` или открытие файла, удаление с учётом прав).
 - Двойной клик по метке добавляет её в текущий фильтр доски (`_user_tags like …`), как клик по тегу в list sidebar.
 - Перенос меток между карточками: ЛКМ — копирование, ПКМ — перемещение; сохранение через `add_tag` / `remove_tag`.
 - Inline-редактирование видимых полей карточки (заголовок из `title_field`, поля `Fields`, Highlighted Field): одинарный клик открывает штатный контрол Frappe после `frappe.model.with_doc`; двойной клик по карточке (включая поля и chrome) открывает форму документа; двойной клик по Link — связанную запись; теги, кнопка Move и назначения навигацию не запускают.
@@ -190,6 +191,7 @@ cd ../frappe && yarn run production --apps quick_kanban
 4. При необходимости задайте `Highlighted Field` и таблицу цветов для его значений.
 5. Для расцветки карточек добавьте в целевой DocType поле **`color`** с типом **`Color`** и заполните его у записей (hex, например `#FF5733`). Поле подтягивается автоматически и не отображается в теле карточки.
 6. Чтобы показывать метки на карточках, включите **Show Tags** / **Показывать теги** на форме Kanban Board (после `show_labels`).
+7. Чтобы показывать ряд ссылка / like / комментарии / файлы, включите **Extra Info** / **Доп. информация** на форме Kanban Board.
 7. Откройте Kanban-представление списка.
 
 Двойной клик по badge с количеством записей в заголовке колонки открывает ListView того же DocType с фильтром по значению колонки (например, `status = Open`) и текущими фильтрами доски из filter bar. Одиночный клик по счётчику ничего не делает.
@@ -259,6 +261,17 @@ cd ../frappe && yarn run production --apps quick_kanban
 ### Метки на карточках
 
 На форме `Kanban Board` чекбокс **Show Tags** / **Показывать теги** (`custom_show_tags`) включает блок меток на карточке. Данные берутся из стандартного поля `_user_tags`.
+
+### Доп. информация на карточках
+
+На форме `Kanban Board` чекбокс **Extra Info** / **Доп. информация** (`custom_show_extra_info`, по умолчанию выключен) показывает после блока меток правый ряд иконок:
+
+- **ссылка** — копирует полный URL формы документа в буфер (`frappe.utils.copy_to_clipboard`);
+- **like** — переключает like/not-like для текущего пользователя (`frappe.desk.like.toggle_like`);
+- **комментарии** — счётчик `_comment_count`; клик открывает форму документа;
+- **файлы** — счётчик вложений (`quick_kanban.api.get_attachment_counts`); меню со списком, **+ Загрузить**, preview через `preview_attachment` при наличии приложения иначе открытие файла, удаление через `remove_attach` с правилами Form (`write` / `protect_attached_files`).
+
+В режиме **Минимизировать** ряд скрывается вместе с полями и метками.
 
 Когда метки включены:
 
@@ -396,9 +409,9 @@ bench --site <site-name> clear-cache
 - [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
 - [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
 - [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы подсчёта, перемещения карточек и ширины колонок (`set_column_widths`, override `update_column_order`).
-- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`CardTags`, `listNavigation.applyUserTagFilter`, `tagDragDrop`, density state и resize колонок в Vuex).
-- [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Field **Show Tags** на Kanban Board.
+- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы подсчёта (включая `get_attachment_counts`), перемещения карточек и ширины колонок (`set_column_widths`, override `update_column_order`).
+- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`CardTags`, `CardExtraInfo`, `listNavigation.applyUserTagFilter`, `tagDragDrop`, density state и resize колонок в Vuex).
+- [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Fields **Show Tags** и **Extra Info** на Kanban Board.
 - [`quick_kanban/quick_kanban/custom/kanban_board_column.json`](quick_kanban/quick_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
 
 После каждого commit локальный `post-commit` hook формирует предложение для документации в `../dinext-docs/doc-proposals/inbox/`. Повторная установка hook:
@@ -435,7 +448,7 @@ dinext_kanban/
 │   ├── public/
 │   │   ├── css/                # Собранные и подключаемые стили
 │   │   └── js/                 # Bootstrap, KanbanView override и Vue bundle
-│   ├── quick_kanban/custom/    # Custom Field: Show Tags (Board), Column Width (Column)
+│   ├── quick_kanban/custom/    # Custom Fields: Show Tags / Extra Info (Board), Column Width (Column)
 │   ├── tests/                  # Backend-тесты Frappe
 │   ├── translations/           # CSV-переводы (ru)
 │   ├── api.py                  # Permission-aware API доски
