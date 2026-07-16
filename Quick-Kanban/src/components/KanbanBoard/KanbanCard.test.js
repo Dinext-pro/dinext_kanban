@@ -46,6 +46,7 @@ function createStore() {
     highlight_table: [{ tag: 'High', color: 'red' }],
     show_labels: true,
     show_tags: false,
+    show_extra_info: false,
   })
   store.commit('SET_COLUMNS', [
     {
@@ -220,6 +221,62 @@ test('renders colored tags between fields and meta when show_tags is enabled', (
   expect(wrapper.text()).toContain('gamma')
   expect(wrapper.text()).not.toContain('delta')
   expect(cur_list.get_tags_html).toHaveBeenCalledWith(',alpha,beta,gamma,delta', 3, true)
+})
+
+test('renders extra info row after tags when show_extra_info is enabled', () => {
+  const store = createStore()
+  const config = { ...store.state.config, show_tags: true, show_extra_info: true }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _user_tags: ',alpha',
+        _comment_count: 1,
+        _attachment_count: 0,
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  const tags = wrapper.get('.kanban-tags')
+  const extra = wrapper.get('.kanban-card-extra-info')
+  expect(tags.element.nextElementSibling).toBe(extra.element)
+  expect(extra.find('[aria-label="Copy link"]').exists()).toBe(true)
+})
+
+test('shows details slot when only show_extra_info is enabled', () => {
+  const store = createStore()
+  const config = {
+    ...store.state.config,
+    display_fields: [],
+    show_tags: false,
+    show_extra_info: true,
+  }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
+  expect(wrapper.find('.kanban-card-extra-info').exists()).toBe(true)
 })
 
 test('hides tags when show_tags is disabled', () => {

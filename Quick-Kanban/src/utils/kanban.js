@@ -495,6 +495,7 @@ export function normalizeBoardConfig(board, meta = {}) {
       : [],
     show_labels: Boolean(board.show_labels),
     show_tags: Boolean(board.custom_show_tags),
+    show_extra_info: Boolean(board.custom_show_extra_info),
   }
 }
 

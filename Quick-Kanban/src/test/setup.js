@@ -8,16 +8,23 @@ globalThis.__ = (message, values = []) =>
 
 globalThis.frappe = {
   boot: { user_info: {} },
+  session: { user: 'Administrator' },
   call: vi.fn(),
-  get_meta: vi.fn(),
+  get_meta: vi.fn(() => ({ fields: [], protect_attached_files: 0 })),
   get_route: vi.fn(() => ['List', 'Task', 'Kanban', 'Test Board']),
   new_doc: vi.fn(),
   show_alert: vi.fn(),
+  confirm: vi.fn((_message, onYes) => {
+    onYes?.()
+  }),
   set_route: vi.fn(() => Promise.resolve()),
   update_user_info: vi.fn((userInfo = {}) => {
     Object.assign(frappe.boot.user_info, userInfo)
   }),
   user_info: vi.fn((user) => frappe.boot.user_info[user] || { fullname: user }),
+  urllib: {
+    get_full_url: vi.fn((url) => `https://example.com${url}`),
+  },
   avatar_group: vi.fn((users, limit, options = {}) => {
     const group = document.createElement('div')
     group.className = 'avatar-group overlap'
@@ -73,6 +80,8 @@ globalThis.frappe = {
     get_link_title: vi.fn(() => null),
     fetch_link_title: vi.fn(async (_doctype, name) => name),
     add_link_title: vi.fn(),
+    copy_to_clipboard: vi.fn(),
+    scroll_to: vi.fn(),
     eval: vi.fn((expression, context) => {
       if (expression.includes('status == "Done"')) {
         return context.doc.status === 'Done'
@@ -92,6 +101,7 @@ globalThis.frappe = {
   model: {
     can_create: vi.fn(() => true),
     can_write: vi.fn(() => false),
+    can_delete: vi.fn(() => false),
     with_doctype: vi.fn((doctype, callback) => Promise.resolve(callback?.())),
     with_doc: vi.fn((doctype, name) =>
       Promise.resolve({
@@ -232,7 +242,9 @@ globalThis.frappe = {
         }
       }
     }),
+    FileUploader: vi.fn(function FileUploader() {}),
     form: {
+      Attachments: class Attachments {},
       on: vi.fn(),
       off: vi.fn(),
       make_quick_entry: vi.fn(() => Promise.resolve({})),

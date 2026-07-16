@@ -55,6 +55,7 @@ const emptyConfig = () => ({
   highlight_table: [],
   show_labels: false,
   show_tags: false,
+  show_extra_info: false,
 })
 
 function withColumnDisplayNames(columns, config) {
@@ -614,6 +615,15 @@ export function createKanbanStore() {
           }
         }
       },
+      APPLY_ATTACHMENT_COUNTS(state, counts = {}) {
+        for (const column of state.columns) {
+          for (const card of column.cards || []) {
+            if (card?.name && Object.prototype.hasOwnProperty.call(counts, card.name)) {
+              card._attachment_count = Number(counts[card.name]) || 0
+            }
+          }
+        }
+      },
       SET_DATA_REQUEST_ID(state, requestId) {
         state.dataRequestId = requestId
       },
@@ -866,6 +876,58 @@ export function createKanbanStore() {
           cards: flattenCardsFromColumns(columns),
           boardGeneration: state.boardGeneration,
         })
+        dispatch('hydrateAttachmentCounts', {
+          cards: flattenCardsFromColumns(columns),
+          boardGeneration: state.boardGeneration,
+        })
+      },
+      async hydrateAttachmentCounts(
+        { commit, state },
+        {
+          cards,
+          boardGeneration = state.boardGeneration,
+          dataRequestId = null,
+          columnRequestGeneration = null,
+        } = {},
+      ) {
+        if (!state.config.show_extra_info) {
+          return false
+        }
+        const doctype = state.config.ref_doctype
+        const names = [...new Set(
+          (cards || [])
+            .map((card) => card?.name)
+            .filter(Boolean)
+            .map((name) => String(name)),
+        )]
+        if (!doctype || !names.length) {
+          return false
+        }
+
+        try {
+          const counts = {}
+          for (const chunk of chunkList(names, 100)) {
+            const response = await frappe.call({
+              method: 'quick_kanban.api.get_attachment_counts',
+              args: { doctype, names: chunk },
+            })
+            Object.assign(counts, response.message || {})
+          }
+          if (
+            state.boardGeneration !== boardGeneration
+            || (dataRequestId != null && state.dataRequestId !== dataRequestId)
+            || (
+              columnRequestGeneration != null
+              && state.columnRequestGeneration !== columnRequestGeneration
+            )
+          ) {
+            return false
+          }
+          commit('APPLY_ATTACHMENT_COUNTS', counts)
+          return true
+        } catch {
+          return false
+        }
       },
       async hydrateCardLinkTitles(
         { commit, state },
@@ -1002,6 +1064,11 @@ export function createKanbanStore() {
           )
           dispatch('scheduleMoveOptionsRefresh')
           dispatch('hydrateCardLinkTitles', {
+            cards: flattenCardsFromColumns(columns),
+            boardGeneration,
+            dataRequestId: requestId,
+          })
+          dispatch('hydrateAttachmentCounts', {
             cards: flattenCardsFromColumns(columns),
             boardGeneration,
             dataRequestId: requestId,
@@ -1150,6 +1217,11 @@ export function createKanbanStore() {
           })
           dispatch('scheduleMoveOptionsRefresh')
           dispatch('hydrateCardLinkTitles', {
+            cards: pageColumn.cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateAttachmentCounts', {
             cards: pageColumn.cards,
             boardGeneration,
             columnRequestGeneration,

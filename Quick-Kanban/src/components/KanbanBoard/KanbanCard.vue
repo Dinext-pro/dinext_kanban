@@ -94,6 +94,12 @@
           v-html="tagsHtml"
           @dblclick.stop="onReadonlyTagDblclick"
         ></div>
+
+        <CardExtraInfo
+          v-if="config.show_extra_info"
+          :card="card"
+          :doctype="config.ref_doctype"
+        />
       </div>
     </div>
 
@@ -168,6 +174,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useStore } from 'vuex'
 import Assignments from '../Assignments.vue'
+import CardExtraInfo from './CardExtraInfo.vue'
 import CardTags from './CardTags.vue'
 import InlineCardField from './InlineCardField.vue'
 import {
@@ -337,7 +344,8 @@ const tagsHtml = computed(() => {
 const showDetailsSlot = computed(
   () => displayFields.value.length > 0
     || canEditTags.value
-    || Boolean(props.config.show_tags && tagsHtml.value),
+    || Boolean(props.config.show_tags && tagsHtml.value)
+    || Boolean(props.config.show_extra_info),
 )
 const tagFilterHint = computed(() =>
   __('Double-click to filter by tag', null, 'QuickKanban.Tags'),

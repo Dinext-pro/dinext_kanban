@@ -793,6 +793,128 @@ body.kanban-column-resize-active * {
   padding: 0;
 }
 
+#kanbanapp .kanban-card-extra-info {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  width: 100%;
+}
+
+#kanbanapp .extra-info-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+#kanbanapp .extra-info-action:hover:not(:disabled) {
+  background: var(--control-bg);
+  color: var(--text-color);
+}
+
+#kanbanapp .extra-info-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#kanbanapp .extra-info-action.liked {
+  color: var(--red-500, #e24c4c);
+}
+
+#kanbanapp .extra-info-action--count {
+  min-width: 36px;
+}
+
+#kanbanapp .extra-info-count {
+  font-size: var(--text-sm, 12px);
+  font-variant-numeric: tabular-nums;
+}
+
+#kanbanapp .extra-info-files {
+  position: relative;
+  display: inline-flex;
+}
+
+.extra-info-files-menu {
+  position: fixed;
+  z-index: 1050;
+  min-width: 200px;
+  max-width: min(280px, calc(100vw - 16px));
+  margin: 0;
+  padding: 4px;
+  color: var(--text-color);
+  background: var(--fg-color, var(--card-bg));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+.extra-info-files-menu .dropdown-item {
+  color: var(--text-color);
+}
+
+.extra-info-files-list {
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.extra-info-file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.extra-info-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extra-info-file-delete {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.extra-info-file-delete:hover {
+  color: var(--red-500, #e24c4c);
+  background: var(--control-bg);
+}
+
+.extra-info-upload {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.extra-info-files-empty {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: var(--text-sm, 12px);
+}
+
 #kanbanapp .kanban-tags .tag-pill {
   border-radius: 100px;
   height: 22px;
