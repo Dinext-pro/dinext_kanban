@@ -329,7 +329,7 @@ body.kanban-column-resize-active * {
   top: 28px;
   right: 0;
   will-change: transform;
-  z-index: 2;
+  z-index: 1050;
   display: flex;
   flex-direction: column;
   gap: 4px;
