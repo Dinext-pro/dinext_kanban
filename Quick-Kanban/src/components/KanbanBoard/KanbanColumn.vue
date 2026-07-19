@@ -119,7 +119,7 @@
           v-show="!collapsed"
           type="button"
           class="header-item"
-          :aria-label="__('Add {0} to {1}', [config.ref_doctype, columnLabel])"
+          :aria-label="__('Add {0} to {1}', [doctypeLabel, columnLabel])"
           :disabled="createBlocked"
           @click="startCreate"
           @dblclick.stop
@@ -200,7 +200,7 @@
           <svg class="icon icon-xs" aria-hidden="true">
             <use href="#icon-add"></use>
           </svg>
-          <span>{{ __('Add {0}', [config.ref_doctype]) }}</span>
+          <span>{{ __('Add {0}', [doctypeLabel]) }}</span>
         </button>
       </div>
       <button
@@ -447,6 +447,7 @@ const totalDisplay = computed(
 const columnLabel = computed(
   () => props.column.display_name || props.column.column_name,
 )
+const doctypeLabel = computed(() => __(props.config.ref_doctype))
 const columnAriaLabel = computed(() => {
   if (activeDrag.value?.cardName) {
     const allowed = isTargetDropAllowed(activeDrag.value.cardName)

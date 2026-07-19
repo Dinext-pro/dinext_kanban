@@ -233,6 +233,7 @@ test('closes the color menu on a non-arrow key without restoring focus', async (
 test('renders translated column labels while dispatching create from the column', async () => {
   const originalTranslate = globalThis.__
   globalThis.__ = (message, values = [], context) => {
+    if (message === 'Task') return 'Задача'
     if (context === 'Task' && message === 'Open') return 'Открыто'
     return values.reduce(
       (result, value, index) => result.replace(`{${index}}`, value),
@@ -240,26 +241,29 @@ test('renders translated column labels while dispatching create from the column'
     )
   }
 
-  const { wrapper } = mountColumn({
-    name: 'open',
-    column_name: 'Open',
-    display_name: 'Открыто',
-    indicator: 'gray',
-    cards: [],
-  })
-  const store = wrapper.vm.$store
-  const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  try {
+    const { wrapper } = mountColumn({
+      name: 'open',
+      column_name: 'Open',
+      display_name: 'Открыто',
+      indicator: 'gray',
+      cards: [],
+    })
+    const store = wrapper.vm.$store
+    const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
 
-  expect(wrapper.get('h2').text()).toBe('Открыто')
-  expect(wrapper.attributes('aria-label')).toBe('Открыто, 51 records')
+    expect(wrapper.get('h2').text()).toBe('Открыто')
+    expect(wrapper.attributes('aria-label')).toBe('Открыто, 51 records')
+    expect(wrapper.get('.addcard button').text()).toContain('Add Задача')
 
-  await wrapper.get('[aria-label="Add Task to Открыто"]').trigger('click')
-  expect(dispatchSpy).toHaveBeenCalledWith('startCreateCard', {
-    columnIndex: 0,
-    column: expect.objectContaining({ column_name: 'Open' }),
-  })
-
-  globalThis.__ = originalTranslate
+    await wrapper.get('[aria-label="Add Задача to Открыто"]').trigger('click')
+    expect(dispatchSpy).toHaveBeenCalledWith('startCreateCard', {
+      columnIndex: 0,
+      column: expect.objectContaining({ column_name: 'Open' }),
+    })
+  } finally {
+    globalThis.__ = originalTranslate
+  }
 })
 
 test('does not throw for an unknown column indicator', () => {
