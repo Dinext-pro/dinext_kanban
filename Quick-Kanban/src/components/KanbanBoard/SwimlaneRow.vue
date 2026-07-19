@@ -78,6 +78,10 @@
           :data-column-value="column.column_name"
           :style="columnTrackStyle(column)"
           aria-hidden="true"
+          @pointerenter="onCollapsedColumnPointerEnter(column)"
+          @pointerleave="onCollapsedColumnPointerLeave"
+          @dragenter="onCollapsedColumnDragEnter(column, $event)"
+          @dragleave="onCollapsedColumnDragLeave"
         />
         <SwimlaneGroup
           v-else
@@ -109,6 +113,7 @@ import {
 import { useStore } from 'vuex'
 import SwimlaneGroup from './SwimlaneGroup.vue'
 import {
+  COLUMN_DRAG_EXPAND_DELAY_MS,
   getColumnKey,
   getIndicatorClass,
   LANE_DRAG_EXPAND_DELAY_MS,
@@ -141,6 +146,10 @@ const rowMounted = ref(false)
 const rowAnimating = ref(false)
 const animationReady = ref(false)
 let hoverExpandTimer = null
+/** @type {ReturnType<typeof setTimeout> | null} */
+let columnExpandOnDragTimer = null
+/** @type {string | null} */
+let columnExpandOnDragKey = null
 let stickRoomRaf = null
 let stickRoomRetryTimers = []
 let stickRoomResizeObserver = null
@@ -444,6 +453,69 @@ function onPointerLeave() {
   hoverExpandTimer = null
 }
 
+function clearColumnExpandOnDragTimer() {
+  if (columnExpandOnDragTimer) {
+    clearTimeout(columnExpandOnDragTimer)
+    columnExpandOnDragTimer = null
+  }
+  columnExpandOnDragKey = null
+}
+
+function scheduleColumnExpandOnDrag(column) {
+  const columnKey = getColumnKey(column)
+  if (!columnKey || !activeDrag.value?.cardName) {
+    return
+  }
+  if (!store.getters.isColumnCollapsed(columnKey)) {
+    return
+  }
+  if (columnExpandOnDragTimer && columnExpandOnDragKey === columnKey) {
+    return
+  }
+  clearColumnExpandOnDragTimer()
+  columnExpandOnDragKey = columnKey
+  columnExpandOnDragTimer = setTimeout(() => {
+    columnExpandOnDragTimer = null
+    columnExpandOnDragKey = null
+    if (
+      store.getters.isColumnCollapsed(columnKey)
+      && activeDrag.value?.cardName
+    ) {
+      store.commit('SET_COLUMN_COLLAPSED', { columnKey, collapsed: false })
+    }
+  }, COLUMN_DRAG_EXPAND_DELAY_MS)
+}
+
+function isLeavingSpacer(event) {
+  const related = event.relatedTarget
+  const root = event.currentTarget
+  if (!(related instanceof Node) || !(root instanceof Node)) {
+    return true
+  }
+  return !root.contains(related)
+}
+
+function onCollapsedColumnPointerEnter(column) {
+  scheduleColumnExpandOnDrag(column)
+}
+
+function onCollapsedColumnPointerLeave(event) {
+  if (isLeavingSpacer(event)) {
+    clearColumnExpandOnDragTimer()
+  }
+}
+
+function onCollapsedColumnDragEnter(column, event) {
+  event.preventDefault?.()
+  scheduleColumnExpandOnDrag(column)
+}
+
+function onCollapsedColumnDragLeave(event) {
+  if (isLeavingSpacer(event)) {
+    clearColumnExpandOnDragTimer()
+  }
+}
+
 function onGroupDragStart(context) {
   emits('dragstart', context)
 }
@@ -535,6 +607,7 @@ onUpdated(() => {
 onBeforeUnmount(() => {
   clearTimeout(hoverExpandTimer)
   hoverExpandTimer = null
+  clearColumnExpandOnDragTimer()
   cancelLaneAnim()
   awaitingExpandAnim = false
   clearAssigneeAvatar()
