@@ -249,9 +249,7 @@ async function onToggleLike() {
       value: toggleLikedByValue(props.card._liked_by, sessionUser.value, add === 'Yes'),
     })
   } catch (_error) {
-    const message = globalThis.__
-      ? globalThis.__('Could not update like.')
-      : 'Could not update like.'
+    const message = __('Could not update like.')
     if (typeof globalThis.frappe?.show_alert === 'function') {
       globalThis.frappe.show_alert({ message, indicator: 'red' })
     }
