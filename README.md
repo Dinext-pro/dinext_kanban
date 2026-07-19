@@ -11,11 +11,13 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Vue-интерфейс для Kanban Board любого DocType, использующего поле типа `Select`.
 - Виртуализация карточек и постраничная загрузка по колонкам для больших досок.
 - Начальная загрузка до 100 записей и автоматическая дозагрузка по 30 карточек при прокрутке отдельной колонки.
+- Создание карточек из колонки (**Add {DocType}** / `+` в заголовке): серверная политика `get_create_options` выбирает Quick Entry, полную форму или блокировку; статус колонки и значения swimlane подставляются заранее.
 - Перемещение карточек мышью и через доступное с клавиатуры меню выбора колонки.
 - Двухслойная валидация перемещений: фронтенд фильтрует назначения по Workflow-правам и обязательным полям (`reqd`, `mandatory_depends_on`), сервер повторяет проверки при сохранении.
 - Подсветка разрешённых колонок при перетаскивании и блокировка запрещённых назначений.
 - Выбор Workflow action, когда несколько переходов ведут в одну колонку.
-- Оптимистичное обновление с откатом при недостаточных правах, ошибке валидации или конкурентном изменении документа.
+- Оптимистичное обновление с откатом при недостаточных правах, ошибке валидации или конкурентном изменении документа; краткая подсветка успешного перемещения и анимация отката (с учётом `prefers-reduced-motion`).
+- После успешного Move/DnD или создания карточки — раскрытие сжатой колонки/дорожки при необходимости и прокрутка к карточке; недавно созданные записи удерживаются сверху колонки до следующего обновления списка.
 - Проверка прав чтения и записи на уровне DocType и поля.
 - Подсчёт общего количества карточек в каждой колонке с учётом текущих фильтров.
 - Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски.
@@ -29,6 +31,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Ряд **Доп. информация** на карточке при включённом **Extra Info** / **Доп. информация** (`custom_show_extra_info`): копирование ссылки на форму, like, комментарии (счётчик → форма), файлы (список, загрузка, preview/`preview_attachment` или открытие файла, удаление с учётом прав).
 - Двойной клик по метке добавляет её в текущий фильтр доски (`_user_tags like …`), как клик по тегу в list sidebar.
 - Перенос меток между карточками: ЛКМ — копирование, ПКМ — перемещение; сохранение через `add_tag` / `remove_tag`.
+- Отображение Link / Dynamic Link по title связанной записи (`hydrateLinkTitles` / `frappe._link_titles`), а не по сырому имени; поля `Percent` — progress bar.
 - Inline-редактирование видимых полей карточки (заголовок из `title_field`, поля `Fields`, Highlighted Field): одинарный клик открывает штатный контрол Frappe после `frappe.model.with_doc`; двойной клик по карточке (включая поля и chrome) открывает форму документа; двойной клик по Link — связанную запись; теги, кнопка Move и назначения навигацию не запускают.
 - Переход из диалога Kanban Settings к записи текущей Kanban Board.
 - Режим **Минимизировать**: компактные карточки (заголовок, drag-handle, highlight, Move, assignees) с раскрытием по hover; плотность при DnD карточек и меток хранится в Vuex (в том числе принудительное схлопывание источника после tag-drag).
@@ -72,19 +75,18 @@ cd <bench-root>
 bench --site <site-name> install-app quick_kanban
 ```
 
-**4. Собрать frontend (два шага — оба обязательны)**
+**4. Собрать frontend**
 
-Frappe Desk отдаёт **хешированные** bundles из `quick_kanban/public/dist/` через `sites/assets/assets.json`. Одной сборки Vite недостаточно.
+Frappe Desk отдаёт **хешированные** bundles из `quick_kanban/public/dist/` через `sites/assets/assets.json`. Одной сборки Vite недостаточно: нужны copy в `public/` и `bench build`.
+
+Команда workspace уже выполняет полный цикл (`vite build` → copy в `quick_kanban/public/` → `bench build --app quick_kanban`):
 
 ```bash
 cd apps/quick_kanban
 yarn workspace quick_kanban build
-
-cd <bench-root>
-bench build --app quick_kanban
 ```
 
-Альтернатива второму шагу — Frappe esbuild напрямую:
+Отдельный `bench build --app quick_kanban` нужен только если собирали Vite/copy без этого скрипта. Альтернатива шагу `bench build` — Frappe esbuild напрямую:
 
 ```bash
 cd apps/frappe && yarn run production --apps quick_kanban
@@ -124,9 +126,8 @@ bench get-app quick_kanban https://dinext.gitlab.yandexcloud.net/erpnext/dinext/
 cd apps/quick_kanban && yarn install --frozen-lockfile && cd ../..
 bench --site <site-name> install-app quick_kanban
 
-# 4–5: сборка assets и применение
+# 4–5: сборка assets (vite + copy + bench build) и применение
 cd apps/quick_kanban && yarn workspace quick_kanban build && cd ../..
-bench build --app quick_kanban
 bench --site <site-name> migrate
 bench --site <site-name> clear-cache
 bench restart
@@ -148,13 +149,12 @@ yarn install --frozen-lockfile
 yarn workspace quick_kanban build
 
 cd <bench-root>
-bench build --app quick_kanban
 bench --site <site-name> migrate
 bench --site <site-name> clear-cache
 bench restart
 ```
 
-`bench restart` **не заменяет** `bench build` — без второго шага Desk продолжит отдавать старые hashed bundles.
+`yarn workspace quick_kanban build` уже включает `bench build --app quick_kanban`. `bench restart` **не заменяет** сборку assets — без неё Desk продолжит отдавать старые hashed bundles.
 
 ### Если `bench` падает с `ImportError: _check_nested_chain`
 
@@ -179,8 +179,8 @@ frappe.clear_cache()
 print('cache cleared')
 "
 
-# Сборка assets Quick Kanban
-cd apps/quick_kanban && yarn workspace quick_kanban build
+# Сборка assets без CLI bench (vite + copy, затем Frappe esbuild)
+cd apps/quick_kanban && yarn vite build && yarn copy-js
 cd ../frappe && yarn run production --apps quick_kanban
 ```
 
@@ -200,9 +200,31 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 Одинарный клик по значению поля на карточке (заголовок, поля из `Fields`, Highlighted Field) загружает полный документ через `frappe.model.with_doc`, проверяет права/workflow и при возможности редактирования открывает штатный UI-контрол Frappe того же визуального размера, что и read-отображение. Сохранение выполняется через `frappe.db.set_value` (полный `doc.save()` на сервере). Для редактируемых Link одинарный клик не ведёт в форму (ссылка нейтрализуется). Двойной клик по поверхности карточки (поля, highlight, chrome) открывает форму документа карточки; двойной клик по Link — форму связанной записи; теги, кнопка Move и назначения форму карточки не открывают.
 
+Для полей `Link` / `Dynamic Link` на карточке подтягиваются title-подписи связанных записей (`hydrateLinkTitles`). Поля `Percent` отображаются progress bar (значение clamp 0–100), а не сырым числом.
+
 Карточку можно переместить drag-and-drop или через действие `Move to`. Перед перемещением клиент запрашивает `quick_kanban.api.get_move_options` и локально проверяет обязательные поля (`reqd`, `mandatory_depends_on`) для preview целевого состояния. Запрещённые назначения не показываются в меню и не принимают drop. При нескольких Workflow actions для одной колонки открывается диалог выбора action.
 
-Сохранение выполняется через `quick_kanban.api.move_card` с `board_name`, именем документа, целевой колонкой, `expected_modified` и опциональным `workflow_action`. Сервер повторяет проверки Workflow-прав и mandatory rules, затем либо применяет `apply_workflow`, либо вызывает полный `doc.save()` с lifecycle hooks целевого DocType.
+На **обычной** доске (без swimlane) сохранение выполняется через `quick_kanban.api.move_card` с `board_name`, именем документа, целевой колонкой, `expected_modified` и опциональным `workflow_action`. Сервер повторяет проверки Workflow-прав и mandatory rules, затем либо применяет `apply_workflow`, либо вызывает полный `doc.save()` с lifecycle hooks целевого DocType.
+
+После успешного перемещения сжатая колонка (и при необходимости дорожка) раскрывается, список прокручивается к карточке, краткая подсветка подтверждает успех; при ошибке позиция откатывается с анимацией. Поведение анимаций учитывает `prefers-reduced-motion`.
+
+### Создание карточек
+
+В заголовке колонки (иконка `+`) и в футере (**Add {DocType}**) доступно создание записи в целевой колонке, если политика создания это разрешает.
+
+При загрузке доски клиент запрашивает `quick_kanban.api.get_create_options` (политика в `quick_kanban.move_policy`). Для каждой колонки сервер возвращает:
+
+| `form_mode` | Поведение |
+|-------------|-----------|
+| `quick_entry` | `frappe.ui.form.make_quick_entry` с prefill статуса колонки |
+| `full_form` | полная форма нового документа (`route_options` + `frappe.model.get_new_doc`) |
+| `blocked` | кнопка скрыта или действие блокируется с сообщением (нет `create`, Workflow, невалидная колонка) |
+
+Режим выбирается по правилам Frappe Quick Entry (флаг DocType, число обязательных полей, отсутствие обязательных Table) и списку недостающих mandatory для preview документа в целевой колонке.
+
+В режиме **Swimlane** при создании дополнительно подставляются значения дорожки (`swimlaneCreate.buildSwimlaneCreateDefaults`): поле `Select` / `Link` / `User`, child-строки `Table MultiSelect`, либо после сохранения — `assign_to.add` для дорожки **Assigned To**.
+
+После успешного сохранения карточка появляется в колонке (или ячейке swimlane), **удерживается сверху** списка недавно созданных и прокручивается в зону видимости (scroll-reveal).
 
 ### Swimlane (Group By)
 
@@ -220,7 +242,7 @@ Swimlane разбивает доску на горизонтальные дор�
 | Значение `custom_swimlane_field` | Режим | Дорожки |
 |----------------------------------|-------|---------|
 | пусто | `off` | обычная доска без swimlane |
-| `__assign` (**Assigned To** / **Исполнитель**) | `assign` | по активным назначениям ToDo + дорожка **Unassigned** / **Без назначения** |
+| `__assign` (**Assigned To** / **Исполнитель**) | `assign` | по **Open** ToDo-назначениям (как `_assign`; Closed/Cancelled и DocShare не участвуют) + дорожка **Unassigned** / **Без назначения** |
 | поле `Select`, `Link` или `User` | `field` | по значениям поля (+ **Unassigned** / **Без назначения** для пустых) |
 | поле `Table MultiSelect` | `multi` | по значениям child Link; карточка с несколькими значениями может отображаться в нескольких дорожках (+ **Unassigned** / **Без назначения**) |
 
@@ -247,14 +269,14 @@ Swimlane разбивает доску на горизонтальные дор�
 
 #### Перемещение карточек
 
-Drag-and-drop и меню **Move to** работают между колонками и/или дорожками. Сохранение — `quick_kanban.api.move_card` с опциональными `from_lane` / `to_lane`:
+Drag-and-drop и меню **Move to** работают между колонками и/или дорожками. Сохранение при смене колонки и/или дорожки — `quick_kanban.api.move_card_to_cell` с `to_column`, опциональными `from_lane` / `to_lane`, `expected_modified` и `workflow_action` (не `move_card`):
 
 - **колонка** — как обычно: Workflow / `doc.save()`, обязательные поля, optimistic update и откат;
 - **дорожка `field`** — запись значения swimlane-поля (пустое → Unassigned);
 - **дорожка `assign`** — Assign To / снятие назначения через Desk API (`assign_to.add` / `remove`); перенос в Unassigned снимает всех assignees;
 - **дорожка `multi`** — обновление child-строк Table MultiSelect (добавление целевого значения, снятие исходного при смене дорожки; Unassigned очищает поле).
 
-Смена дорожки запрещена, если нет `write` на DocType, swimlane-поле read-only / без права на поле, или Workflow state не разрешает правку. Фронтенд заранее скрывает запрещённые цели и показывает overlay на ячейках, куда drop недоступен.
+Смена дорожки запрещена, если нет `write` на DocType, swimlane-поле read-only / без права на поле, или Workflow state не разрешает правку. Фронтенд заранее скрывает запрещённые цели и показывает overlay на ячейках, куда drop недоступен. После успеха — тот же scroll-reveal и подсветка, что и на обычной доске.
 
 ### Режим «Минимизировать»
 
@@ -351,7 +373,7 @@ Quick Kanban автоматически использует поле **`color`*
 
 - fieldname строго **`color`**, fieldtype строго **`Color`** (поле с другим именем или типом не используется);
 - у записей должно быть заполнено значение цвета;
-- после изменений frontend выполните сборку (`yarn workspace quick_kanban build`, `bench build --app quick_kanban`, `clear-cache`) и обновите страницу Kanban (`Ctrl+Shift+R`).
+- после изменений frontend выполните сборку (`yarn workspace quick_kanban build`, `clear-cache`) и обновите страницу Kanban (`Ctrl+Shift+R`).
 
 ## 📦 Технологии
 
@@ -359,7 +381,8 @@ Quick Kanban автоматически использует поле **`color`*
 - Vue 3 — компоненты доски.
 - Vuex 4 — состояние, загрузка данных и оптимистичные операции.
 - Vite — сборка frontend bundle.
-- `vue-virtual-draglist` — виртуализация и drag-and-drop.
+- `vue-virtual-draglist` — виртуализация списков карточек и DnD карточек.
+- SortableJS — переупорядочивание колонок и drop-зоны ячеек (в том числе в swimlane).
 - DOMPurify — очистка форматированного HTML.
 - Vitest и Vue Test Utils — модульные и компонентные тесты.
 - Playwright — browser-тесты пользовательских сценариев.
@@ -439,7 +462,7 @@ bench --site <site-name> run-tests --app quick_kanban
 yarn dev
 ```
 
-Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get`, чекбокс **Минимизировать** и dropdown **Group By** в page-actions), а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/`; `bench build --app quick_kanban` собирает хешированные bundles в `quick_kanban/dist/`, которые Frappe реально отдаёт на сайт. Перед review и деплоем выполняйте обе команды и проверяйте, что изменения попали в `dist/`.
+Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get`, чекбокс **Минимизировать** и dropdown **Group By** в page-actions), а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/` и сразу запускает `bench build --app quick_kanban`, который собирает хешированные bundles в `quick_kanban/public/dist/` (отдаются через `sites/assets/assets.json`). Перед review и деплоем выполняйте эту команду и проверяйте, что изменения попали в `dist/`.
 
 ## Локализация
 
@@ -463,9 +486,11 @@ bench --site <site-name> clear-cache
 - [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
 - [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
 - [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы подсчёта (включая `get_attachment_counts`), перемещения карточек (`move_card` с lane membership), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`) и ширины колонок (`set_column_widths`, override `update_column_order`).
+- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_totals`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), ширина колонок (`set_column_widths`, override `update_column_order`).
+- [`quick_kanban/move_policy.py`](quick_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
 - [`quick_kanban/swimlane.py`](quick_kanban/swimlane.py) — режимы группировки, построение дорожек, постраничная загрузка ячеек и изменение membership при DnD.
-- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `swimlaneBoard`, `CardTags`, `CardExtraInfo`, `listNavigation.applyUserTagFilter`, `tagDragDrop`, density state и resize колонок в Vuex).
+- [`quick_kanban/get_beta_users.py`](quick_kanban/get_beta_users.py) — `get_kanban_config` (feature flags `kanban_beta` / `kanban_beta_users`).
+- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `swimlaneBoard`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation.applyUserTagFilter`, `tagDragDrop`, density state и resize колонок в Vuex).
 - [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info** и **Swimlane Field** на Kanban Board.
 - [`quick_kanban/quick_kanban/custom/kanban_board_column.json`](quick_kanban/quick_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
 
@@ -492,11 +517,11 @@ dinext_kanban/
 │   ├── src/
 │   │   ├── components/         # Vue-компоненты доски, колонок, карточек, меток и swimlane
 │   │   ├── test/               # Общая настройка Vitest и тесты интеграционных scripts
-│   │   ├── utils/              # Store, фильтры списка, DnD меток, swimlaneBoard, меню и цвета
+│   │   ├── utils/              # Store, createValidation, swimlaneCreate, DnD меток, swimlaneBoard, меню
 │   │   ├── App.vue             # Корневой Vue-компонент
 │   │   ├── main.js             # Mount/unmount Vue-приложения
 │   │   └── style.css           # Стили нового Kanban
-│   ├── package.json            # Frontend-зависимости и команды
+│   ├── package.json            # Frontend-зависимости и команды (build = vite + copy + bench build)
 │   ├── playwright.config.js    # Конфигурация browser-тестов
 │   └── vite.config.js          # Сборка и unit-тесты
 ├── quick_kanban/
@@ -507,6 +532,8 @@ dinext_kanban/
 │   ├── tests/                  # Backend-тесты Frappe
 │   ├── translations/           # CSV-переводы (ru)
 │   ├── api.py                  # Permission-aware API доски
+│   ├── move_policy.py          # Политики move / create и Workflow
+│   ├── validation.py           # Mandatory rules при перемещении
 │   ├── swimlane.py             # Группировка по дорожкам и lane membership
 │   ├── get_beta_users.py       # Чтение feature flags из site config
 │   └── hooks.py                # Метаданные Frappe и подключение assets
@@ -530,6 +557,7 @@ flowchart LR
     Store --> Board[Vue-компоненты доски]
     Store --> ListAPI[frappe.desk.reportview.get]
     Store --> Totals[get_column_totals]
+    Store --> CreateOpts[get_create_options]
     Store --> SwimLanes[get_swimlane_lanes / get_cell_totals]
     SwimLanes --> CellPage[get_swimlane_lane_page / get_swimlane_column_page]
     User --> ListNav[Двойной клик по счётчику колонки]
@@ -537,12 +565,20 @@ flowchart LR
     User --> TagFilter[Двойной клик по метке]
     TagFilter --> FilterArea[filter_area _user_tags like]
     FilterArea --> Refresh[ListView.refresh и перезагрузка доски]
+    User --> Create[Создание карточки]
+    Create --> CreateOpts
+    Create --> FormUI[Quick Entry или полная форма]
+    FormUI --> RevealCreate[Pin сверху и scroll-reveal]
     User --> Move[Перемещение карточки]
     Move --> Optimistic[Оптимистичное обновление Vuex]
     Optimistic --> MoveAPI[move_card]
-    MoveAPI -->|Lane change| LaneMem[apply_lane_membership]
+    Optimistic --> CellAPI[move_card_to_cell]
+    CellAPI --> LaneMem[apply_lane_membership]
     MoveAPI -->|Успех| Saved[Документ сохранён]
+    CellAPI -->|Успех| Saved
     MoveAPI -->|Ошибка или конфликт| Rollback[Позиция восстановлена]
+    CellAPI -->|Ошибка или конфликт| Rollback
+    Saved --> RevealMove[Scroll-reveal и подсветка]
 ```
 
 ## Лицензия

@@ -865,7 +865,8 @@ body.kanban-column-resize-active * {
   cursor: grabbing;
 }
 
-#kanbanapp .sortable-column-ghost {
+#kanbanapp .sortable-column-ghost,
+#kanbanapp .sortable-column-drag {
   opacity: 0.4;
 }
 
@@ -1163,8 +1164,13 @@ body.kanban-column-resize-active * {
   pointer-events: none;
 }
 
-#kanbanapp .sortable-fallback,
-#kanbanapp .sortable-drag {
+/* Card DnD only — do not apply to column Sortable (blocks clicks on the column). */
+#kanbanapp .kanban-card-list .sortable-fallback,
+#kanbanapp .kanban-card-list .sortable-drag,
+#kanbanapp .ghost-card.sortable-fallback,
+#kanbanapp .ghost-card.sortable-drag,
+#kanbanapp .chosen-card.sortable-fallback,
+#kanbanapp .chosen-card.sortable-drag {
   pointer-events: none;
 }
 
