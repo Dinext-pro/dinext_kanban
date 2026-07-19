@@ -1,4 +1,5 @@
 import {
+  cardMatchesLane,
   cellKey,
   getColumnKey,
   transformCard,
@@ -91,6 +92,133 @@ export function findCardInLanes(lanes, cardName) {
     }
   }
   return null
+}
+
+function collectCardLocationsInLane(lane, cardName) {
+  const locations = []
+  for (let columnIndex = 0; columnIndex < (lane?.columns || []).length; columnIndex += 1) {
+    const column = lane.columns[columnIndex]
+    const cards = column.cards || []
+    for (let cardIndex = 0; cardIndex < cards.length; cardIndex += 1) {
+      if (cards[cardIndex]?.name === cardName) {
+        locations.push({ columnIndex, cardIndex, card: cards[cardIndex], column })
+      }
+    }
+  }
+  return locations
+}
+
+function removeCardFromColumn(column, cardName) {
+  const cards = column.cards || []
+  const index = cards.findIndex(({ name }) => name === cardName)
+  if (index < 0) {
+    return null
+  }
+  const [card] = cards.splice(index, 1)
+  column.cards = [...cards]
+  return card
+}
+
+/**
+ * Align every hydrated copy of a card with membership + status column.
+ * Mutates lane column card arrays. Returns true when anything changed.
+ *
+ * @param {object} [options]
+ * @param {(laneKey: string, columnName: string) => boolean} [options.canPrependToCell]
+ *   When a lane should contain the card but has no copy, prepend a clone into the
+ *   target column only if this returns true (cell already loaded).
+ */
+export function reconcileCardInstancesAcrossLanes(lanes, config, cardName, options = {}) {
+  if (!lanes?.length || !cardName || !config?.field_name) {
+    return false
+  }
+
+  const found = findCardInLanes(lanes, cardName)
+  if (!found) {
+    return false
+  }
+
+  const template = found.card
+  const statusField = config.field_name
+  const targetColumnName = template[statusField]
+  const canPrependToCell = typeof options.canPrependToCell === 'function'
+    ? options.canPrependToCell
+    : null
+
+  let touched = false
+
+  for (const lane of lanes) {
+    const locations = collectCardLocationsInLane(lane, cardName)
+    const shouldBelong = cardMatchesLane(template, lane.key, config)
+    const targetColumnIndex = (lane.columns || []).findIndex(
+      (column) => column.column_name === targetColumnName,
+    )
+
+    if (!shouldBelong) {
+      for (let i = locations.length - 1; i >= 0; i -= 1) {
+        const { column } = locations[i]
+        if (removeCardFromColumn(column, cardName)) {
+          touched = true
+        }
+      }
+      continue
+    }
+
+    if (targetColumnIndex < 0) {
+      continue
+    }
+
+    const targetColumn = lane.columns[targetColumnIndex]
+    if (!locations.length) {
+      if (
+        canPrependToCell
+        && canPrependToCell(lane.key, targetColumn.column_name)
+      ) {
+        const clone = { ...template }
+        targetColumn.cards = [clone, ...(targetColumn.cards || [])]
+        touched = true
+      }
+      continue
+    }
+
+    let kept = null
+    const inTarget = locations.find((loc) => loc.columnIndex === targetColumnIndex)
+    if (inTarget) {
+      kept = inTarget.card
+    } else {
+      kept = locations[0].card
+    }
+
+    for (const loc of locations) {
+      if (loc.card !== kept) {
+        if (removeCardFromColumn(loc.column, cardName)) {
+          touched = true
+        }
+      }
+    }
+
+    const currentIndex = (targetColumn.cards || []).findIndex(
+      ({ name }) => name === cardName,
+    )
+    if (currentIndex >= 0) {
+      if (kept[statusField] !== targetColumnName) {
+        kept[statusField] = targetColumnName
+        touched = true
+      }
+      continue
+    }
+
+    for (const loc of locations) {
+      if (loc.card === kept) {
+        removeCardFromColumn(loc.column, cardName)
+      }
+    }
+    kept[statusField] = targetColumnName
+    targetColumn.cards = [kept, ...(targetColumn.cards || [])]
+    touched = true
+  }
+
+  return touched
 }
 
 export function laneTotalFromCells(cellTotals, laneKey) {
