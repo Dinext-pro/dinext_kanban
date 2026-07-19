@@ -78,11 +78,32 @@ export function removeTagFromList(userTags, tag) {
  * @param {{ tag: string, sourceName: string, targetName: string|null|undefined, targetUserTags: string|null|undefined }} args
  * @returns {boolean}
  */
-export function canDropTag({ tag, sourceName, targetName, targetUserTags }) {
+export function canDropTag({
+  tag,
+  sourceName,
+  targetName,
+  targetUserTags,
+  canWriteTarget = true,
+  canWriteSource = true,
+}) {
   if (!tag || !sourceName || !targetName || sourceName === targetName) {
     return false
   }
+  if (!canWriteTarget || !canWriteSource) {
+    return false
+  }
   return !cardHasTag(targetUserTags, tag)
+}
+
+export function canWriteCardTags(doctype) {
+  if (!doctype) {
+    return false
+  }
+  const canWrite = globalThis.frappe?.model?.can_write
+  if (typeof canWrite !== 'function') {
+    return false
+  }
+  return Boolean(canWrite(doctype))
 }
 
 /**
@@ -305,11 +326,14 @@ export function createTagDragController({ store, getDoctype, onDrop }) {
     const targetName = findCardNameFromPoint(event.clientX, event.clientY)
     const doctype = getDoctype?.() || ''
     const targetUserTags = targetName ? getCardUserTags(store, targetName) : ''
+    const writeOk = canWriteCardTags(doctype)
     const allowed = canDropTag({
       tag: active.tag,
       sourceName: sourceCardName,
       targetName,
       targetUserTags,
+      canWriteTarget: writeOk,
+      canWriteSource: writeOk,
     })
 
     teardownVisual()

@@ -46,6 +46,7 @@ function createStore() {
     highlight_table: [{ tag: 'High', color: 'red' }],
     show_labels: true,
     show_tags: false,
+    show_extra_info: false,
   })
   store.commit('SET_COLUMNS', [
     {
@@ -222,6 +223,62 @@ test('renders colored tags between fields and meta when show_tags is enabled', (
   expect(cur_list.get_tags_html).toHaveBeenCalledWith(',alpha,beta,gamma,delta', 3, true)
 })
 
+test('renders extra info row after tags when show_extra_info is enabled', () => {
+  const store = createStore()
+  const config = { ...store.state.config, show_tags: true, show_extra_info: true }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _user_tags: ',alpha',
+        _comment_count: 1,
+        _attachment_count: 0,
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  const tags = wrapper.get('.kanban-tags')
+  const extra = wrapper.get('.kanban-card-extra-info')
+  expect(tags.element.nextElementSibling).toBe(extra.element)
+  expect(extra.find('[aria-label="Copy link"]').exists()).toBe(true)
+})
+
+test('shows details slot when only show_extra_info is enabled', () => {
+  const store = createStore()
+  const config = {
+    ...store.state.config,
+    display_fields: [],
+    show_tags: false,
+    show_extra_info: true,
+  }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
+  expect(wrapper.find('.kanban-card-extra-info').exists()).toBe(true)
+})
+
 test('hides tags when show_tags is disabled', () => {
   const store = createStore()
   const wrapper = mount(KanbanCard, {
@@ -389,6 +446,7 @@ test('offers a keyboard-operable move control', async () => {
     cardName: 'TASK-1',
     fromColumn: 0,
     toColumn: 1,
+    toIndex: 0,
   }))
   expect(trigger.attributes('aria-expanded')).toBe('false')
 })
@@ -420,6 +478,42 @@ test('flashes the card after a successful menu move', async () => {
     toColumn: 1,
   }))
   expect(flashMovedCard).toHaveBeenCalledWith('TASK-1', { outcome: 'success' })
+})
+
+test('passes laneIndex to scrollToMovedCard after a successful menu move', async () => {
+  const store = createStore()
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  const scrollToMovedCard = vi.fn(() => Promise.resolve())
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      laneIndex: 2,
+    },
+    global: {
+      plugins: [store],
+      stubs: { Teleport: true },
+      provide: { scrollToMovedCard },
+    },
+  })
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await wrapper.get('[aria-label="Move First task to Done"]').trigger('click')
+  await flushPromises()
+
+  expect(scrollToMovedCard).toHaveBeenCalledWith({
+    columnIndex: 1,
+    cardName: 'TASK-1',
+    cardIndex: 0,
+    laneIndex: 2,
+  })
 })
 
 test('flashes the card after a failed menu move', async () => {
@@ -1008,6 +1102,7 @@ test('pointerenter expands during tag-drag after the same delay', async () => {
 
 test('marks minimized card as tag drop target; expands only after hover delay', async () => {
   vi.useFakeTimers()
+  frappe.model.can_write.mockReturnValue(true)
   const store = createStore()
   store.commit('SET_MINIMIZE_CARDS', true)
   store.commit('SET_ACTIVE_TAG_DRAG', {
@@ -1490,6 +1585,259 @@ test('stays expanded after tag-edit ends while pointer remains over the card', a
   expect(wrapper.classes()).toContain('kanban-card--minimized')
   expect(store.state.densityHoldExpandedCard).toBeNull()
 
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('keeps expanded density while move menu is open after pointer leave', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    attachTo: document.body,
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[aria-label="Move First task"]').attributes('aria-expanded')).toBe('true')
+
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  expect(store.state.densityHoldExpandedCard).toBe('TASK-1')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('collapses after move menu closes when pointer already left the card', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    attachTo: document.body,
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await flushPromises()
+
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  await wrapper.get('[aria-label="Move First task to column"]').trigger(
+    'keydown',
+    { key: 'Escape' },
+  )
+  await flushPromises()
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.classes()).not.toContain('kanban-card--expanded')
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('stays expanded after move menu closes while pointer remains over the card', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    attachTo: document.body,
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await flushPromises()
+
+  const matchesSpy = vi.spyOn(wrapper.element, 'matches').mockImplementation((selector) => {
+    if (selector === ':hover') {
+      return true
+    }
+    return Element.prototype.matches.call(wrapper.element, selector)
+  })
+
+  await wrapper.get('[aria-label="Move First task to column"]').trigger(
+    'keydown',
+    { key: 'Escape' },
+  )
+  await flushPromises()
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+
+  matchesSpy.mockRestore()
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('keeps expanded density while files menu is open after pointer leave', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  frappe.call.mockResolvedValue({ docinfo: { attachments: [] } })
+  const wrapper = mount(KanbanCard, {
+    attachTo: document.body,
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _attachment_count: 0,
+      },
+      config: { ...store.state.config, show_extra_info: true },
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  await wrapper.get('[aria-label="Attachments"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[aria-label="Attachments"]').attributes('aria-expanded')).toBe('true')
+
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  expect(store.state.densityHoldExpandedCard).toBe('TASK-1')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('collapses after files menu closes when pointer already left the card', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  frappe.call.mockResolvedValue({ docinfo: { attachments: [] } })
+  const wrapper = mount(KanbanCard, {
+    attachTo: document.body,
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _attachment_count: 0,
+      },
+      config: { ...store.state.config, show_extra_info: true },
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+
+  await wrapper.get('[aria-label="Attachments"]').trigger('click')
+  await flushPromises()
+
+  await wrapper.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.get('[aria-label="Attachments"]').attributes('aria-expanded')).toBe('true')
+
+  // Closing via the in-card trigger can re-arm :hover in jsdom; keep leave semantics.
+  const matchesSpy = vi.spyOn(wrapper.element, 'matches').mockImplementation((selector) => {
+    if (selector === ':hover') {
+      return false
+    }
+    return Element.prototype.matches.call(wrapper.element, selector)
+  })
+
+  await wrapper.get('[aria-label="Attachments"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[aria-label="Attachments"]').attributes('aria-expanded')).toBe('false')
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.classes()).not.toContain('kanban-card--expanded')
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+
+  matchesSpy.mockRestore()
   wrapper.unmount()
   vi.useRealTimers()
 })

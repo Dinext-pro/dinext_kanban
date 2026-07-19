@@ -1,6 +1,8 @@
 import { createStore } from 'vuex'
 import {
   attachColumnDisplayNames,
+  cardMatchesLane,
+  cellKey,
   flattenCardsFromColumns,
   getAddableColumnCandidates,
   groupCardsByColumn,
@@ -12,6 +14,19 @@ import {
   resolveCardLinkTitles,
 } from './kanban'
 import {
+  buildEmptyLaneColumns,
+  cardsFromPageMessage,
+  createCellPagination,
+  forEachCardInstance,
+  getCellPaginationKey,
+  getExpandedLaneKeys,
+  laneTotalFromCells,
+  normalizeExpandedLaneKeys,
+  reconcileCardInstancesAcrossLanes,
+  resolveExpandedLaneKeys,
+  sortLanesByOccupancy,
+} from './swimlaneBoard'
+import {
   buildMoveFailureAnnouncement,
   showMoveFailureAlert,
 } from './moveFailure'
@@ -20,6 +35,7 @@ import {
   resolveCreateFormMode,
   showCreateBlockedMessage,
 } from './createValidation'
+import { buildSwimlaneCreateDefaults } from './swimlaneCreate'
 import { validateMoveMandatory } from './moveValidation'
 import {
   TAG_DRAG_MODE_MOVE,
@@ -55,6 +71,12 @@ const emptyConfig = () => ({
   highlight_table: [],
   show_labels: false,
   show_tags: false,
+  show_extra_info: false,
+  swimlane_field: '',
+  swimlane_field_meta: null,
+  swimlane_mode: 'off',
+  swimlane_is_multi: false,
+  swimlane_link_field: '',
 })
 
 function withColumnDisplayNames(columns, config) {
@@ -142,6 +164,16 @@ function cacheUserInfo(userInfo) {
 }
 
 function findCard(state, cardName) {
+  if (state.lanes?.length) {
+    for (const lane of state.lanes) {
+      for (const column of lane.columns || []) {
+        const card = column.cards.find(({ name }) => name === cardName)
+        if (card) {
+          return card
+        }
+      }
+    }
+  }
   for (const column of state.columns) {
     const card = column.cards.find(({ name }) => name === cardName)
     if (card) {
@@ -151,14 +183,123 @@ function findCard(state, cardName) {
   return null
 }
 
-function collectVisibleCardNames(state) {
-  const names = new Set()
-  for (const column of state.columns) {
-    for (const card of column.cards || []) {
-      if (card?.name) {
-        names.add(card.name)
+function swimlanesActive(state) {
+  return Boolean(state.config?.swimlane_mode && state.config.swimlane_mode !== 'off')
+}
+
+function isStatusFieldReadOnly(state) {
+  return Boolean(state.config?.status_field_meta?.read_only)
+}
+
+function isSwimlaneFieldReadOnly(state) {
+  if (state.config?.swimlane_mode === 'assign') {
+    return false
+  }
+  return Boolean(state.config?.swimlane_field_meta?.read_only)
+}
+
+function canChangeLaneClient(state, _cardName) {
+  if (!swimlanesActive(state)) {
+    return false
+  }
+  if (isSwimlaneFieldReadOnly(state)) {
+    return false
+  }
+  const doctype = state.config?.ref_doctype
+  if (!doctype) {
+    return false
+  }
+  const canWrite = globalThis.frappe?.model?.can_write
+  if (typeof canWrite === 'function' && !canWrite(doctype)) {
+    return false
+  }
+  return true
+}
+
+function findLaneIndexForCard(state, cardName) {
+  for (let laneIndex = 0; laneIndex < (state.lanes || []).length; laneIndex += 1) {
+    const lane = state.lanes[laneIndex]
+    for (const column of lane.columns || []) {
+      if ((column.cards || []).some((card) => card.name === cardName)) {
+        return laneIndex
       }
     }
+  }
+  return -1
+}
+
+function multiSwimlaneActive(state) {
+  return Boolean(
+    swimlanesActive(state)
+    && state.config?.swimlane_is_multi
+    && state.lanes?.length,
+  )
+}
+
+function canPrependReconcileCell(state, laneKey, columnName) {
+  const lane = (state.lanes || []).find(
+    (row) => String(row.key ?? '') === String(laneKey ?? ''),
+  )
+  if (!lane) {
+    return false
+  }
+  const column = (lane.columns || []).find(
+    (row) => row.column_name === columnName,
+  )
+  if (!column) {
+    return false
+  }
+  const pagination = state.cellPagination[cellKey(laneKey, columnName)]
+  if (!pagination || pagination.loading) {
+    return false
+  }
+  if ((column.cards || []).length > 0) {
+    return true
+  }
+  if (pagination.offset > 0) {
+    return true
+  }
+  return pagination.hasMore === false
+}
+
+function fieldAffectsSwimlaneLayout(state, fieldname) {
+  if (!fieldname) {
+    return false
+  }
+  if (fieldname === state.config?.field_name) {
+    return true
+  }
+  if (fieldname === '_assign' && state.config?.swimlane_mode === 'assign') {
+    return true
+  }
+  if (
+    state.config?.swimlane_mode === 'multi'
+    && fieldname === state.config?.swimlane_field
+  ) {
+    return true
+  }
+  return false
+}
+
+function collectVisibleCardNames(state) {
+  const names = new Set()
+  const visit = (columns) => {
+    for (const column of columns || []) {
+      for (const card of column.cards || []) {
+        if (card?.name) {
+          names.add(card.name)
+        }
+      }
+    }
+  }
+  // Gate on swimlane_mode, not lanes.length — stale lanes after leaving
+  // swimlane UI must not hide flat-board column cards from move-options.
+  if (swimlanesActive(state) && state.lanes?.length) {
+    for (const lane of state.lanes) {
+      visit(lane.columns)
+    }
+  } else {
+    visit(state.columns)
   }
   return [...names]
 }
@@ -240,6 +381,10 @@ function runPreflightMove(state, _commit, payload) {
   const card = findCard(state, cardName)
   if (!card) {
     return { allowed: false, reason: 'missing_card' }
+  }
+
+  if (isStatusFieldReadOnly(state)) {
+    return { allowed: false, reason: 'field_readonly' }
   }
 
   if (!isMoveReady(state, cardName)) {
@@ -325,6 +470,13 @@ function docToCard(doc, config) {
   if (config.title_field in doc) {
     card[config.title_field] = doc[config.title_field]
   }
+  if (
+    config.swimlane_field
+    && config.swimlane_field !== '__assign'
+    && config.swimlane_field in doc
+  ) {
+    card[config.swimlane_field] = doc[config.swimlane_field]
+  }
   card._assign = mapAssignments(doc._assign)
   return card
 }
@@ -371,6 +523,7 @@ export function createKanbanStore() {
       dragSyncGeneration: 0,
       createOptionsByColumn: {},
       pendingCreate: null,
+      revealCreatedCard: null,
       recentCreatedCards: {},
       boardPerms: { write: false },
       cardMoveFlash: {},
@@ -384,6 +537,13 @@ export function createKanbanStore() {
       activeInlineEdit: null,
       pendingFieldUpdates: {},
       linkTitlesVersion: 0,
+      lanes: [],
+      expandedLaneKeys: [],
+      dragExpandedLaneKey: null,
+      cellPagination: {},
+      cellTotals: {},
+      laneHydration: {},
+      dragSourceLaneKey: null,
     }),
     mutations: {
       SET_MINIMIZE_CARDS(state, minimizeCards) {
@@ -474,11 +634,28 @@ export function createKanbanStore() {
       },
       REORDER_COLUMNS(state, columnNames) {
         state.columns = reorderColumnsByName(state.columns, columnNames)
+        for (const lane of state.lanes || []) {
+          lane.columns = reorderColumnsByName(lane.columns || [], columnNames)
+        }
       },
-      SET_COLUMN_CARDS(state, { columnIndex, cards }) {
+      SET_COLUMN_CARDS(state, { columnIndex, cards, laneIndex = null }) {
+        if (laneIndex != null && state.lanes[laneIndex]) {
+          state.lanes[laneIndex].columns[columnIndex].cards = cards
+          return
+        }
         state.columns[columnIndex].cards = cards
       },
-      APPEND_COLUMN_CARDS(state, { columnIndex, cards }) {
+      APPEND_COLUMN_CARDS(state, { columnIndex, cards, laneIndex = null }) {
+        if (laneIndex != null && state.lanes[laneIndex]) {
+          const column = state.lanes[laneIndex].columns[columnIndex]
+          column.cards = mergeCards(column.cards, cards)
+          promoteRecentCreatesToTop(
+            state.lanes[laneIndex].columns,
+            state.recentCreatedCards,
+            state.config.field_name,
+          )
+          return
+        }
         state.columns[columnIndex].cards = mergeCards(
           state.columns[columnIndex].cards,
           cards,
@@ -488,6 +665,149 @@ export function createKanbanStore() {
           state.recentCreatedCards,
           state.config.field_name,
         )
+      },
+      BUMP_DRAG_SYNC(state) {
+        state.dragSyncGeneration += 1
+      },
+      SET_LANES(state, lanes) {
+        state.lanes = lanes || []
+      },
+      CLEAR_LANE_HYDRATION(state) {
+        state.laneHydration = {}
+      },
+      SET_LANE_HYDRATION(state, { laneKey, status }) {
+        const key = String(laneKey ?? '')
+        if (!status || status === 'idle') {
+          const { [key]: _removed, ...rest } = state.laneHydration
+          state.laneHydration = rest
+          return
+        }
+        state.laneHydration = {
+          ...state.laneHydration,
+          [key]: status,
+        }
+      },
+      SET_EXPANDED_LANE_KEYS(state, keys) {
+        state.expandedLaneKeys = normalizeExpandedLaneKeys(keys)
+      },
+      TOGGLE_LANE_EXPANDED(state, laneKey) {
+        const key = String(laneKey ?? '')
+        if (state.expandedLaneKeys.includes(key)) {
+          state.expandedLaneKeys = state.expandedLaneKeys.filter((item) => item !== key)
+          return
+        }
+        state.expandedLaneKeys = [...state.expandedLaneKeys, key]
+      },
+      ADD_EXPANDED_LANE(state, laneKey) {
+        const key = String(laneKey ?? '')
+        if (!state.expandedLaneKeys.includes(key)) {
+          state.expandedLaneKeys = [...state.expandedLaneKeys, key]
+        }
+      },
+      SET_DRAG_EXPANDED_LANE(state, laneKey) {
+        state.dragExpandedLaneKey = laneKey == null ? null : String(laneKey)
+      },
+      SET_DRAG_SOURCE_LANE(state, laneKey) {
+        state.dragSourceLaneKey = laneKey == null ? null : String(laneKey)
+      },
+      SET_CELL_PAGINATION(state, pagination) {
+        state.cellPagination = pagination || {}
+      },
+      SET_CELL_PAGE_STATE(state, { key, changes }) {
+        state.cellPagination = {
+          ...state.cellPagination,
+          [key]: {
+            ...state.cellPagination[key],
+            ...changes,
+          },
+        }
+      },
+      SET_CELL_TOTALS(state, totals) {
+        state.cellTotals = totals || {}
+        state.cellPagination = Object.fromEntries(
+          Object.entries(state.cellPagination).map(([key, pagination]) => {
+            const [laneKey, columnName] = key.split('::')
+            const total = state.cellTotals?.[laneKey]?.[columnName]
+            return [
+              key,
+              {
+                ...pagination,
+                hasMore: Number.isFinite(total)
+                  ? pagination.offset < total
+                  : pagination.hasMore,
+              },
+            ]
+          }),
+        )
+      },
+      CLEAR_LANE_CARDS(state, laneKey) {
+        const key = String(laneKey ?? '')
+        const lane = state.lanes.find((row) => String(row.key) === key)
+        if (!lane) return
+        for (const column of lane.columns || []) {
+          column.cards = []
+        }
+        for (const column of lane.columns || []) {
+          const paginationKey = getCellPaginationKey(lane.key, column)
+          if (state.cellPagination[paginationKey]) {
+            state.cellPagination[paginationKey] = {
+              ...state.cellPagination[paginationKey],
+              offset: 0,
+              hasMore: true,
+              loading: false,
+            }
+          }
+        }
+        const { [key]: _removed, ...rest } = state.laneHydration
+        state.laneHydration = rest
+      },
+      MOVE_CARD_CELL(state, {
+        cardName,
+        fromLaneIndex,
+        toLaneIndex,
+        fromColumn,
+        toColumn,
+        fromIndex,
+        toIndex,
+      }) {
+        const sourceLane = state.lanes[fromLaneIndex]
+        const destLane = state.lanes[toLaneIndex]
+        if (!sourceLane || !destLane) return
+        const source = sourceLane.columns[fromColumn]?.cards || []
+        const sourceIndex = source.findIndex(({ name }) => name === cardName)
+        const [card] = source.splice(sourceIndex >= 0 ? sourceIndex : fromIndex, 1)
+        if (!card) return
+
+        card[state.config.field_name] = destLane.columns[toColumn].column_name
+        destLane.columns[toColumn].cards.splice(
+          toIndex ?? destLane.columns[toColumn].cards.length,
+          0,
+          card,
+        )
+        sourceLane.columns[fromColumn].cards = [...sourceLane.columns[fromColumn].cards]
+        destLane.columns[toColumn].cards = [...destLane.columns[toColumn].cards]
+        state.dragSyncGeneration += 1
+      },
+      ROLLBACK_CARD_CELL(state, {
+        cardName,
+        fromLaneIndex,
+        toLaneIndex,
+        fromColumn,
+        toColumn,
+        fromIndex,
+      }) {
+        const destLane = state.lanes[toLaneIndex]
+        const sourceLane = state.lanes[fromLaneIndex]
+        if (!destLane || !sourceLane) return
+        const destination = destLane.columns[toColumn]?.cards || []
+        let destinationIndex = destination.findIndex(({ name }) => name === cardName)
+        if (destinationIndex < 0) return
+        const [card] = destination.splice(destinationIndex, 1)
+        card[state.config.field_name] = sourceLane.columns[fromColumn].column_name
+        sourceLane.columns[fromColumn].cards.splice(fromIndex, 0, card)
+        sourceLane.columns[fromColumn].cards = [...sourceLane.columns[fromColumn].cards]
+        destLane.columns[toColumn].cards = [...destination]
+        state.dragSyncGeneration += 1
       },
       SET_COLUMN_PAGINATION(state, pagination) {
         state.columnPagination = pagination
@@ -565,6 +885,13 @@ export function createKanbanStore() {
         state.pendingMoves = {}
         state.columnPagination = {}
         state.columnTotals = {}
+        state.lanes = []
+        state.expandedLaneKeys = []
+        state.dragExpandedLaneKey = null
+        state.dragSourceLaneKey = null
+        state.cellPagination = {}
+        state.cellTotals = {}
+        state.laneHydration = {}
         state.moveOptionsByCard = {}
         state.moveOptionsLoading = false
         state.moveOptionsGeneration += 1
@@ -577,6 +904,7 @@ export function createKanbanStore() {
         state.activeInlineEdit = null
         state.pendingFieldUpdates = {}
         state.linkTitlesVersion = 0
+        state.revealCreatedCard = null
       },
       SET_ACTIVE_INLINE_EDIT(state, payload) {
         state.activeInlineEdit = payload
@@ -603,16 +931,30 @@ export function createKanbanStore() {
         state.pendingFieldUpdates = pendingFieldUpdates
       },
       UPDATE_CARD_FIELD(state, { cardName, fieldname, value, modified }) {
-        for (const column of state.columns) {
-          const card = column.cards.find(({ name }) => name === cardName)
-          if (card) {
-            card[fieldname] = value
-            if (modified) {
-              card.modified = modified
+        forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
+          card[fieldname] = value
+          if (modified) {
+            card.modified = modified
+          }
+        })
+      },
+      APPLY_ATTACHMENT_COUNTS(state, counts = {}) {
+        const apply = (columns) => {
+          for (const column of columns || []) {
+            for (const card of column.cards || []) {
+              if (card?.name && Object.prototype.hasOwnProperty.call(counts, card.name)) {
+                card._attachment_count = Number(counts[card.name]) || 0
+              }
             }
-            break
           }
         }
+        if (state.lanes?.length) {
+          for (const lane of state.lanes) {
+            apply(lane.columns)
+          }
+          return
+        }
+        apply(state.columns)
       },
       SET_DATA_REQUEST_ID(state, requestId) {
         state.dataRequestId = requestId
@@ -731,23 +1073,46 @@ export function createKanbanStore() {
       UPDATE_COLUMN_INDICATOR(state, { columnIndex, indicator }) {
         state.columns[columnIndex].indicator = indicator
       },
-      UPDATE_CARD_ASSIGNMENTS(state, { cardName, assignments }) {
-        for (const column of state.columns) {
-          const card = column.cards.find(({ name }) => name === cardName)
-          if (card) {
-            card._assign = assignments
-            break
+      UPDATE_COLUMN_WIDTHS(state, widthsByName) {
+        if (!widthsByName || typeof widthsByName !== 'object') {
+          return
+        }
+        state.columns = state.columns.map((column) => {
+          if (!(column.column_name in widthsByName)) {
+            return column
           }
+          return {
+            ...column,
+            custom_column_width: widthsByName[column.column_name],
+          }
+        })
+      },
+      UPDATE_CARD_ASSIGNMENTS(state, { cardName, assignments }) {
+        forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
+          card._assign = assignments
+        })
+      },
+      RECONCILE_CARD_INSTANCES(state, cardName) {
+        if (!multiSwimlaneActive(state) || !cardName) {
+          return
+        }
+        const touched = reconcileCardInstancesAcrossLanes(
+          state.lanes,
+          state.config,
+          cardName,
+          {
+            canPrependToCell: (laneKey, columnName) =>
+              canPrependReconcileCell(state, laneKey, columnName),
+          },
+        )
+        if (touched) {
+          state.dragSyncGeneration += 1
         }
       },
       UPDATE_CARD_MODIFIED(state, { cardName, modified }) {
-        for (const column of state.columns) {
-          const card = column.cards.find(({ name }) => name === cardName)
-          if (card) {
-            card.modified = modified
-            break
-          }
-        }
+        forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
+          card.modified = modified
+        })
       },
       SET_CREATE_OPTIONS_BY_COLUMN(state, options) {
         state.createOptionsByColumn = options || {}
@@ -757,6 +1122,12 @@ export function createKanbanStore() {
       },
       CLEAR_PENDING_CREATE(state) {
         state.pendingCreate = null
+      },
+      SET_REVEAL_CREATED_CARD(state, payload) {
+        state.revealCreatedCard = payload || null
+      },
+      CLEAR_REVEAL_CREATED_CARD(state) {
+        state.revealCreatedCard = null
       },
       TRACK_RECENT_CREATED_CARD(state, { cardName, columnName }) {
         state.recentCreatedCards = {
@@ -788,9 +1159,51 @@ export function createKanbanStore() {
         column.cards = cards
         state.dragSyncGeneration += 1
       },
+      PREPEND_CREATED_CARD_TO_CELL(state, {
+        laneKey,
+        columnName,
+        card,
+        incrementTotal = true,
+      }) {
+        const lane = (state.lanes || []).find(
+          (row) => String(row.key ?? '') === String(laneKey ?? ''),
+        )
+        if (!lane) return
+
+        const column = (lane.columns || []).find(
+          (row) => row.column_name === columnName,
+        )
+        if (!column) return
+
+        const cards = [...(column.cards || [])]
+        const existingIndex = cards.findIndex(({ name }) => name === card.name)
+        if (existingIndex >= 0) {
+          cards.splice(existingIndex, 1)
+        } else if (incrementTotal) {
+          const key = String(laneKey ?? '')
+          const colKey = column.column_name
+          const laneTotals = { ...(state.cellTotals[key] || {}) }
+          if (Number.isFinite(laneTotals[colKey])) {
+            laneTotals[colKey] += 1
+            state.cellTotals = {
+              ...state.cellTotals,
+              [key]: laneTotals,
+            }
+          }
+          if (Number.isFinite(state.columnTotals[colKey])) {
+            state.columnTotals = {
+              ...state.columnTotals,
+              [colKey]: state.columnTotals[colKey] + 1,
+            }
+          }
+        }
+        cards.unshift(card)
+        column.cards = cards
+        state.dragSyncGeneration += 1
+      },
     },
     actions: {
-      hydrateFromList({ commit, dispatch, state }, {
+      async hydrateFromList({ commit, dispatch, state }, {
         board,
         cards = [],
         args = {},
@@ -808,6 +1221,23 @@ export function createKanbanStore() {
           visibleBoardColumns(board.columns).map((column) => ({ ...column, cards: [] })),
           config,
         )
+        commit('SET_KANBAN_CONFIG', config)
+        if (globalThis.frappe?.workflow?.setup) {
+          frappe.workflow.setup(board.reference_doctype)
+        }
+        commit('SET_COLUMNS', columns)
+        commit(
+          'SET_ARCHIVED_COLUMNS',
+          archivedBoardColumns(board.columns, config),
+        )
+        commit('SET_ERROR', '')
+        dispatch('fetchCreateOptions', { board_name: config.board_name })
+
+        if (config.swimlane_mode && config.swimlane_mode !== 'off') {
+          await dispatch('refreshSwimlaneBoard', { args })
+          return
+        }
+
         const columnsByName = new Map(
           columns.map((column) => [column.column_name, column]),
         )
@@ -827,21 +1257,11 @@ export function createKanbanStore() {
         )
 
         const pageSize = Number(args.page_length) || state.pageSize
-        commit('SET_KANBAN_CONFIG', config)
-        if (globalThis.frappe?.workflow?.setup) {
-          frappe.workflow.setup(board.reference_doctype)
-        }
         commit('SET_COLUMNS', columns)
-        commit(
-          'SET_ARCHIVED_COLUMNS',
-          archivedBoardColumns(board.columns, config),
-        )
         commit(
           'SET_COLUMN_PAGINATION',
           createColumnPagination(columns, cards.length >= pageSize),
         )
-        commit('SET_ERROR', '')
-        dispatch('fetchCreateOptions', { board_name: config.board_name })
         dispatch('scheduleMoveOptionsRefresh')
         dispatch('fetchMoveOptions', { names: collectVisibleCardNames({
           ...state,
@@ -852,6 +1272,58 @@ export function createKanbanStore() {
           cards: flattenCardsFromColumns(columns),
           boardGeneration: state.boardGeneration,
         })
+        dispatch('hydrateAttachmentCounts', {
+          cards: flattenCardsFromColumns(columns),
+          boardGeneration: state.boardGeneration,
+        })
+      },
+      async hydrateAttachmentCounts(
+        { commit, state },
+        {
+          cards,
+          boardGeneration = state.boardGeneration,
+          dataRequestId = null,
+          columnRequestGeneration = null,
+        } = {},
+      ) {
+        if (!state.config.show_extra_info) {
+          return false
+        }
+        const doctype = state.config.ref_doctype
+        const names = [...new Set(
+          (cards || [])
+            .map((card) => card?.name)
+            .filter(Boolean)
+            .map((name) => String(name)),
+        )]
+        if (!doctype || !names.length) {
+          return false
+        }
+
+        try {
+          const counts = {}
+          for (const chunk of chunkList(names, 100)) {
+            const response = await frappe.call({
+              method: 'quick_kanban.api.get_attachment_counts',
+              args: { doctype, names: chunk },
+            })
+            Object.assign(counts, response.message || {})
+          }
+          if (
+            state.boardGeneration !== boardGeneration
+            || (dataRequestId != null && state.dataRequestId !== dataRequestId)
+            || (
+              columnRequestGeneration != null
+              && state.columnRequestGeneration !== columnRequestGeneration
+            )
+          ) {
+            return false
+          }
+          commit('APPLY_ATTACHMENT_COUNTS', counts)
+          return true
+        } catch {
+          return false
+        }
       },
       async hydrateCardLinkTitles(
         { commit, state },
@@ -936,6 +1408,15 @@ export function createKanbanStore() {
         }
       },
       async fetchKanban({ commit, dispatch, state }, { args } = {}) {
+        // Flat path only — drop leftover swimlane state from a prior session
+        // on the same board (ensureBoard may early-return without reset).
+        commit('SET_LANES', [])
+        commit('CLEAR_LANE_HYDRATION')
+        commit('SET_EXPANDED_LANE_KEYS', [])
+        commit('SET_DRAG_EXPANDED_LANE', null)
+        commit('SET_DRAG_SOURCE_LANE', null)
+        commit('SET_CELL_PAGINATION', {})
+        commit('SET_CELL_TOTALS', {})
         commit('INVALIDATE_COLUMN_REQUESTS')
         commit('BEGIN_COUNT_REQUEST')
         const sourceArgs = args || window.cur_list.get_args()
@@ -992,6 +1473,11 @@ export function createKanbanStore() {
             boardGeneration,
             dataRequestId: requestId,
           })
+          dispatch('hydrateAttachmentCounts', {
+            cards: flattenCardsFromColumns(columns),
+            boardGeneration,
+            dataRequestId: requestId,
+          })
           return true
         } catch (error) {
           if (
@@ -1009,17 +1495,582 @@ export function createKanbanStore() {
           }
         }
       },
-      async refreshBoard({ dispatch }, { board_name, args, forceConfig = false }) {
+      async refreshBoard({ dispatch, state }, { board_name, args, forceConfig = false }) {
         if (forceConfig) {
           await dispatch('resetBoard')
         }
         const ready = await dispatch('ensureBoard', { board_name })
         if (ready === false) return
+        if (state.config.swimlane_mode && state.config.swimlane_mode !== 'off') {
+          await dispatch('refreshSwimlaneBoard', { args })
+          return
+        }
         const fresh = await dispatch('fetchKanban', { args })
         if (fresh === false) return
         const current = await dispatch('fetchColumnTotals', { args })
         if (current === false) return
         await dispatch('topUpInitialColumns', { args })
+      },
+      async refreshSwimlaneBoard({ commit, dispatch, state }, { args } = {}) {
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        commit('SET_LOADING', true)
+        commit('SET_ERROR', '')
+        try {
+          const lanesResponse = await frappe.call({
+            method: 'quick_kanban.api.get_swimlane_lanes',
+            args: {
+              doctype: state.config.ref_doctype,
+              swimlane_field: state.config.swimlane_field,
+              filters: sourceArgs.filters,
+              or_filters: sourceArgs.or_filters,
+            },
+          })
+          const laneRows = lanesResponse.message || []
+          const columnTemplates = withColumnDisplayNames(
+            state.columns.map(({ cards: _c, ...meta }) => ({ ...meta, cards: [] })),
+            state.config,
+          )
+          const lanes = laneRows.map((lane) => ({
+            key: lane.key == null ? '' : String(lane.key),
+            label: lane.label || lane.key || __('Unassigned'),
+            columns: buildEmptyLaneColumns(columnTemplates),
+          }))
+          if (state.config.swimlane_mode === 'assign') {
+            const assigneeUsers = lanes.map((lane) => lane.key).filter(Boolean)
+            if (assigneeUsers.length) {
+              const userResponse = await frappe.call({
+                method: 'frappe.desk.form.load.get_user_info_for_viewers',
+                args: { users: JSON.stringify(assigneeUsers) },
+              })
+              cacheUserInfo(userResponse.message)
+            }
+          }
+          commit('CLEAR_LANE_HYDRATION')
+          commit('SET_LANES', lanes)
+          commit('SET_CELL_PAGINATION', createCellPagination(lanes, true))
+          commit(
+            'SET_EXPANDED_LANE_KEYS',
+            resolveExpandedLaneKeys(lanes, state.expandedLaneKeys),
+          )
+          commit('SET_DRAG_EXPANDED_LANE', null)
+
+          // Card pages load lazily via ensureLaneHydrated when a lane is expanded
+          // and visible in the board scroller.
+          await dispatch('fetchCellTotals', { args: sourceArgs })
+        } catch (error) {
+          commit('SET_ERROR', getErrorMessage(error))
+          throw error
+        } finally {
+          commit('SET_LOADING', false)
+        }
+      },
+      async fetchCellTotals({ commit, state }, { args } = {}) {
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        const boardGeneration = state.boardGeneration
+        commit('BEGIN_COUNT_REQUEST')
+        const countRequestGeneration = state.countRequestGeneration
+        const response = await frappe.call({
+          method: 'quick_kanban.api.get_cell_totals',
+          args: {
+            doctype: state.config.ref_doctype,
+            status_field: state.config.field_name,
+            columns: state.columns.map((column) => column.column_name),
+            swimlane_field: state.config.swimlane_field,
+            lane_keys: state.lanes.map((lane) => lane.key),
+            filters: sourceArgs.filters,
+            or_filters: sourceArgs.or_filters,
+          },
+        })
+        if (
+          state.boardGeneration !== boardGeneration
+          || state.countRequestGeneration !== countRequestGeneration
+        ) {
+          return false
+        }
+        const totals = response.message || {}
+        commit('SET_CELL_TOTALS', totals)
+        if (state.lanes?.length) {
+          const sorted = sortLanesByOccupancy(state.lanes, totals)
+          const orderChanged = sorted.some(
+            (lane, index) => String(lane.key) !== String(state.lanes[index]?.key),
+          )
+          if (orderChanged) {
+            commit('SET_LANES', sorted)
+          }
+          const resolved = resolveExpandedLaneKeys(
+            orderChanged ? sorted : state.lanes,
+            state.expandedLaneKeys,
+          )
+          if (
+            resolved.length !== state.expandedLaneKeys.length
+            || resolved.some((key, index) => key !== state.expandedLaneKeys[index])
+          ) {
+            commit('SET_EXPANDED_LANE_KEYS', resolved)
+          }
+        }
+        return true
+      },
+      async fetchLaneKanban({ commit, dispatch, state }, { laneKey, args } = {}) {
+        const key = String(laneKey ?? '')
+        const laneIndex = state.lanes.findIndex((lane) => String(lane.key) === key)
+        if (laneIndex < 0) return false
+
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        const requestedPageSize = Number(
+          sourceArgs.page_length ?? sourceArgs.limit_page_length ?? 0,
+        )
+        const pageSize = Math.max(requestedPageSize, state.pageSize)
+        const boardGeneration = state.boardGeneration
+        const columnRequestGeneration = state.columnRequestGeneration
+
+        const response = await frappe.call({
+          method: 'quick_kanban.api.get_swimlane_lane_page',
+          args: {
+            doctype: state.config.ref_doctype,
+            status_field: state.config.field_name,
+            swimlane_field: state.config.swimlane_field,
+            lane_key: key,
+            fields: state.config.fields,
+            filters: sourceArgs.filters,
+            or_filters: sourceArgs.or_filters,
+            start: 0,
+            page_length: pageSize,
+          },
+        })
+        if (
+          state.boardGeneration !== boardGeneration
+          || state.columnRequestGeneration !== columnRequestGeneration
+        ) {
+          return false
+        }
+
+        const resolvedLaneIndex = state.lanes.findIndex((lane) => String(lane.key) === key)
+        if (resolvedLaneIndex < 0) return false
+
+        const page = response.message || {}
+        cacheUserInfo(page.user_info)
+        const laneColumns = state.lanes[resolvedLaneIndex].columns
+        const grouped = groupCardsByColumn({
+          columns: laneColumns.map(({ cards: _c, ...meta }) => ({ ...meta, cards: [] })),
+          keys: page.keys,
+          values: page.values,
+          statusField: state.config.field_name,
+          userInfo: page.user_info,
+        })
+        const resultCount = page.values?.length || 0
+        const pageWasFull = resultCount >= pageSize
+
+        for (let columnIndex = 0; columnIndex < grouped.length; columnIndex += 1) {
+          const column = grouped[columnIndex]
+          const loaded = column.cards?.length || 0
+          commit('SET_COLUMN_CARDS', {
+            laneIndex: resolvedLaneIndex,
+            columnIndex,
+            cards: column.cards,
+          })
+          const paginationKey = getCellPaginationKey(key, column)
+          const total = state.cellTotals?.[key]?.[column.column_name]
+          commit('SET_CELL_PAGE_STATE', {
+            key: paginationKey,
+            changes: {
+              offset: loaded,
+              loading: false,
+              // Prefer cell totals when known (same idea as SET_COLUMN_TOTALS after
+              // a wide fetch); otherwise fall back to whether the lane page was full.
+              hasMore: Number.isFinite(total)
+                ? loaded < total
+                : pageWasFull,
+            },
+          })
+        }
+
+        commit('BUMP_DRAG_SYNC')
+        const flatCards = flattenCardsFromColumns(grouped)
+        dispatch('scheduleMoveOptionsRefresh')
+        dispatch('hydrateCardLinkTitles', {
+          cards: flatCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        dispatch('hydrateAttachmentCounts', {
+          cards: flatCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        return true
+      },
+      async topUpInitialLaneCells({ dispatch, state }, { laneKey, args } = {}) {
+        const key = String(laneKey ?? '')
+        const laneIndex = state.lanes.findIndex((lane) => String(lane.key) === key)
+        if (laneIndex < 0) return
+
+        const lane = state.lanes[laneIndex]
+        const requests = (lane.columns || []).map(async (column, columnIndex) => {
+          const total = state.cellTotals?.[key]?.[column.column_name]
+          if (!Number.isFinite(total) || total <= 0) return
+
+          const target = Math.min(initialColumnCardMinimum, total)
+          let loaded = column.cards?.length || 0
+          while (loaded < target) {
+            const paginationKey = getCellPaginationKey(key, column)
+            const pagination = state.cellPagination[paginationKey]
+            if (!pagination?.hasMore || pagination.loading) return
+            const previousOffset = pagination.offset
+
+            await dispatch('loadCellPage', {
+              laneIndex,
+              columnIndex,
+              args,
+              pageSize: target - loaded,
+            })
+
+            const currentLaneIndex = state.lanes.findIndex((row) => String(row.key) === key)
+            if (currentLaneIndex < 0) return
+            loaded = state.lanes[currentLaneIndex]?.columns?.[columnIndex]?.cards?.length || 0
+            if (state.cellPagination[paginationKey]?.offset === previousOffset) return
+          }
+        })
+
+        return Promise.allSettled(requests)
+      },
+      async ensureLaneHydrated({ commit, dispatch, state }, { laneKey, args } = {}) {
+        const key = String(laneKey ?? '')
+        const status = state.laneHydration[key]
+        if (status === 'loading' || status === 'ready') {
+          return status === 'ready'
+        }
+        if (state.lanes.findIndex((lane) => String(lane.key) === key) < 0) {
+          return false
+        }
+
+        commit('SET_LANE_HYDRATION', { laneKey: key, status: 'loading' })
+        try {
+          const fetched = await dispatch('fetchLaneKanban', { laneKey: key, args })
+          if (fetched === false) {
+            commit('SET_LANE_HYDRATION', { laneKey: key, status: 'idle' })
+            return false
+          }
+          await dispatch('topUpInitialLaneCells', { laneKey: key, args })
+          if (state.lanes.findIndex((lane) => String(lane.key) === key) < 0) {
+            commit('SET_LANE_HYDRATION', { laneKey: key, status: 'idle' })
+            return false
+          }
+          commit('SET_LANE_HYDRATION', { laneKey: key, status: 'ready' })
+          return true
+        } catch (error) {
+          commit('SET_LANE_HYDRATION', { laneKey: key, status: 'idle' })
+          throw error
+        }
+      },
+      async toggleLaneExpanded({ commit, state }, { laneKey } = {}) {
+        const key = String(laneKey ?? '')
+        commit('TOGGLE_LANE_EXPANDED', key)
+        if (String(state.dragExpandedLaneKey) === key) {
+          commit('SET_DRAG_EXPANDED_LANE', null)
+        }
+        // Collapse only toggles UI preference; cards and laneHydration stay cached
+        // so re-expand can show previously loaded data without refetch.
+      },
+      async setDragExpandedLane({ commit, dispatch, state }, { laneKey, args } = {}) {
+        if (laneKey == null) {
+          commit('SET_DRAG_EXPANDED_LANE', null)
+          return
+        }
+        const key = String(laneKey)
+        if (state.expandedLaneKeys.includes(key)) {
+          commit('SET_DRAG_EXPANDED_LANE', null)
+          return
+        }
+        commit('SET_DRAG_EXPANDED_LANE', key)
+        await dispatch('ensureLaneHydrated', { laneKey: key, args })
+      },
+      async loadCellPage(
+        { commit, dispatch, state },
+        {
+          laneIndex,
+          columnIndex,
+          args,
+          pageSize = state.columnPageSize,
+          reset = false,
+        } = {},
+      ) {
+        const lane = state.lanes[laneIndex]
+        const column = lane?.columns?.[columnIndex]
+        if (!lane || !column) return
+        const laneKey = lane.key
+        const key = getCellPaginationKey(laneKey, column)
+        if (reset) {
+          commit('SET_CELL_PAGE_STATE', {
+            key,
+            changes: { offset: 0, hasMore: true, loading: false },
+          })
+          commit('SET_COLUMN_CARDS', { laneIndex, columnIndex, cards: [] })
+        }
+        const pagination = state.cellPagination[key]
+        if (!pagination || pagination.loading || (!reset && !pagination.hasMore)) return
+
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        const boardGeneration = state.boardGeneration
+        const columnRequestGeneration = state.columnRequestGeneration
+        commit('SET_CELL_PAGE_STATE', { key, changes: { loading: true } })
+
+        try {
+          const response = await frappe.call({
+            method: 'quick_kanban.api.get_swimlane_column_page',
+            args: {
+              doctype: state.config.ref_doctype,
+              status_field: state.config.field_name,
+              column: column.column_name,
+              swimlane_field: state.config.swimlane_field,
+              lane_key: laneKey,
+              fields: state.config.fields,
+              filters: sourceArgs.filters,
+              or_filters: sourceArgs.or_filters,
+              start: reset ? 0 : pagination.offset,
+              page_length: pageSize,
+            },
+          })
+          if (
+            state.boardGeneration !== boardGeneration
+            || state.columnRequestGeneration !== columnRequestGeneration
+          ) {
+            return
+          }
+          // Lane order may change while the request is in flight (occupancy sort).
+          const resolvedLaneIndex = state.lanes.findIndex(
+            (row) => String(row.key) === String(laneKey),
+          )
+          if (resolvedLaneIndex < 0) return
+          const page = response.message || {}
+          cacheUserInfo(page.user_info)
+          const cards = cardsFromPageMessage(page, page.user_info)
+          const resultCount = page.values?.length || 0
+          const nextOffset = (reset ? 0 : pagination.offset) + resultCount
+          const total = state.cellTotals?.[laneKey]?.[column.column_name]
+          if (reset) {
+            commit('SET_COLUMN_CARDS', {
+              laneIndex: resolvedLaneIndex,
+              columnIndex,
+              cards,
+            })
+            // Full replace: remount VirtualList so Sortable/virtual state resets.
+            commit('BUMP_DRAG_SYNC')
+          } else {
+            commit('APPEND_COLUMN_CARDS', {
+              laneIndex: resolvedLaneIndex,
+              columnIndex,
+              cards,
+            })
+            // Incremental append: do not remount — key bump collapses sticky Add.
+          }
+          commit('SET_CELL_PAGE_STATE', {
+            key,
+            changes: {
+              offset: nextOffset,
+              loading: false,
+              hasMore:
+                resultCount >= pageSize
+                && (!Number.isFinite(total) || nextOffset < total),
+            },
+          })
+          dispatch('scheduleMoveOptionsRefresh')
+          dispatch('hydrateCardLinkTitles', {
+            cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateAttachmentCounts', {
+            cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+        } catch (error) {
+          if (
+            state.boardGeneration === boardGeneration
+            && state.columnRequestGeneration === columnRequestGeneration
+          ) {
+            commit('SET_CELL_PAGE_STATE', {
+              key,
+              changes: { loading: false },
+            })
+          }
+          throw error
+        }
+      },
+      async persistMovedCardToCell({ commit, dispatch, state }, payload) {
+        const {
+          cardName,
+          fromLaneIndex,
+          toLaneIndex,
+          fromColumn,
+          toColumn,
+          fromIndex,
+          toIndex,
+        } = payload
+        if (state.pendingMoves[cardName]) {
+          commit('ROLLBACK_CARD_CELL', payload)
+          return buildDragMoveFailureResult(payload)
+        }
+
+        const fromLane = state.lanes[fromLaneIndex]
+        const toLane = state.lanes[toLaneIndex]
+        if (!fromLane || !toLane) {
+          return buildDragMoveFailureResult(payload)
+        }
+
+        const columnChanged = fromColumn !== toColumn
+        const laneChanged = String(fromLane.key) !== String(toLane.key)
+        const destName = toLane.columns[toColumn]?.column_name
+        const sourceName = fromLane.columns[fromColumn]?.column_name
+        const flatTo = state.columns.findIndex((column) => column.column_name === destName)
+        const flatFrom = state.columns.findIndex((column) => column.column_name === sourceName)
+
+        let workflowAction = payload.workflowAction || null
+
+        if (columnChanged) {
+          if (flatTo < 0 || flatFrom < 0) {
+            commit('ROLLBACK_CARD_CELL', payload)
+            return buildDragMoveFailureResult(payload, { reason: 'invalid_column' })
+          }
+          const preflight = runPreflightMove(state, commit, {
+            cardName,
+            fromColumn: flatFrom,
+            toColumn: flatTo,
+            fromIndex,
+            toIndex,
+            workflowAction,
+          })
+          if (!preflight.allowed) {
+            commit('ROLLBACK_CARD_CELL', payload)
+            reportMoveFailure(commit, preflight, state.config)
+            return buildDragMoveFailureResult(payload, preflight)
+          }
+          const policy = preflight.policy
+          if (policy?.mode === 'workflow' && (policy.actions?.length || 0) > 1) {
+            try {
+              workflowAction = await dispatch('resolveWorkflowAction', {
+                cardName,
+                column: state.columns[flatTo],
+              })
+            } catch {
+              commit('ROLLBACK_CARD_CELL', payload)
+              return {
+                ok: false,
+                cancelled: true,
+                needsAnimatedRollback: true,
+                payload,
+              }
+            }
+          } else if (policy?.actions?.length === 1) {
+            workflowAction = policy.actions[0].action
+          }
+          const recheck = runPreflightMove(state, commit, {
+            cardName,
+            fromColumn: flatFrom,
+            toColumn: flatTo,
+            fromIndex,
+            toIndex,
+            workflowAction,
+          })
+          if (!recheck.allowed) {
+            commit('ROLLBACK_CARD_CELL', payload)
+            reportMoveFailure(commit, recheck, state.config)
+            return buildDragMoveFailureResult(payload, recheck)
+          }
+        } else if (laneChanged && !canChangeLaneClient(state, cardName)) {
+          commit('ROLLBACK_CARD_CELL', payload)
+          reportMoveFailure(commit, { reason: 'no_permission' }, state.config)
+          return buildDragMoveFailureResult(payload, { reason: 'no_permission' })
+        }
+
+        // VirtualList already moved the card instance via SET_COLUMN_CARDS.
+        commit('SET_MOVE_PENDING', { cardName, pending: true })
+        const boardGeneration = state.boardGeneration
+        const card = toLane.columns[toColumn].cards.find(({ name }) => name === cardName)
+          || fromLane.columns[fromColumn].cards.find(({ name }) => name === cardName)
+        try {
+          const response = await frappe.call({
+            method: 'quick_kanban.api.move_card_to_cell',
+            args: {
+              board_name: state.config.board_name,
+              name: cardName,
+              to_column: columnChanged ? toLane.columns[toColumn].column_name : undefined,
+              from_lane: laneChanged ? fromLane.key : undefined,
+              to_lane: laneChanged ? toLane.key : undefined,
+              expected_modified: card?.modified,
+              workflow_action: workflowAction || undefined,
+            },
+          })
+          if (state.boardGeneration !== boardGeneration) return { ok: true }
+          if (response?.message?.modified) {
+            commit('UPDATE_CARD_MODIFIED', {
+              cardName,
+              modified: response.message.modified,
+            })
+          }
+          if (response?.message?._assign != null) {
+            commit('UPDATE_CARD_ASSIGNMENTS', {
+              cardName,
+              assignments: mapAssignments(response.message._assign),
+            })
+          }
+          const statusField = state.config.field_name
+          if (
+            columnChanged
+            && statusField
+            && Object.prototype.hasOwnProperty.call(response?.message || {}, statusField)
+          ) {
+            commit('UPDATE_CARD_FIELD', {
+              cardName,
+              fieldname: statusField,
+              value: response.message[statusField],
+            })
+          }
+          const swimlaneField = state.config.swimlane_field
+          if (
+            swimlaneField
+            && swimlaneField !== '__assign'
+            && Object.prototype.hasOwnProperty.call(response?.message || {}, swimlaneField)
+          ) {
+            commit('UPDATE_CARD_FIELD', {
+              cardName,
+              fieldname: swimlaneField,
+              value: response.message[swimlaneField],
+            })
+          }
+          if (laneChanged) {
+            commit('ADD_EXPANDED_LANE', toLane.key)
+            commit('SET_DRAG_EXPANDED_LANE', null)
+            commit('CLEAR_LANE_CARDS', toLane.key)
+            await dispatch('ensureLaneHydrated', {
+              laneKey: toLane.key,
+            })
+          }
+          if (multiSwimlaneActive(state)) {
+            commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
+          if (columnChanged) {
+            commit('CLEAR_CARD_MOVE_OPTIONS', cardName)
+          }
+          commit('INVALIDATE_COUNT_RESPONSES')
+          dispatch('fetchCellTotals')
+          dispatch('scheduleMoveOptionsRefresh')
+          frappe.show_alert({
+            message: __('Card updated'),
+            indicator: 'green',
+          })
+          return { ok: true }
+        } catch (error) {
+          if (state.boardGeneration === boardGeneration) {
+            commit('ROLLBACK_CARD_CELL', payload)
+            reportMoveFailure(commit, null, state.config, error)
+          }
+          return buildDragMoveFailureResult(payload, null, error)
+        } finally {
+          if (state.boardGeneration === boardGeneration) {
+            commit('SET_MOVE_PENDING', { cardName, pending: false })
+          }
+        }
       },
       async fetchColumnTotals({ commit, state }, { args } = {}) {
         const sourceArgs = args || window.cur_list.get_args()
@@ -1124,6 +2175,7 @@ export function createKanbanStore() {
             columnIndex,
             cards: pageColumn.cards,
           })
+          // Incremental append: do not remount VirtualList (sticky Add flicker).
           commit('SET_COLUMN_PAGE_STATE', {
             key,
             changes: {
@@ -1136,6 +2188,11 @@ export function createKanbanStore() {
           })
           dispatch('scheduleMoveOptionsRefresh')
           dispatch('hydrateCardLinkTitles', {
+            cards: pageColumn.cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateAttachmentCounts', {
             cards: pageColumn.cards,
             boardGeneration,
             columnRequestGeneration,
@@ -1182,7 +2239,7 @@ export function createKanbanStore() {
           commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
         }
       },
-      startCreateCard({ commit, dispatch, state }, { columnIndex, column }) {
+      startCreateCard({ commit, dispatch, state }, { columnIndex, column, laneKey = null }) {
         const formMode = resolveCreateFormMode(
           column,
           state.config,
@@ -1197,14 +2254,18 @@ export function createKanbanStore() {
           return false
         }
 
+        const swimlanePlan = buildSwimlaneCreateDefaults(state.config, laneKey)
         const defaults = {
           [state.config.field_name]: column.column_name,
+          ...swimlanePlan.defaults,
         }
         commit('SET_PENDING_CREATE', {
           column_name: column.column_name,
           columnIndex,
           board_name: state.config.board_name,
           form_mode: formMode.mode,
+          laneKey: laneKey != null ? String(laneKey) : null,
+          assign_to: swimlanePlan.assignTo,
         })
 
         return openCreateForm({
@@ -1216,7 +2277,7 @@ export function createKanbanStore() {
           },
         })
       },
-      handleCardCreated({ commit, dispatch, state }, { doc }) {
+      async handleCardCreated({ commit, dispatch, state }, { doc }) {
         if (!doc?.name || !state.config?.field_name) {
           return false
         }
@@ -1243,10 +2304,60 @@ export function createKanbanStore() {
         }
 
         const card = docToCard(doc, state.config)
-        commit('PREPEND_CREATED_CARD', { columnIndex, card })
+
+        const assignTo = pending?.assign_to
+        if (assignTo && state.config.swimlane_mode === 'assign') {
+          try {
+            await frappe.call({
+              method: 'frappe.desk.form.assign_to.add',
+              args: {
+                doctype: state.config.ref_doctype,
+                name: doc.name,
+                assign_to: [assignTo],
+                description: doc.description || doc.name,
+              },
+            })
+            const existing = Object.keys(card._assign || {})
+            if (!existing.includes(assignTo)) {
+              card._assign = mapAssignments(
+                JSON.stringify([...existing, assignTo]),
+              )
+            }
+          } catch {
+            // Card was created; assignment failure should not block board update.
+          }
+        }
+
+        const columnName = state.columns[columnIndex]?.column_name || statusValue
+        if (swimlanesActive(state) && pending?.laneKey != null) {
+          if (!cardMatchesLane(card, pending.laneKey, state.config)) {
+            commit('CLEAR_PENDING_CREATE')
+            return false
+          }
+          commit('PREPEND_CREATED_CARD_TO_CELL', {
+            laneKey: pending.laneKey,
+            columnName,
+            card,
+          })
+        } else {
+          commit('PREPEND_CREATED_CARD', { columnIndex, card })
+        }
         commit('TRACK_RECENT_CREATED_CARD', {
           cardName: card.name,
-          columnName: state.columns[columnIndex]?.column_name || statusValue,
+          columnName,
+        })
+        let laneIndex = null
+        if (pending?.laneKey != null) {
+          const found = (state.lanes || []).findIndex(
+            (lane) => String(lane.key ?? '') === String(pending.laneKey),
+          )
+          laneIndex = found >= 0 ? found : null
+        }
+        commit('SET_REVEAL_CREATED_CARD', {
+          cardName: card.name,
+          columnIndex,
+          cardIndex: 0,
+          laneIndex,
         })
         commit('CLEAR_PENDING_CREATE')
         dispatch('scheduleMoveOptionsRefresh')
@@ -1438,6 +2549,41 @@ export function createKanbanStore() {
       },
       async moveCard({ commit, dispatch, state }, payload) {
         if (state.pendingMoves[payload.cardName]) return false
+
+        if (swimlanesActive(state) && state.lanes?.length) {
+          const fromLaneIndex = Number.isFinite(payload.fromLaneIndex)
+            ? payload.fromLaneIndex
+            : findLaneIndexForCard(state, payload.cardName)
+          if (fromLaneIndex < 0) return false
+          const fromLane = state.lanes[fromLaneIndex]
+          if (!fromLane) return false
+          const toLaneIndex = fromLaneIndex
+          const toLane = state.lanes[toLaneIndex]
+          const fromColumn = payload.fromColumn
+          const toColumn = payload.toColumn
+          if (!fromLane.columns[fromColumn] || !toLane.columns[toColumn]) {
+            return false
+          }
+          const fromIndex = fromLane.columns[fromColumn].cards.findIndex(
+            ({ name }) => name === payload.cardName,
+          )
+          if (fromIndex < 0) return false
+          const toIndex = Number.isFinite(payload.toIndex) ? payload.toIndex : 0
+          const cellPayload = {
+            cardName: payload.cardName,
+            fromLaneIndex,
+            toLaneIndex,
+            fromColumn,
+            toColumn,
+            fromIndex,
+            toIndex,
+            workflowAction: payload.workflowAction || null,
+          }
+          commit('MOVE_CARD_CELL', cellPayload)
+          const result = await dispatch('persistMovedCardToCell', cellPayload)
+          return Boolean(result?.ok)
+        }
+
         if (
           isColumnLoading(state, payload.fromColumn) ||
           isColumnLoading(state, payload.toColumn)
@@ -1555,6 +2701,9 @@ export function createKanbanStore() {
             userResponse.message,
           ),
         })
+        if (multiSwimlaneActive(state)) {
+          commit('RECONCILE_CARD_INSTANCES', cardName)
+        }
       },
       async updateCardField(
         { commit, state },
@@ -1595,6 +2744,12 @@ export function createKanbanStore() {
             value: saved?.[fieldname] ?? value,
             modified: saved?.modified,
           })
+          if (
+            multiSwimlaneActive(state)
+            && fieldAffectsSwimlaneLayout(state, fieldname)
+          ) {
+            commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
           if (typeof frappe.model?.clear_doc === 'function') {
             frappe.model.clear_doc(state.config.ref_doctype, cardName)
           }
@@ -1609,6 +2764,12 @@ export function createKanbanStore() {
             fieldname,
             value: priorValue,
           })
+          if (
+            multiSwimlaneActive(state)
+            && fieldAffectsSwimlaneLayout(state, fieldname)
+          ) {
+            commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
           frappe.show_alert({
             message: __('Could not update the field.', null, 'QuickKanban.Inline'),
             indicator: 'red',
@@ -1635,6 +2796,7 @@ export function createKanbanStore() {
           return false
         }
 
+        const canWrite = Boolean(globalThis.frappe?.model?.can_write?.(doctype))
         const previousSourceTags = sourceCard._user_tags || ''
         const previousTargetTags = targetCard._user_tags || ''
         if (!canDropTag({
@@ -1642,6 +2804,8 @@ export function createKanbanStore() {
           sourceName: sourceCardName,
           targetName: targetCardName,
           targetUserTags: previousTargetTags,
+          canWriteTarget: canWrite,
+          canWriteSource: canWrite,
         })) {
           return false
         }
@@ -1664,6 +2828,7 @@ export function createKanbanStore() {
           })
         }
 
+        let addSucceeded = false
         try {
           await frappe.call({
             method: 'frappe.desk.doctype.tag.tag.add_tag',
@@ -1673,6 +2838,7 @@ export function createKanbanStore() {
               dn: targetCardName,
             },
           })
+          addSucceeded = true
           if (mode === TAG_DRAG_MODE_MOVE) {
             await frappe.call({
               method: 'frappe.desk.doctype.tag.tag.remove_tag',
@@ -1685,6 +2851,24 @@ export function createKanbanStore() {
           }
           return true
         } catch (_error) {
+          frappe.show_alert({
+            message: __('Could not update tags.', null, 'QuickKanban.Tags'),
+            indicator: 'red',
+          })
+          if (addSucceeded && mode === TAG_DRAG_MODE_MOVE) {
+            // Target kept the tag on the server; source remove failed — match that.
+            commit('UPDATE_CARD_FIELD', {
+              cardName: targetCardName,
+              fieldname: '_user_tags',
+              value: nextTargetTags,
+            })
+            commit('UPDATE_CARD_FIELD', {
+              cardName: sourceCardName,
+              fieldname: '_user_tags',
+              value: previousSourceTags,
+            })
+            return false
+          }
           commit('UPDATE_CARD_FIELD', {
             cardName: targetCardName,
             fieldname: '_user_tags',
@@ -1697,10 +2881,6 @@ export function createKanbanStore() {
               value: previousSourceTags,
             })
           }
-          frappe.show_alert({
-            message: __('Could not update tags.', null, 'QuickKanban.Tags'),
-            indicator: 'red',
-          })
           return false
         }
       },
@@ -2136,9 +3316,76 @@ export function createKanbanStore() {
           throw error
         }
       },
+      async setColumnWidths({ commit, state, getters }, widths) {
+        if (!getters.canEditBoard) {
+          return
+        }
+        if (!widths || typeof widths !== 'object' || !Object.keys(widths).length) {
+          return
+        }
+
+        const previousWidths = {}
+        for (const column of state.columns) {
+          if (column.column_name in widths) {
+            previousWidths[column.column_name] = column.custom_column_width
+          }
+        }
+
+        commit('UPDATE_COLUMN_WIDTHS', widths)
+        try {
+          const response = await frappe.call({
+            method: 'quick_kanban.api.set_column_widths',
+            args: {
+              board_name: state.config.board_name,
+              widths,
+            },
+          })
+          const savedBoard = response.message
+          if (savedBoard?.columns) {
+            commit(
+              'SET_COLUMNS',
+              mergeColumnsPreservingCards(
+                savedBoard.columns,
+                state.columns,
+                state.config,
+              ),
+            )
+            syncCachedListBoardColumns(savedBoard)
+          } else {
+            syncCachedListBoardColumns({
+              name: state.config.board_name,
+              columns: state.columns.map(({ cards: _cards, ...columnMeta }) => columnMeta),
+            })
+          }
+        } catch (error) {
+          commit('UPDATE_COLUMN_WIDTHS', previousWidths)
+          frappe.show_alert({
+            message: __('Could not update the column width.'),
+            indicator: 'red',
+          })
+          throw error
+        }
+      },
     },
     getters: {
       getColumns: (state) => state.columns,
+      getLanes: (state) => state.lanes,
+      swimlanesEnabled: (state) =>
+        Boolean(state.config?.swimlane_mode && state.config.swimlane_mode !== 'off'),
+      expandedLaneKeys: (state) =>
+        getExpandedLaneKeys(state.expandedLaneKeys, state.dragExpandedLaneKey),
+      isLaneExpanded: (state, getters) => (laneKey) =>
+        getters.expandedLaneKeys.includes(String(laneKey ?? '')),
+      getLaneTotal: (state) => (laneKey) =>
+        laneTotalFromCells(state.cellTotals, laneKey),
+      getCellTotal: (state) => (laneKey, columnName) =>
+        Number(state.cellTotals?.[laneKey]?.[columnName]) || 0,
+      getCellPagination: (state) => (laneKey, columnName) =>
+        state.cellPagination[cellKey(laneKey, columnName)] || {
+          offset: 0,
+          hasMore: false,
+          loading: false,
+        },
       getArchivedColumns: (state) => state.archivedColumns,
       getAddableColumns: (state) => getAddableColumnCandidates({
         options: parseSelectOptions(state.config?.status_field_meta),
@@ -2164,6 +3411,9 @@ export function createKanbanStore() {
       isMoveOptionsLoading: (state) => state.moveOptionsLoading,
       getCardMoveOptions: (state) => (cardName) => state.moveOptionsByCard[cardName],
       getAllowedDestinations: (state) => (cardName) => {
+        if (isStatusFieldReadOnly(state)) {
+          return []
+        }
         if (
           !state.moveOptionsByCard[cardName] &&
           !state.moveOptionsLoaded &&
@@ -2199,9 +3449,18 @@ export function createKanbanStore() {
         if (!isMoveReady(state, cardName)) {
           return false
         }
-        return getters.getAllowedDestinations(cardName).length > 0
+        if (
+          !isStatusFieldReadOnly(state)
+          && getters.getAllowedDestinations(cardName).length > 0
+        ) {
+          return true
+        }
+        return canChangeLaneClient(state, cardName)
       },
       isDropAllowed: (state) => ({ cardName, columnIndex }) => {
+        if (isStatusFieldReadOnly(state)) {
+          return false
+        }
         const column = state.columns[columnIndex]
         if (!column || !cardName) {
           return false
@@ -2221,6 +3480,40 @@ export function createKanbanStore() {
           null,
           policy.missing_mandatory,
         ).valid
+      },
+      isCellDropAllowed: (state, getters) => ({
+        cardName,
+        columnIndex,
+        laneColumnIndex,
+        laneKey,
+      }) => {
+        if (!cardName || columnIndex < 0) {
+          return false
+        }
+        const active = state.activeDrag
+        const laneChanged = active?.fromLaneKey != null
+          && laneKey != null
+          && String(active.fromLaneKey) !== String(laneKey)
+        const columnChanged = active?.fromColumn != null
+          && laneColumnIndex != null
+          && active.fromColumn !== laneColumnIndex
+
+        if (columnChanged) {
+          if (isStatusFieldReadOnly(state)) {
+            return false
+          }
+          if (!getters.isDropAllowed({ cardName, columnIndex })) {
+            return false
+          }
+          if (laneChanged && !canChangeLaneClient(state, cardName)) {
+            return false
+          }
+          return true
+        }
+        if (laneChanged) {
+          return canChangeLaneClient(state, cardName)
+        }
+        return true
       },
       activeDragCard: (state) => state.activeDrag,
       activeTagDrag: (state) => state.activeTagDrag,

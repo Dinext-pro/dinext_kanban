@@ -193,6 +193,22 @@
               },
             }
           }
+          if (method === 'quick_kanban.api.move_card_to_cell') {
+            if (window.__failNextMove) {
+              window.__failNextMove = false
+              throw new Error('Move rejected by fixture')
+            }
+            const message = {
+              modified: '2026-07-10 10:01:00',
+            }
+            if (args.to_column) {
+              message.status = args.to_column
+            }
+            if (args.to_lane) {
+              message.project = args.to_lane
+            }
+            return { message }
+          }
           if (method === 'frappe.desk.reportview.get') {
             window.__reportviewCalls.push(args)
             const statusFilter = args.filters.find(

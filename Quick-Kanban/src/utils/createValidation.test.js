@@ -6,6 +6,7 @@ import {
   getQuickEntryFieldnames,
   openCreateForm,
   resolveCreateFormMode,
+  routeOptionsFromDefaults,
 } from './createValidation'
 
 beforeEach(() => {
@@ -140,6 +141,42 @@ describe('createValidation', () => {
     applyCreateDefaults(doc, { status: 'Overdue', subject: 'Test' })
     expect(doc.status).toBe('Overdue')
     expect(doc.subject).toBe('Test')
+  })
+
+  test('applyCreateDefaults appends Table MultiSelect child rows', () => {
+    frappe.get_meta.mockReturnValue({
+      name: 'Task',
+      fields: [
+        {
+          fieldname: 'users',
+          fieldtype: 'Table MultiSelect',
+          options: 'Task User',
+        },
+      ],
+    })
+    frappe.model.add_child = vi.fn((doc, childDoctype, fieldname) => {
+      const row = { doctype: childDoctype, parentfield: fieldname }
+      if (!Array.isArray(doc[fieldname])) {
+        doc[fieldname] = []
+      }
+      doc[fieldname].push(row)
+      return row
+    })
+
+    const doc = { doctype: 'Task', name: 'new-Task-1', users: [] }
+    applyCreateDefaults(doc, { users: [{ user: 'alice@example.com' }] })
+
+    expect(frappe.model.add_child).toHaveBeenCalledWith(doc, 'Task User', 'users')
+    expect(doc.users).toEqual([
+      expect.objectContaining({ user: 'alice@example.com' }),
+    ])
+  })
+
+  test('routeOptionsFromDefaults omits array values', () => {
+    expect(routeOptionsFromDefaults({
+      status: 'Open',
+      users: [{ user: 'a' }],
+    })).toEqual({ status: 'Open' })
   })
 
   test('openCreateForm quick_entry pre-fills doc including no_copy status', async () => {
