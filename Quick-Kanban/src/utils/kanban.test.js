@@ -401,6 +401,52 @@ describe('normalizeBoardConfig', () => {
     expect(config.display_fields.map((field) => field.fieldname)).toEqual([])
   })
 
+  test('resolves swimlane_link_field for Table MultiSelect swimlanes', () => {
+    frappe.get_meta.mockImplementation((doctype) => {
+      if (doctype === 'Task User') {
+        return {
+          fields: [
+            { fieldname: 'user', fieldtype: 'Link', options: 'User' },
+          ],
+        }
+      }
+      return {
+        title_field: 'subject',
+        fields: [
+          {
+            fieldname: 'users',
+            label: 'Users',
+            fieldtype: 'Table MultiSelect',
+            options: 'Task User',
+            parent: 'Task',
+          },
+        ],
+      }
+    })
+
+    const config = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_swimlane_field: 'users',
+    }, {
+      title_field: 'subject',
+      fields: [
+        {
+          fieldname: 'users',
+          label: 'Users',
+          fieldtype: 'Table MultiSelect',
+          options: 'Task User',
+          parent: 'Task',
+        },
+      ],
+    })
+
+    expect(config.swimlane_mode).toBe('multi')
+    expect(config.swimlane_link_field).toBe('user')
+  })
+
   test('ignores color fieldname when fieldtype is not Color', () => {
     const config = normalizeBoardConfig({
       name: 'Tasks',

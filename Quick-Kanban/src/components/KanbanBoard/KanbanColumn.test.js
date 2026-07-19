@@ -25,7 +25,7 @@ function mountColumn(column = {
   display_name: 'Open',
   indicator: 'unknown',
   cards: [],
-}, { boardPerms } = {}) {
+}, { boardPerms, laneKey = null, laneIndex = null } = {}) {
   const store = createKanbanStore()
   store.commit('SET_KANBAN_CONFIG', {
     board_name: 'Task Board',
@@ -49,6 +49,8 @@ function mountColumn(column = {
     props: {
       column,
       columnIndex: 0,
+      laneKey,
+      laneIndex,
       config: store.state.config,
     },
     global: {
@@ -260,10 +262,33 @@ test('renders translated column labels while dispatching create from the column'
     expect(dispatchSpy).toHaveBeenCalledWith('startCreateCard', {
       columnIndex: 0,
       column: expect.objectContaining({ column_name: 'Open' }),
+      laneKey: null,
     })
   } finally {
     globalThis.__ = originalTranslate
   }
+})
+
+test('passes swimlane laneKey when adding a card from a cell', async () => {
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    indicator: 'Blue',
+    cards: [],
+  }
+  const { wrapper, store } = mountColumn(column, {
+    laneKey: 'PROJ-1',
+    laneIndex: 0,
+  })
+  const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+
+  await wrapper.get('.addcard button').trigger('click')
+
+  expect(dispatchSpy).toHaveBeenCalledWith('startCreateCard', {
+    columnIndex: 0,
+    column: expect.objectContaining({ column_name: 'Open' }),
+    laneKey: 'PROJ-1',
+  })
 })
 
 test('does not throw for an unknown column indicator', () => {

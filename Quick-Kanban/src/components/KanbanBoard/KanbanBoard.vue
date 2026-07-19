@@ -637,6 +637,21 @@ provide('scrollToMovedCard', scrollToMovedCard)
 provide('registerHeaderColumnRef', registerHeaderColumnRef)
 provide('registerCellColumnRef', registerCellColumnRef)
 
+watch(
+  () => store.state.revealCreatedCard,
+  async (payload) => {
+    if (!payload?.cardName) {
+      return
+    }
+    try {
+      await scrollToMovedCard(payload)
+    } catch {
+      // Reveal is best-effort; create already succeeded.
+    }
+    store.commit('CLEAR_REVEAL_CREATED_CARD')
+  },
+)
+
 function teardownColumnSortable() {
   destroyColumnSortable(columnSortable)
   columnSortable = null

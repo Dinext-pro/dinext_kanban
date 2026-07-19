@@ -80,6 +80,13 @@ describe('laneKeysFromCard', () => {
     expect(keys).toEqual(['alice', 'bob'])
   })
 
+  test('reads assignees from mapped _assign object', () => {
+    expect(laneKeysFromCard(
+      { _assign: { alice: 'Alice', bob: 'Bob' } },
+      { swimlane_mode: 'assign' },
+    )).toEqual(['alice', 'bob'])
+  })
+
   test('unassigned when no assignees', () => {
     expect(laneKeysFromCard(
       { _assign: null },

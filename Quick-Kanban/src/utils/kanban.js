@@ -618,13 +618,21 @@ export function normalizeBoardConfig(board, meta = {}) {
   }
   const swimlaneField = (board.custom_swimlane_field || '').trim()
   let swimlaneFieldMeta = null
-  const swimlaneLinkField = ''
+  let swimlaneLinkField = ''
   if (swimlaneField && swimlaneField !== SWIMLANE_ASSIGN) {
     swimlaneFieldMeta = metaByField[swimlaneField] || { fieldname: swimlaneField }
-    if (
-      normalizeFieldtype(swimlaneFieldMeta) !== 'TableMultiSelect'
-      && !fields.includes(swimlaneField)
-    ) {
+    if (normalizeFieldtype(swimlaneFieldMeta) === 'TableMultiSelect') {
+      const childDoctype = swimlaneFieldMeta.options
+      if (childDoctype) {
+        const childMeta = typeof frappe?.get_meta === 'function'
+          ? frappe.get_meta(childDoctype)
+          : null
+        const linkField = (childMeta?.fields || []).find(
+          (field) => field.fieldtype === 'Link',
+        )
+        swimlaneLinkField = linkField?.fieldname || ''
+      }
+    } else if (!fields.includes(swimlaneField)) {
       fields = [...fields, swimlaneField]
     }
   }
@@ -738,6 +746,9 @@ export function transformCard(keys, values, userInfo = {}) {
 
 export function parseAssignments(value) {
   if (Array.isArray(value)) return value
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+  }
   try {
     return JSON.parse(value || '[]')
   } catch {
