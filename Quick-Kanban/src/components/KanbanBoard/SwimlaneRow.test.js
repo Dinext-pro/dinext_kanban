@@ -55,6 +55,8 @@ function mountRow({
   swimlaneField = 'project',
   laneKey = 'proj-a',
   laneLabel = 'Proj A',
+  columns = [{ name: 'open', column_name: 'Open', cards: [] }],
+  collapsedColumns = [],
 } = {}) {
   const store = createKanbanStore()
   store.commit('SET_KANBAN_CONFIG', {
@@ -69,14 +71,15 @@ function mountRow({
   const lane = {
     key: laneKey,
     label: laneLabel,
-    columns: [
-      { name: 'open', column_name: 'Open', cards: [] },
-    ],
+    columns: columns.map((column) => ({ ...column })),
   }
-  store.commit('SET_COLUMNS', [{ name: 'open', column_name: 'Open', cards: [] }])
+  store.commit('SET_COLUMNS', columns.map((column) => ({ ...column })))
   store.commit('SET_LANES', [lane])
   if (expanded) {
     store.commit('SET_EXPANDED_LANE_KEYS', [laneKey])
+  }
+  for (const columnKey of collapsedColumns) {
+    store.commit('SET_COLUMN_COLLAPSED', { columnKey, collapsed: true })
   }
   const dispatch = vi.spyOn(store, 'dispatch')
   const scroller = document.createElement('div')
@@ -86,7 +89,7 @@ function mountRow({
       laneIndex: 0,
       columns: store.state.columns,
       config: store.state.config,
-      gridTemplateColumns: '240px',
+      gridTemplateColumns: columns.map(() => '240px').join(' '),
       scroller,
     },
     global: {
@@ -239,5 +242,69 @@ test('collapse does not clear lane cards; re-expand remounts cached row', async 
   expect(wrapper.find('.swimlane-lane--expanded').exists()).toBe(true)
   expect(wrapper.find('.swimlane-row').element.style.display).not.toBe('none')
   expect(store.state.lanes[0].columns[0].cards).toEqual([{ name: 'T1' }])
+  wrapper.unmount()
+})
+
+test('auto-expands a collapsed column after drag dwell on the cell spacer', async () => {
+  vi.useFakeTimers()
+  const { wrapper, store } = mountRow({
+    expanded: true,
+    collapsedColumns: ['Open'],
+  })
+  store.commit('SET_ACTIVE_DRAG', {
+    cardName: 'TASK-1',
+    fromColumn: 1,
+    fromIndex: 0,
+  })
+  await nextTick()
+
+  const spacer = wrapper.get('.swimlane-cell-spacer[data-column-value="Open"]')
+  await spacer.trigger('pointerenter')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+
+  await vi.advanceTimersByTimeAsync(400)
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
+
+  vi.useRealTimers()
+  wrapper.unmount()
+})
+
+test('cancels collapsed-column drag auto-expand when the pointer leaves before the dwell delay', async () => {
+  vi.useFakeTimers()
+  const { wrapper, store } = mountRow({
+    expanded: true,
+    collapsedColumns: ['Open'],
+  })
+  store.commit('SET_ACTIVE_DRAG', {
+    cardName: 'TASK-1',
+    fromColumn: 1,
+    fromIndex: 0,
+  })
+  await nextTick()
+
+  const spacer = wrapper.get('.swimlane-cell-spacer[data-column-value="Open"]')
+  await spacer.trigger('pointerenter')
+  await spacer.trigger('pointerleave')
+  await vi.advanceTimersByTimeAsync(400)
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+  vi.useRealTimers()
+  wrapper.unmount()
+})
+
+test('does not auto-expand a collapsed column spacer without an active card drag', async () => {
+  vi.useFakeTimers()
+  const { wrapper, store } = mountRow({
+    expanded: true,
+    collapsedColumns: ['Open'],
+  })
+  await nextTick()
+
+  await wrapper.get('.swimlane-cell-spacer[data-column-value="Open"]').trigger('pointerenter')
+  await vi.advanceTimersByTimeAsync(400)
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+  vi.useRealTimers()
   wrapper.unmount()
 })

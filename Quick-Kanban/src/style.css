@@ -439,7 +439,9 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
 }
 
 #kanbanapp .swimlane-cell-spacer {
-  min-height: 0;
+  align-self: stretch;
+  /* Hit area when every column in the lane is collapsed (no sibling height). */
+  min-height: 48px;
   border: 0;
   border-left: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
   border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
