@@ -11,6 +11,8 @@ from frappe.utils import cint
 SWIMLANE_ASSIGN = "__assign"
 SWIMLANE_FIELD_TYPES = ("Select", "Link", "User", "Table MultiSelect")
 UNASSIGNED_KEY = ""
+# Match Frappe `_assign` (todo.py): only Open ToDos count as active assignments.
+ACTIVE_ASSIGN_TODO_STATUS = ("not in", ("Cancelled", "Closed"))
 
 
 def resolve_swimlane_mode(swimlane_field, meta=None):
@@ -165,7 +167,7 @@ def get_swimlane_lanes(doctype, swimlane_field, filters=None, or_filters=None):
 				filters={
 					"reference_type": doctype,
 					"reference_name": ("in", parent_names),
-					"status": ("!=", "Cancelled"),
+					"status": ACTIVE_ASSIGN_TODO_STATUS,
 				},
 				fields=["allocated_to"],
 				limit_page_length=0,
@@ -250,7 +252,7 @@ def _names_for_assign_lane(doctype, lane_key, status_field, status_value, filter
 		filters={
 			"reference_type": doctype,
 			"reference_name": ("in", parent_names),
-			"status": ("!=", "Cancelled"),
+			"status": ACTIVE_ASSIGN_TODO_STATUS,
 		},
 		fields=["reference_name", "allocated_to"],
 		limit_page_length=0,
@@ -422,7 +424,7 @@ def _names_for_assign_lane_all(doctype, lane_key, filters, or_filters):
 		filters={
 			"reference_type": doctype,
 			"reference_name": ("in", parent_names),
-			"status": ("!=", "Cancelled"),
+			"status": ACTIVE_ASSIGN_TODO_STATUS,
 		},
 		fields=["reference_name", "allocated_to"],
 		limit_page_length=0,
@@ -684,13 +686,13 @@ def _reassign_membership(doc, from_lane, to_lane):
 	to_lane = "" if to_lane in (None, "") else str(to_lane)
 
 	if to_lane == UNASSIGNED_KEY:
-		# Remove all assignees
+		# Remove all active (Open) assignees — Closed ToDos are already inactive.
 		todos = frappe.get_all(
 			"ToDo",
 			filters={
 				"reference_type": doc.doctype,
 				"reference_name": doc.name,
-				"status": ("!=", "Cancelled"),
+				"status": ACTIVE_ASSIGN_TODO_STATUS,
 			},
 			fields=["allocated_to"],
 			limit_page_length=0,
