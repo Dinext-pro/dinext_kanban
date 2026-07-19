@@ -514,3 +514,40 @@ def assert_move_allowed(doc, context, value, workflow_action=None):
 		frappe.throw(_("This move is not allowed."))
 
 	return "field_update"
+
+
+def assert_lane_change_allowed(doc, swimlane_field, mode):
+	"""Enforce field/workflow/assign rules before swimlane membership changes."""
+	from quick_kanban.swimlane import SWIMLANE_ASSIGN
+
+	doc.check_permission("write")
+
+	if mode == "assign" or swimlane_field == SWIMLANE_ASSIGN:
+		# Assign To uses Desk assign APIs; require document write (already checked).
+		return
+
+	field = doc.meta.get_field(swimlane_field)
+	if not field:
+		frappe.throw(_("Invalid swimlane field: {0}").format(swimlane_field))
+
+	allowed, reason = _field_write_allowed(doc, swimlane_field, field)
+	if not allowed:
+		if reason == REASON_NO_PERMISSION:
+			frappe.throw(
+				_("You cannot update the swimlane field."),
+				frappe.PermissionError,
+			)
+		frappe.throw(_("The swimlane field cannot be updated."))
+
+	from frappe.model.workflow import get_workflow_name
+
+	workflow_name = get_workflow_name(doc.doctype)
+	if not workflow_name:
+		return
+
+	workflow = frappe.get_cached_doc("Workflow", workflow_name)
+	current_state = _current_workflow_state(doc, workflow)
+	if not _can_edit_in_workflow_state(workflow, current_state):
+		frappe.throw(
+			_("You are not allowed to edit this document in the current Workflow State.")
+		)

@@ -114,6 +114,20 @@ describe('read_only_depends_on and field status', () => {
       doc: { name: 'TASK-1' },
     })).toBe(false)
   })
+
+  test('inline edit permission gate is independent of move_policy destinations', () => {
+    // Documenting the mutation matrix: field Write via canOpenInlineEditor
+    // does not consult get_move_options / canDragCard.
+    const fieldMeta = { fieldname: 'subject', fieldtype: 'Data' }
+    frappe.workflow.is_read_only.mockReturnValue(false)
+    frappe.perm.get_field_display_status.mockReturnValue('Write')
+    expect(canOpenInlineEditor({
+      doctype: 'Task',
+      docname: 'TASK-1',
+      fieldMeta,
+      doc: { name: 'TASK-1', subject: 'Hello' },
+    })).toBe(true)
+  })
 })
 
 describe('double-click navigation', () => {

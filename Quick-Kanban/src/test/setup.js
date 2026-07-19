@@ -25,6 +25,9 @@ globalThis.frappe = {
   urllib: {
     get_full_url: vi.fn((url) => `https://example.com${url}`),
   },
+  avatar: vi.fn((user, cssClass = 'avatar-small') => (
+    `<span class="avatar ${cssClass}" data-user="${user}"></span>`
+  )),
   avatar_group: vi.fn((users, limit, options = {}) => {
     const group = document.createElement('div')
     group.className = 'avatar-group overlap'

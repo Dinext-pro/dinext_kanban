@@ -191,12 +191,14 @@ import { useDismissibleMenu } from '../../utils/menu'
 import { flashMovedCard } from '../../utils/cardMoveFlash'
 import { applyUserTagFilter } from '../../utils/listNavigation'
 import { navigateToForm } from '../../utils/inlineEditing'
-import { canDropTag } from '../../utils/tagDragDrop'
+import { canDropTag, canWriteCardTags } from '../../utils/tagDragDrop'
 
 const props = defineProps({
   card: { type: Object, required: true },
   config: { type: Object, required: true },
   columnIndex: { type: Number, required: true },
+  laneIndex: { type: Number, default: null },
+  laneKey: { type: [String, Number], default: null },
 })
 const store = useStore()
 const scrollToMovedCard = inject('scrollToMovedCard', null)
@@ -259,11 +261,14 @@ const tagDropClasses = computed(() => {
   if (!drag || store.state.tagDragHoverCard !== props.card.name) {
     return {}
   }
+  const writeOk = canWriteCardTags(props.config.ref_doctype)
   const allowed = canDropTag({
     tag: drag.tag,
     sourceName: drag.sourceCardName,
     targetName: props.card.name,
     targetUserTags: props.card._user_tags || '',
+    canWriteTarget: writeOk,
+    canWriteSource: writeOk,
   })
   return {
     'kanban-card-tag-drop-allowed': allowed,
@@ -667,12 +672,23 @@ function onCardDblclick() {
 }
 
 async function moveCard(toColumn) {
-  const fromIndex = columns.value[props.columnIndex].cards.findIndex(
-    ({ name }) => name === props.card.name,
-  )
-  const toIndex = columns.value[toColumn].cards.length
   closeMoveMenu()
-  if (toColumn === props.columnIndex || fromIndex < 0) return
+  if (toColumn === props.columnIndex) return
+
+  let fromIndex = -1
+  // Always insert at top so reveal works in paginated columns.
+  const toIndex = 0
+  if (props.laneIndex != null && store.getters.swimlanesEnabled) {
+    const lane = store.state.lanes[props.laneIndex]
+    fromIndex = lane?.columns?.[props.columnIndex]?.cards?.findIndex(
+      ({ name }) => name === props.card.name,
+    ) ?? -1
+  } else {
+    fromIndex = columns.value[props.columnIndex].cards.findIndex(
+      ({ name }) => name === props.card.name,
+    )
+  }
+  if (fromIndex < 0) return
 
   let moved = false
   try {
@@ -684,11 +700,16 @@ async function moveCard(toColumn) {
       toIndex,
     })
     if (moved && scrollToMovedCard) {
-      await scrollToMovedCard({
-        columnIndex: toColumn,
-        cardName: props.card.name,
-        cardIndex: toIndex,
-      })
+      try {
+        await scrollToMovedCard({
+          columnIndex: toColumn,
+          cardName: props.card.name,
+          cardIndex: toIndex,
+          laneIndex: props.laneIndex,
+        })
+      } catch {
+        // Reveal is best-effort; move already succeeded.
+      }
     }
   } catch {
     // The store restores the card and exposes the error to the user.

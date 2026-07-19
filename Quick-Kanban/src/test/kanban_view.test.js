@@ -555,6 +555,7 @@ test('falls back to native Kanban when bootstrap asset is unavailable', async ()
 function createKanbanSettingsFrappeApi(options = {}) {
   const boardName = options.board_name || 'Task Board'
   const setRoute = vi.fn()
+  const clearDoc = vi.fn()
   const frappeApi = {
     provide: vi.fn(),
     call: vi.fn(),
@@ -562,6 +563,10 @@ function createKanbanSettingsFrappeApi(options = {}) {
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
     set_route: setRoute,
+    model: { clear_doc: clearDoc },
+    db: {
+      get_doc: vi.fn(),
+    },
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: vi.fn(),
@@ -578,20 +583,22 @@ function createKanbanSettingsFrappeApi(options = {}) {
     globalThis.__,
   )
   const view = new frappeApi.views.KanbanView({ board_name: boardName })
-  return { view, setRoute, frappeApi }
+  return { view, setRoute, clearDoc, frappeApi }
 }
 
-test('adds Open Kanban Board secondary action when Kanban Settings opens', () => {
+test('adds Advanced Settings secondary action when Kanban Settings opens', () => {
   const { view } = createKanbanSettingsFrappeApi({ board_name: 'My Task Board' })
 
   view.show_kanban_settings()
 
-  expect(window.cur_dialog.set_secondary_action_label).toHaveBeenCalledWith('Open Kanban Board')
+  expect(window.cur_dialog.set_secondary_action_label).toHaveBeenCalledWith('Advanced Settings')
   expect(window.cur_dialog.set_secondary_action).toHaveBeenCalledTimes(1)
 })
 
 test('navigates to the current Kanban Board form and closes the settings dialog', () => {
-  const { view, setRoute } = createKanbanSettingsFrappeApi({ board_name: 'My Task Board' })
+  const { view, setRoute, clearDoc } = createKanbanSettingsFrappeApi({
+    board_name: 'My Task Board',
+  })
 
   view.show_kanban_settings()
 
@@ -599,6 +606,7 @@ test('navigates to the current Kanban Board form and closes the settings dialog'
   secondaryAction()
 
   expect(window.cur_dialog.hide).toHaveBeenCalledTimes(1)
+  expect(clearDoc).toHaveBeenCalledWith('Kanban Board', 'My Task Board')
   expect(setRoute).toHaveBeenCalledWith('Form', 'Kanban Board', 'My Task Board')
 })
 
@@ -611,7 +619,31 @@ test('parses serialized board.fields before opening Kanban Settings', () => {
   expect(view.board.fields).toEqual(['expected_end_date', 'project'])
 })
 
-test('does not attach Open Kanban Board action to unrelated dialogs', () => {
+test('get_board parses fields on a copy and leaves synced locals as a JSON string', async () => {
+  const { view, frappeApi } = createKanbanSettingsFrappeApi({
+    board_name: 'My Task Board',
+  })
+  const syncedLocals = {
+    name: 'My Task Board',
+    doctype: 'Kanban Board',
+    fields: '["expected_end_date","project"]',
+    filters: '[]',
+    reference_doctype: 'Task',
+    field_name: 'status',
+    columns: [],
+  }
+  frappeApi.db.get_doc.mockResolvedValue(syncedLocals)
+
+  await view.get_board()
+
+  expect(syncedLocals.fields).toBe('["expected_end_date","project"]')
+  expect(view.board).not.toBe(syncedLocals)
+  expect(view.board.fields).toEqual(['expected_end_date', 'project'])
+  expect(view.board.filters_array).toEqual([])
+  expect(view.filters).toEqual([])
+})
+
+test('does not attach Advanced Settings action to unrelated dialogs', () => {
   const { view } = createKanbanSettingsFrappeApi()
   const nativeShow = NativeKanbanView.prototype.show_kanban_settings
   NativeKanbanView.prototype.show_kanban_settings = vi.fn()
@@ -636,7 +668,7 @@ test('does not attach Open Kanban Board action to unrelated dialogs', () => {
       hide: vi.fn(),
     }
     attachHandler()
-    expect(window.cur_dialog.set_secondary_action_label).toHaveBeenCalledWith('Open Kanban Board')
+    expect(window.cur_dialog.set_secondary_action_label).toHaveBeenCalledWith('Advanced Settings')
   } finally {
     NativeKanbanView.prototype.show_kanban_settings = nativeShow
   }
@@ -688,6 +720,11 @@ test('inserts Minimize checkbox before the Filter control on beta render', async
     session: { user: 'user@example.com' },
     show_alert: vi.fn(),
     get_meta: vi.fn(() => ({ fields: [] })),
+    utils: {
+      icon: vi.fn((name, size = 'sm') => (
+        `<svg class="icon icon-${size}" aria-hidden="true"><use href="#icon-${name}"></use></svg>`
+      )),
+    },
     views: {
       KanbanView: NativeKanbanView,
       KanbanBoard: vi.fn(),
@@ -715,7 +752,11 @@ test('inserts Minimize checkbox before the Filter control on beta render', async
   const filterSection = document.querySelector('.filter-section')
   expect(control).toBeTruthy()
   expect(control.nextElementSibling).toBe(filterSection)
-  expect(control.textContent).toContain('Minimize')
+  expect(control.getAttribute('aria-label')).toBe('Minimize')
+  expect(control.getAttribute('title')).toBe('Minimize')
+  expect(control.querySelector('use[href="#icon-collapse"]')).toBeTruthy()
+  expect(control.textContent).not.toContain('Minimize')
+  expect(frappeApi.utils.icon).toHaveBeenCalledWith('collapse', 'sm')
 
   const checkbox = control.querySelector('input[type="checkbox"]')
   checkbox.checked = true
@@ -756,4 +797,193 @@ test('removes Minimize checkbox when falling back to native Kanban', async () =>
   view.render()
   await vi.waitFor(() => expect(NativeBoard).toHaveBeenCalledTimes(1))
   expect(document.querySelector('.quick-kanban-minimize-control')).toBeNull()
+  expect(document.querySelector('.quick-kanban-groupby-control')).toBeNull()
+})
+
+function mockFrappeCall(handlers = {}) {
+  return vi.fn((opts) => {
+    const method = opts?.method
+    const handler = handlers[method]
+    const message = handler
+      ? handler(opts.args || {})
+      : undefined
+    opts?.callback?.({ message })
+    opts?.always?.()
+    return Promise.resolve({ message })
+  })
+}
+
+test('inserts Group By between Minimize and Filter when board write is allowed', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: mockFrappeCall({
+      'quick_kanban.api.get_swimlane_field_options': () => ([
+        { value: '__assign', label: 'Assigned To' },
+        { value: 'priority', label: 'Priority' },
+      ]),
+    }),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.board_perms = { write: true }
+  view.board.custom_swimlane_field = ''
+  view.$filter_section = createFilterSection()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(window.mountQuickKanban).toHaveBeenCalledTimes(1)
+  })
+
+  const minimize = document.querySelector('.quick-kanban-minimize-control')
+  const groupby = document.querySelector('.quick-kanban-groupby-control')
+  const filterSection = document.querySelector('.filter-section')
+  expect(minimize).toBeTruthy()
+  expect(groupby).toBeTruthy()
+  expect(minimize.nextElementSibling).toBe(groupby)
+  expect(groupby.nextElementSibling).toBe(filterSection)
+  expect(groupby.querySelector('.quick-kanban-groupby-label')).toBeNull()
+  expect(groupby.querySelector('button')?.getAttribute('aria-label')).toBe('Group By')
+  expect(groupby.querySelector('.dropdown-text')?.textContent).toBe('No Grouping')
+  expect(groupby.querySelectorAll('.dropdown-item.option').length).toBe(3)
+})
+
+test('hides Group By when board write is not allowed', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: mockFrappeCall(),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.board_perms = {}
+  view.$filter_section = createFilterSection()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(window.mountQuickKanban).toHaveBeenCalledTimes(1)
+  })
+
+  expect(document.querySelector('.quick-kanban-minimize-control')).toBeTruthy()
+  expect(document.querySelector('.quick-kanban-groupby-control')).toBeNull()
+})
+
+test('Group By change persists via set_swimlane_field and refreshes the board', async () => {
+  const refreshBoard = vi.fn()
+  window.__quickKanbanStore = {
+    state: { minimize_cards: false },
+    getters: { canEditBoard: true },
+    dispatch: refreshBoard,
+  }
+  const frappeApi = {
+    provide: vi.fn(),
+    call: mockFrappeCall({
+      'quick_kanban.api.get_swimlane_field_options': () => ([
+        { value: '__assign', label: 'Assigned To' },
+      ]),
+      'quick_kanban.api.set_swimlane_field': ({ swimlane_field }) => ({
+        custom_swimlane_field: swimlane_field,
+      }),
+    }),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [] })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.board_perms = { write: true }
+  view.board_name = 'Task Board'
+  view.board.custom_swimlane_field = ''
+  view.$filter_section = createFilterSection()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(document.querySelector('.quick-kanban-groupby-control')).toBeTruthy()
+  })
+
+  const option = document.querySelector(
+    '.quick-kanban-groupby-control .dropdown-item.option[data-value="__assign"]',
+  )
+  expect(option).toBeTruthy()
+  option.click()
+
+  expect(frappeApi.call).toHaveBeenCalledWith(
+    expect.objectContaining({
+      method: 'quick_kanban.api.set_swimlane_field',
+      args: {
+        board_name: 'Task Board',
+        swimlane_field: '__assign',
+      },
+    }),
+  )
+  expect(view.board.custom_swimlane_field).toBe('__assign')
+  expect(refreshBoard).toHaveBeenCalledWith('refreshBoard', {
+    board_name: 'Task Board',
+    forceConfig: true,
+  })
+  delete window.__quickKanbanStore
 })

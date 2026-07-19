@@ -65,6 +65,16 @@
   cursor: grabbing;
 }
 
+html.kanban-card-drag-active,
+html.kanban-card-drag-active * {
+  cursor: grabbing !important;
+}
+
+html.kanban-card-drag-active.kanban-card-drag-forbidden,
+html.kanban-card-drag-active.kanban-card-drag-forbidden * {
+  cursor: not-allowed !important;
+}
+
 #kanbanapp .kanban-shell {
   min-height: 70vh;
 }
@@ -75,10 +85,440 @@
   justify-content: flex-start;
   gap: 8px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
   height: min(80vh, calc(100dvh - var(--navbar-height) - var(--page-bottom-margin)));
   padding-bottom: 5px;
   scroll-padding-inline: 8px;
+}
+
+/* Swimlane mode: one shared x/y scroller; lane rows share column tracks. */
+#kanbanapp .kanban--swimlanes {
+  /* Tall enough for Desk avatar-small (28px) with even vertical padding. */
+  --swimlane-lane-chrome-height: 40px;
+  --swimlane-lane-overhang: 6px;
+  --swimlane-lane-radius: 12px;
+  --swimlane-lane-animation-ms: 220ms;
+  /* Gap between stuck lane title and sticky Add footer. */
+  --swimlane-sticky-footer-gap: 8px;
+  --swimlane-lane-tint: color-mix(in srgb, var(--fg, var(--text-color)) 8%, transparent);
+  --swimlane-chrome-tint: color-mix(in srgb, var(--fg, var(--text-color)) 16%, transparent);
+  --swimlane-chrome-tint-hover: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 28%,
+    transparent
+  );
+  display: block;
+  overflow: auto;
+  flex-direction: unset;
+}
+
+#kanbanapp .swimlane-board-content {
+  position: relative;
+  display: grid;
+  grid-template-columns: max-content;
+  min-width: max-content;
+  width: max-content;
+  /* Room for lane overhang bleed so scroller does not clip rounded edges. */
+  padding-inline: var(--swimlane-lane-overhang);
+  padding-bottom: 4px;
+  box-sizing: content-box;
+}
+
+/* Stack rails under foreground in one grid cell (same content-box origin). */
+#kanbanapp .swimlane-column-rails,
+#kanbanapp .swimlane-board-foreground {
+  grid-area: 1 / 1;
+}
+
+/* Full-height column colors behind lanes; visible in vertical gaps. */
+#kanbanapp .swimlane-column-rails {
+  position: relative;
+  z-index: 0;
+  display: grid;
+  align-items: stretch;
+  align-self: stretch;
+  width: max-content;
+  height: 100%;
+  gap: var(--kanban-column-gutter, 8px);
+  pointer-events: none;
+}
+
+#kanbanapp .swimlane-column-rail {
+  min-height: 100%;
+  border-radius: 0;
+}
+
+#kanbanapp .swimlane-board-foreground {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--kanban-column-gutter, 8px);
+  width: max-content;
+  min-width: max-content;
+  background: transparent;
+}
+
+#kanbanapp .swimlane-header-row {
+  position: sticky;
+  top: 0;
+  z-index: 20; /* above lane sticky (4) and lane bands (1) */
+  display: grid;
+  align-items: stretch;
+  gap: 8px;
+  box-sizing: border-box;
+  width: calc(100% + 2 * var(--swimlane-lane-overhang));
+  margin-inline: calc(-1 * var(--swimlane-lane-overhang));
+  padding-inline: var(--swimlane-lane-overhang);
+  /* Opaque full-bleed seal so lane chrome cannot paint over/around column headers. */
+  background: var(--bg-color, var(--card-bg, var(--control-bg)));
+  padding-bottom: 0;
+}
+
+#kanbanapp .swimlane-column--header.kanban-column,
+#kanbanapp .kanban-column--header-only {
+  min-height: 0 !important;
+  max-height: none !important;
+  height: auto;
+  width: 100% !important;
+  flex: 0 0 auto !important;
+}
+
+#kanbanapp .swimlane-header-row .add-column-control {
+  margin-top: 8px;
+  align-self: start;
+}
+
+/* One lane band: sticky chrome (tracks + title) + scrollable card row.
+   Bleed past column tracks; rounded like kanban columns (12px). */
+#kanbanapp .swimlane-lane {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  box-sizing: content-box;
+  min-width: max-content;
+  width: max-content;
+  height: auto;
+  max-height: none;
+  margin-block: 0;
+  margin-inline: calc(-1 * var(--swimlane-lane-overhang));
+  padding-inline: var(--swimlane-lane-overhang);
+  border: 0;
+  border-radius: var(--swimlane-lane-radius);
+  /* Tint fills overhang; content cells get the same wash via inset box-shadow. */
+  background: var(--swimlane-lane-tint);
+  overflow: visible;
+}
+
+/* Sticky first row: column tracks + title overlay; click anywhere toggles lane.
+   Opaque base + overflow:clip for rounded chrome. Use clip (not hidden) so it does
+   not create a scrollport — otherwise .swimlane-lane-toggle { left: 0 } cannot stick
+   to the board's horizontal scroller. */
+#kanbanapp .swimlane-lane-sticky {
+  position: sticky;
+  top: var(--swimlane-sticky-lanes-top, 0px);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: calc(100% + 2 * var(--swimlane-lane-overhang));
+  max-width: none;
+  min-width: calc(100% + 2 * var(--swimlane-lane-overhang));
+  min-height: var(--swimlane-lane-chrome-height);
+  margin-inline: calc(-1 * var(--swimlane-lane-overhang));
+  padding-inline: var(--swimlane-lane-overhang);
+  border-radius: var(--swimlane-lane-radius) var(--swimlane-lane-radius) 0 0;
+  /* Opaque theme base + tint wash: cards hide under chrome; rails show in lane body. */
+  background-color: var(--bg-color, var(--card-bg, var(--control-bg)));
+  background-image: linear-gradient(
+    var(--swimlane-chrome-tint),
+    var(--swimlane-chrome-tint)
+  );
+  isolation: isolate;
+  overflow: clip;
+  cursor: pointer;
+}
+
+#kanbanapp .swimlane-lane--collapsed .swimlane-lane-sticky {
+  border-radius: var(--swimlane-lane-radius);
+}
+
+#kanbanapp .swimlane-lane-sticky:focus-visible {
+  outline: 2px solid var(--primary, var(--blue-500, #2490ef));
+  outline-offset: -2px;
+}
+
+#kanbanapp .swimlane-lane-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  height: var(--swimlane-lane-chrome-height);
+  min-height: var(--swimlane-lane-chrome-height);
+  margin-bottom: calc(-1 * var(--swimlane-lane-chrome-height));
+  padding: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  /* Sticky already paints chrome-tint across overhang; avoid a narrower second band. */
+  background: transparent;
+  color: var(--text-color);
+}
+
+#kanbanapp .swimlane-chrome-row {
+  position: relative;
+  z-index: 0;
+  display: grid;
+  align-items: stretch;
+  gap: 8px;
+  min-width: max-content;
+  min-height: var(--swimlane-lane-chrome-height);
+  height: var(--swimlane-lane-chrome-height);
+  background: transparent;
+}
+
+#kanbanapp .swimlane-chrome-cell {
+  box-sizing: border-box;
+  min-height: var(--swimlane-lane-chrome-height);
+  height: var(--swimlane-lane-chrome-height);
+  border: 0;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-chrome-tint);
+}
+
+/* Narrow label: inset past leading collapsed columns; sticks to scrollport left. */
+#kanbanapp .swimlane-lane-toggle {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100% - var(--swimlane-label-inset, 0px)));
+  height: 100%;
+  margin: 0;
+  margin-left: var(--swimlane-label-inset, 0px);
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-sm, var(--text-base));
+  line-height: 1;
+  text-align: start;
+  pointer-events: none;
+}
+
+/* Hover/focus: wash the whole sticky chrome (including overhang). */
+#kanbanapp .swimlane-lane-sticky:hover,
+#kanbanapp .swimlane-lane-sticky:focus-visible {
+  background-color: var(--bg-color, var(--card-bg, var(--control-bg)));
+  background-image: linear-gradient(
+    var(--swimlane-chrome-tint-hover),
+    var(--swimlane-chrome-tint-hover)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky:hover .swimlane-chrome-cell,
+#kanbanapp .swimlane-lane-sticky:focus-visible .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-chrome-tint-hover);
+}
+
+/* Continuous ring above chrome/columns when sticky title is hovered or focused. */
+#kanbanapp .swimlane-lane:has(> .swimlane-lane-sticky:hover)::after,
+#kanbanapp .swimlane-lane:has(> .swimlane-lane-sticky:focus-visible)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3; /* below sticky chrome (4) so ring scrolls under the title row */
+  box-sizing: border-box;
+  border: 0.5px solid color-mix(in srgb, var(--fg, var(--text-color)) 18%, transparent);
+  border-radius: var(--swimlane-lane-radius);
+  pointer-events: none;
+}
+
+#kanbanapp .swimlane-lane:has(> .swimlane-lane-sticky:focus-visible) > .swimlane-lane-sticky:focus-visible {
+  outline: none;
+}
+
+#kanbanapp .swimlane-lane-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  line-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Lock Desk avatar metrics so photo vs initials don't shift the title. */
+#kanbanapp .swimlane-lane-avatar .avatar {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  vertical-align: middle;
+}
+
+#kanbanapp .swimlane-lane-avatar .avatar-frame,
+#kanbanapp .swimlane-lane-avatar .standard-image {
+  box-sizing: border-box;
+}
+
+#kanbanapp .swimlane-lane-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  font-size: 1.25em;
+  line-height: 1;
+  transition: transform var(--swimlane-lane-animation-ms, 220ms) ease;
+  transform-origin: center;
+}
+
+#kanbanapp .swimlane-lane-chevron--collapsed {
+  transform: rotate(-90deg);
+}
+
+#kanbanapp .swimlane-lane-title {
+  min-width: 0;
+  font-weight: 600;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#kanbanapp .swimlane-lane-count {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  padding-inline-start: 2px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+#kanbanapp .swimlane-row {
+  position: relative;
+  z-index: 0;
+  display: grid;
+  align-items: stretch;
+  gap: 8px;
+  min-width: max-content;
+  height: auto;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  transition: max-height var(--swimlane-lane-animation-ms, 220ms) ease;
+}
+
+#kanbanapp .swimlane-row--animating {
+  overflow: hidden;
+}
+
+#kanbanapp .swimlane-row--collapsed {
+  flex: 0 0 auto;
+  height: auto;
+}
+
+#kanbanapp .swimlane-row--expanded {
+  flex: 0 0 auto;
+  height: auto;
+  max-height: none;
+}
+
+#kanbanapp .swimlane-cell-spacer {
+  min-height: 0;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-radius: 0;
+  /* Same lane wash over column track color; children paint above inset. */
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-lane-tint);
+}
+
+#kanbanapp .swimlane-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-radius: 0;
+  overflow: visible;
+  /* Same lane wash over column track color; cards stay opaque on top. */
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-lane-tint);
+}
+
+#kanbanapp .swimlane-group--collapsed {
+  flex: 0 0 auto;
+}
+
+#kanbanapp .swimlane-group--expanded {
+  /* Grow with all cards (including paginated loads); board scrolls. */
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  align-self: start;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+#kanbanapp .swimlane-group-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 4px;
+  background: transparent;
+}
+
+#kanbanapp .kanban-column--cell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent !important;
+}
+
+#kanbanapp .kanban-column--external-scroller {
+  min-height: 0 !important;
+  height: auto;
+  max-height: none;
+}
+
+/* External board scroller: list grows with content; no nested vertical scroll. */
+#kanbanapp .kanban-card-list--external-scroller {
+  flex: 0 0 auto;
+  min-height: 0;
+  height: auto !important; /* override .kanban-card-list { height: 100% } */
+  max-height: none !important;
+  overflow: visible !important;
 }
 
 #kanbanapp .add-column-control {
@@ -175,8 +615,69 @@
   position: relative;
   transition:
     width 220ms ease,
-    flex-basis 220ms ease,
-    max-width 220ms ease;
+    flex-basis 220ms ease;
+}
+
+/* Classic board: cards scroll inside the column; never paint past column/board bounds. */
+#kanbanapp .kanban:not(.kanban--swimlanes) .kanban-column {
+  overflow: hidden;
+}
+
+#kanbanapp .kanban:not(.kanban--swimlanes) .kanban-card-list:not(.kanban-card-list--external-scroller) {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow-y: auto;
+}
+
+/*
+ * Swimlane cells must grow with all cards (including paginated loads).
+ * Must follow .kanban-column so max-height !important does not cap the track.
+ * overflow: visible so footer sticky can bind to the board scroller.
+ */
+#kanbanapp .kanban-column.kanban-column--cell {
+  max-height: none !important;
+  min-height: 0 !important;
+  height: auto;
+  overflow: visible;
+}
+
+/* Swimlane header track: fill sticky row height so collapsed neighbors cannot leave a white band. */
+#kanbanapp .swimlane-header-row .kanban-column--header-only {
+  align-self: stretch;
+  border-radius: 12px 12px 0 0;
+  margin: 0;
+  padding-bottom: 0;
+  gap: 0;
+  height: auto;
+  /* Beat earlier .kanban-column--header-only { min-height: 0 !important }. */
+  min-height: 100% !important;
+}
+
+#kanbanapp .swimlane-header-row .kanban-column--header-only .kanban-column-header {
+  margin-bottom: 0;
+}
+
+/*
+ * Collapsed swimlane header: absolute full chrome (count → title → menu, same as
+ * normal collapsed) so sticky row height stays driven by expanded neighbors.
+ */
+#kanbanapp .swimlane-header-row .kanban-column--header-only.kanban-column--collapsed {
+  overflow: visible;
+  position: relative;
+  z-index: 6;
+  border-radius: 12px 12px 0 0;
+  max-height: none !important;
+}
+
+#kanbanapp .swimlane-header-row .kanban-column--header-only.kanban-column--collapsed .kanban-column-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 7;
+  overflow: visible;
+  margin-bottom: 0;
 }
 
 #kanbanapp .kanban-column--resizing {
@@ -221,7 +722,6 @@ body.kanban-column-resize-active * {
 #kanbanapp .kanban-column--collapsed {
   flex: 0 0 52px;
   width: 52px;
-  max-width: 52px;
   overflow: visible;
 }
 
@@ -310,7 +810,8 @@ body.kanban-column-resize-active * {
 #kanbanapp .kanban-column--collapsed .kanban-card-list > *,
 #kanbanapp .kanban-column--collapsed .column-loading,
 #kanbanapp .kanban-column--collapsed .empty-column,
-#kanbanapp .kanban-column--collapsed .addcard {
+#kanbanapp .kanban-column--collapsed .addcard,
+#kanbanapp .kanban-column--collapsed .column-footer-actions {
   visibility: hidden;
 }
 
@@ -657,6 +1158,12 @@ body.kanban-column-resize-active * {
 
 #kanbanapp .ghost-card {
   filter: contrast(1);
+  pointer-events: none;
+}
+
+#kanbanapp .sortable-fallback,
+#kanbanapp .sortable-drag {
+  pointer-events: none;
 }
 
 #kanbanapp .chosen-card .drag {
@@ -1424,16 +1931,91 @@ html.kanban-tag-drag-move * {
   background: transparent;
 }
 
+#kanbanapp .column-footer-actions {
+  --kanban-footer-action-opacity: 0.55;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: 100%;
+  padding-block: 2px 4px;
+  background: transparent;
+}
+
+#kanbanapp .column-footer-actions--swimlane {
+  position: sticky;
+  top: calc(
+    var(--swimlane-sticky-lanes-top, 0px)
+    + var(--swimlane-lane-chrome-height, 40px)
+    + var(--swimlane-sticky-footer-gap, 8px)
+  );
+  z-index: 2;
+  flex: 0 0 auto;
+  background: transparent;
+  /* Pass drops through sticky chrome onto stick-room dropzone below. */
+  pointer-events: none;
+}
+
+#kanbanapp .column-footer-actions--swimlane .addcard,
+#kanbanapp .column-footer-actions--swimlane .column-scroll-top {
+  pointer-events: auto;
+}
+
+/* Equalize short cells; receives Sortable card drops via KanbanColumn handler. */
+#kanbanapp .column-stick-room-dropzone {
+  display: block;
+  flex: 0 0 auto;
+  width: 100%;
+  height: var(--column-stick-room, 0px);
+}
+
 #kanbanapp .addcard {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   padding-inline: var(--kanban-column-gutter);
-  margin-bottom: 4px;
+  margin-bottom: 0;
+}
+
+#kanbanapp .addcard button,
+#kanbanapp .column-scroll-top {
+  opacity: var(--kanban-footer-action-opacity);
+  transition: opacity 0.15s ease;
+}
+
+#kanbanapp .addcard button:hover,
+#kanbanapp .addcard button:focus-visible,
+#kanbanapp .column-scroll-top:hover,
+#kanbanapp .column-scroll-top:focus-visible {
+  opacity: 1;
 }
 
 #kanbanapp .addcard button {
   background-color: var(--card-bg);
+}
+
+#kanbanapp .column-scroll-top {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background-color: var(--card-bg, var(--control-bg));
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+#kanbanapp .column-scroll-top:focus-visible {
+  outline: 2px solid var(--primary, var(--blue-500, #2490ef));
+  outline-offset: 2px;
 }
 
 #kanbanapp .header-item {
@@ -1483,6 +2065,13 @@ html.kanban-tag-drag-move * {
   text-align: center;
 }
 
+/* Larger hit-area for append drop onto «No data» in swimlane cells. */
+#kanbanapp .kanban-card-list--external-scroller .empty-column--drop-target {
+  min-height: 48px;
+  padding-block: 16px;
+  box-sizing: border-box;
+}
+
 #kanbanapp .kanban-error {
   display: flex;
   align-items: center;
@@ -1527,6 +2116,28 @@ html.kanban-tag-drag-move * {
   outline-offset: -2px;
 }
 
+/* Stronger wash while the pointer is over a valid drop completion area. */
+#kanbanapp .column-stick-room-dropzone.kanban-drop-hover,
+#kanbanapp .empty-column--drop-target.kanban-drop-hover {
+  outline: 2px solid var(--kanban-drop-allowed-outline);
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    var(--kanban-drop-allowed-bg),
+    var(--kanban-drop-allowed-bg)
+  );
+  border-radius: 6px;
+}
+
+#kanbanapp .kanban-column.kanban-drop-hover,
+#kanbanapp .kanban-column--cell.kanban-drop-hover {
+  outline: 2px solid var(--kanban-drop-allowed-outline);
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--primary, #2491ef) 20%, transparent),
+    color-mix(in srgb, var(--primary, #2491ef) 20%, transparent)
+  );
+}
+
 #kanbanapp .kanban-column-drop-overlay {
   position: absolute;
   inset: 0;
@@ -1534,6 +2145,44 @@ html.kanban-tag-drag-move * {
   background: var(--kanban-drop-forbidden-overlay);
   pointer-events: none;
   z-index: 1;
+  overflow: hidden;
+}
+
+/* Compact ban mark near the top of tall equalized cells (not mid full height). */
+#kanbanapp .kanban-column-drop-overlay__mark {
+  position: absolute;
+  top: max(48px, min(20%, 140px));
+  left: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-column-drop-overlay__mark::before,
+#kanbanapp .kanban-column-drop-overlay__mark::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 3px;
+  margin-left: -50%;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: color-mix(
+    in srgb,
+    var(--red-600, var(--error-text, #e24c4c)) 80%,
+    transparent
+  );
+}
+
+#kanbanapp .kanban-column-drop-overlay__mark::before {
+  transform: rotate(45deg);
+}
+
+#kanbanapp .kanban-column-drop-overlay__mark::after {
+  transform: rotate(-45deg);
 }
 
 #kanbanapp .kanban-card-rollback-animating {
@@ -1606,7 +2255,6 @@ html.kanban-tag-drag-move * {
   #kanbanapp .kanban-column--collapsed {
     flex-basis: 52px;
     width: 52px;
-    max-width: 52px;
   }
 
   #kanbanapp .header-item,
@@ -1628,18 +2276,21 @@ html.kanban-tag-drag-move * {
 }
 
 /* Desk page-head is fixed height (60px) and wraps by default. The Minimize
-   control widens custom-actions enough to wrap page-actions under the title,
-   which looks like bottom-aligned toolbar. Keep one row while it is present. */
-.page-head-content:has(.quick-kanban-minimize-control) {
+   / Group By controls widen custom-actions enough to wrap page-actions under
+   the title, which looks like bottom-aligned toolbar. Keep one row while present. */
+.page-head-content:has(.quick-kanban-minimize-control),
+.page-head-content:has(.quick-kanban-groupby-control) {
   flex-wrap: nowrap;
 }
 
-.page-head-content:has(.quick-kanban-minimize-control) .page-title {
+.page-head-content:has(.quick-kanban-minimize-control) .page-title,
+.page-head-content:has(.quick-kanban-groupby-control) .page-title {
   flex: 0 1 auto;
   max-width: min(25vw, 220px);
 }
 
-.page-head-content:has(.quick-kanban-minimize-control) .page-actions {
+.page-head-content:has(.quick-kanban-minimize-control) .page-actions,
+.page-head-content:has(.quick-kanban-groupby-control) .page-actions {
   flex: 1 1 auto;
   min-width: 0;
   flex-wrap: nowrap;
@@ -1671,6 +2322,54 @@ html.kanban-tag-drag-move * {
 }
 
 .quick-kanban-minimize-label {
+  display: inline-flex;
+  align-items: center;
   color: inherit;
   line-height: 1;
+}
+
+.quick-kanban-minimize-label .icon {
+  --icon-stroke: currentColor;
+}
+
+.quick-kanban-groupby-control {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  height: var(--btn-height, 28px);
+  margin: 0 8px 0 0;
+  padding: 0;
+  color: var(--text-muted, var(--text-color));
+  font-size: var(--text-sm, 12px);
+  font-weight: var(--weight-regular, 400);
+  line-height: 1;
+  max-width: none;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.quick-kanban-groupby-control.is-saving {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.quick-kanban-groupby-control .btn-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+.quick-kanban-groupby-control .btn {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-kanban-groupby-control .dropdown-text {
+  color: var(--text-color);
+}
+
+.quick-kanban-groupby-control .dropdown-menu {
+  max-height: min(50vh, 320px);
+  overflow-y: auto;
 }

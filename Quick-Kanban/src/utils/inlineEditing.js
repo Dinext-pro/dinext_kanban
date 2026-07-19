@@ -156,6 +156,11 @@ export function isWorkflowReadOnly(doctype, docname) {
 
 /**
  * Final editability after full document load (TreeView V6 createControl pattern).
+ *
+ * Permission matrix (card mutations):
+ * - Inline field edit: this helper + frappe.client.set_value (not move_policy).
+ * - Column drag/move: store canDragCard / get_move_options + assert_move_allowed.
+ * - Tags / likes / create: separate Desk APIs (see CardTags, CardExtraInfo, createValidation).
  */
 export function canOpenInlineEditor({ doctype, docname, fieldMeta, doc }) {
   if (!doc || !fieldMeta?.fieldname) {

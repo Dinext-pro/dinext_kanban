@@ -446,6 +446,7 @@ test('offers a keyboard-operable move control', async () => {
     cardName: 'TASK-1',
     fromColumn: 0,
     toColumn: 1,
+    toIndex: 0,
   }))
   expect(trigger.attributes('aria-expanded')).toBe('false')
 })
@@ -477,6 +478,42 @@ test('flashes the card after a successful menu move', async () => {
     toColumn: 1,
   }))
   expect(flashMovedCard).toHaveBeenCalledWith('TASK-1', { outcome: 'success' })
+})
+
+test('passes laneIndex to scrollToMovedCard after a successful menu move', async () => {
+  const store = createStore()
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  const scrollToMovedCard = vi.fn(() => Promise.resolve())
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      laneIndex: 2,
+    },
+    global: {
+      plugins: [store],
+      stubs: { Teleport: true },
+      provide: { scrollToMovedCard },
+    },
+  })
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await wrapper.get('[aria-label="Move First task to Done"]').trigger('click')
+  await flushPromises()
+
+  expect(scrollToMovedCard).toHaveBeenCalledWith({
+    columnIndex: 1,
+    cardName: 'TASK-1',
+    cardIndex: 0,
+    laneIndex: 2,
+  })
 })
 
 test('flashes the card after a failed menu move', async () => {
@@ -1065,6 +1102,7 @@ test('pointerenter expands during tag-drag after the same delay', async () => {
 
 test('marks minimized card as tag drop target; expands only after hover delay', async () => {
   vi.useFakeTimers()
+  frappe.model.can_write.mockReturnValue(true)
   const store = createStore()
   store.commit('SET_MINIMIZE_CARDS', true)
   store.commit('SET_ACTIVE_TAG_DRAG', {

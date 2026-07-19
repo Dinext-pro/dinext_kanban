@@ -318,10 +318,36 @@ function mountEditor() {
     },
   })
 
+  wrapTagEditorMutations(editor)
+
   applyAddButtonChrome(mount)
   bindTagEditLifecycle(mount)
   mount.addEventListener('click', onTagsClickCapture, true)
   mount.addEventListener('focusout', onTagsFocusOutCapture, true)
+}
+
+function wrapTagEditorMutations(tagEditor) {
+  if (!tagEditor) {
+    return
+  }
+  for (const methodName of ['on_add_tag', 'on_remove_tag']) {
+    if (typeof tagEditor[methodName] !== 'function') {
+      continue
+    }
+    const original = tagEditor[methodName].bind(tagEditor)
+    tagEditor[methodName] = async (...args) => {
+      try {
+        return await original(...args)
+      } catch (error) {
+        refreshEditorFromProps()
+        globalThis.frappe?.show_alert?.({
+          message: __('Could not update tags.', null, TAGS_TRANSLATION_CONTEXT),
+          indicator: 'red',
+        })
+        throw error
+      }
+    }
+  }
 }
 
 function refreshEditorFromProps() {

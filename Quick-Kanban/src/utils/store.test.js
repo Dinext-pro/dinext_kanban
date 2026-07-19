@@ -56,6 +56,7 @@ beforeEach(() => {
   frappe.get_meta.mockReset()
   frappe.show_alert.mockReset()
   frappe.update_user_info.mockClear()
+  frappe.avatar.mockClear()
   frappe.avatar_group.mockClear()
   frappe.utils.get_link_title.mockReset()
   frappe.utils.fetch_link_title.mockReset()
@@ -1472,6 +1473,542 @@ describe('move options loading', () => {
     ).toBe(55)
     expect(store.state.moveOptionsLoaded).toBe(true)
   })
+
+  test('flat mode with stale lanes still fetches move options for column cards', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      swimlane_mode: 'off',
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{ name: 'TASK-1', subject: 'First', status: 'Open' }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'stale',
+        label: 'Stale',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.get_move_options') {
+        return {
+          message: Object.fromEntries(
+            args.names.map((name) => [
+              name,
+              buildPermissiveMoveOptions(store.state),
+            ]),
+          ),
+        }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('fetchMoveOptions')
+
+    const moveCalls = frappe.call.mock.calls.filter(
+      ([{ method }]) => method === 'quick_kanban.api.get_move_options',
+    )
+    expect(moveCalls).toHaveLength(1)
+    expect(moveCalls[0][0].args.names).toEqual(['TASK-1'])
+    expect(store.getters.canDragCard('TASK-1')).toBe(true)
+  })
+
+  test('flat refreshBoard clears stale swimlane state', async () => {
+    frappe.call.mockImplementation(({ method, args }) => {
+      if (method === 'frappe.client.get') {
+        return Promise.resolve({ message: boardDocument })
+      }
+      if (method === 'quick_kanban.api.get_column_totals') {
+        return Promise.resolve({ message: { Open: 1, Done: 0 } })
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return {
+          message: Object.fromEntries(
+            (args.names || []).map((name) => [
+              name,
+              {
+                can_drag: true,
+                destinations: {
+                  Open: {
+                    allowed: false,
+                    reason: 'same_column',
+                    mode: 'field_update',
+                    actions: [],
+                    missing_mandatory: [],
+                  },
+                  Done: {
+                    allowed: true,
+                    mode: 'field_update',
+                    actions: [],
+                    missing_mandatory: [],
+                  },
+                },
+              },
+            ]),
+          ),
+        }
+      }
+      return Promise.resolve({
+        message: {
+          keys: ['name', 'subject', 'status'],
+          values: [['TASK-1', 'First', 'Open']],
+          user_info: {},
+        },
+      })
+    })
+    const store = createStore()
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+    store.commit('SET_LANES', [
+      {
+        key: 'stale',
+        label: 'Stale',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', ['stale'])
+    store.commit('SET_CELL_PAGINATION', { 'stale::Open': { loading: false, hasMore: false } })
+
+    await store.dispatch('refreshBoard', {
+      board_name: 'Task Board',
+      args: {
+        doctype: 'Task',
+        filters: [],
+        page_length: 100,
+      },
+    })
+
+    expect(store.state.lanes).toEqual([])
+    expect(store.state.expandedLaneKeys).toEqual([])
+    expect(store.state.cellPagination).toEqual({})
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual(['TASK-1'])
+    await vi.waitFor(() => {
+      expect(store.state.moveOptionsByCard['TASK-1']).toBeTruthy()
+    })
+    expect(store.getters.canDragCard('TASK-1')).toBe(true)
+  })
+
+  test('canDragCard allows lane-only when swimlanes on and no column destinations', () => {
+    const store = createStore()
+    frappe.model.can_write.mockReturnValue(true)
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 0 },
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'p1',
+        label: 'P1',
+        columns: [
+          {
+            name: 'open',
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1', subject: 'One', status: 'Open' }],
+          },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_MOVE_OPTIONS_BATCH', {
+      options: {
+        'TASK-1': {
+          can_drag: false,
+          destinations: {
+            Open: {
+              allowed: false,
+              reason: 'same_column',
+              mode: 'field_update',
+              actions: [],
+              missing_mandatory: [],
+            },
+            Done: {
+              allowed: false,
+              reason: 'no_permission',
+              mode: 'field_update',
+              actions: [],
+              missing_mandatory: [],
+            },
+          },
+        },
+      },
+      generation: store.state.moveOptionsGeneration,
+    })
+
+    expect(store.getters.getAllowedDestinations('TASK-1')).toHaveLength(0)
+    expect(store.getters.canDragCard('TASK-1')).toBe(true)
+  })
+
+  test('isCellDropAllowed permits same-column lane change when writable', () => {
+    const store = createStore()
+    frappe.model.can_write.mockReturnValue(true)
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 0 },
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_ACTIVE_DRAG', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      fromLaneKey: 'a',
+    })
+    store.state.moveOptionsLoaded = true
+
+    expect(store.getters.isCellDropAllowed({
+      cardName: 'TASK-1',
+      columnIndex: 0,
+      laneColumnIndex: 0,
+      laneKey: 'b',
+    })).toBe(true)
+  })
+
+  test('moveCard under swimlanes persists via move_card_to_cell', async () => {
+    const store = createStore()
+    frappe.model.can_write.mockReturnValue(true)
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 0 },
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'p1',
+        label: 'P1',
+        columns: [
+          {
+            name: 'open',
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1', subject: 'One', status: 'Open', modified: '2026-01-01' }],
+          },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    seedMoveOptions(store, ['TASK-1'])
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.move_card_to_cell') {
+        return { message: { name: 'TASK-1', status: 'Done', modified: '2026-01-02' } }
+      }
+      return { message: {} }
+    })
+
+    const moved = await store.dispatch('moveCard', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      toColumn: 1,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+
+    expect(moved).toBe(true)
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'quick_kanban.api.move_card_to_cell',
+    }))
+    expect(store.state.lanes[0].columns[1].cards.map(({ name }) => name)).toEqual(['TASK-1'])
+  })
+
+  test('swimlane column move clears stale same_column so reverse move works', async () => {
+    const store = createStore()
+    frappe.model.can_write.mockReturnValue(true)
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 0 },
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'p1',
+        label: 'P1',
+        columns: [
+          {
+            name: 'open',
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1', subject: 'One', status: 'Open', modified: '2026-01-01' }],
+          },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+
+    function optionsForStatus(status) {
+      return {
+        can_drag: true,
+        destinations: {
+          Open: {
+            allowed: status !== 'Open',
+            reason: status === 'Open' ? 'same_column' : null,
+            mode: 'field_update',
+            actions: [],
+            missing_mandatory: [],
+          },
+          Done: {
+            allowed: status !== 'Done',
+            reason: status === 'Done' ? 'same_column' : null,
+            mode: 'field_update',
+            actions: [],
+            missing_mandatory: [],
+          },
+        },
+      }
+    }
+
+    store.commit('SET_MOVE_OPTIONS_BATCH', {
+      options: { 'TASK-1': optionsForStatus('Open') },
+      generation: store.state.moveOptionsGeneration,
+    })
+
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.move_card_to_cell') {
+        return {
+          message: {
+            name: 'TASK-1',
+            status: args.to_column,
+            modified: '2026-01-02',
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        const card = store.state.lanes[0].columns
+          .flatMap((column) => column.cards)
+          .find((row) => row.name === 'TASK-1')
+        return {
+          message: Object.fromEntries(
+            (args.names || []).map((name) => [
+              name,
+              optionsForStatus(card?.status || 'Open'),
+            ]),
+          ),
+        }
+      }
+      return { message: {} }
+    })
+
+    const forward = await store.dispatch('moveCard', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      toColumn: 1,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+    expect(forward).toBe(true)
+    expect(store.state.lanes[0].columns[1].cards[0].status).toBe('Done')
+    expect(store.state.moveOptionsByCard['TASK-1']).toBeUndefined()
+
+    await vi.waitFor(() => {
+      expect(store.state.moveOptionsByCard['TASK-1']).toBeTruthy()
+    })
+    expect(store.state.moveOptionsByCard['TASK-1'].destinations.Open.allowed).toBe(true)
+    expect(store.state.moveOptionsByCard['TASK-1'].destinations.Done.reason).toBe('same_column')
+
+    frappe.show_alert.mockClear()
+    const back = await store.dispatch('moveCard', {
+      cardName: 'TASK-1',
+      fromColumn: 1,
+      toColumn: 0,
+      fromIndex: 0,
+      toIndex: 0,
+    })
+    expect(back).toBe(true)
+    expect(store.state.lanes[0].columns[0].cards.map(({ name }) => name)).toEqual(['TASK-1'])
+    expect(store.state.lanes[0].columns[0].cards[0].status).toBe('Open')
+    expect(frappe.show_alert).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringMatching(/already in this column/i),
+      }),
+    )
+  })
+})
+
+describe('read_only field blocks drag', () => {
+  test('status field read_only disables flat canDrag and isDropAllowed', () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      status_field_meta: { fieldname: 'status', read_only: 1 },
+      swimlane_mode: 'off',
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{ name: 'TASK-1', subject: 'One', status: 'Open' }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    seedMoveOptions(store, ['TASK-1'])
+
+    expect(store.getters.getAllowedDestinations('TASK-1')).toHaveLength(0)
+    expect(store.getters.canDragCard('TASK-1')).toBe(false)
+    expect(store.getters.isDropAllowed({
+      cardName: 'TASK-1',
+      columnIndex: 1,
+    })).toBe(false)
+  })
+
+  test('swimlane field read_only blocks lane-only drop', () => {
+    const store = createStore()
+    frappe.model.can_write.mockReturnValue(true)
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      status_field_meta: { fieldname: 'status', read_only: 0 },
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 1 },
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{ name: 'TASK-1', subject: 'One', status: 'Open' }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    seedMoveOptions(store, ['TASK-1'])
+    store.commit('SET_ACTIVE_DRAG', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      fromLaneKey: 'a',
+    })
+
+    expect(store.getters.isCellDropAllowed({
+      cardName: 'TASK-1',
+      columnIndex: 0,
+      laneColumnIndex: 0,
+      laneKey: 'b',
+    })).toBe(false)
+    expect(store.getters.isDropAllowed({
+      cardName: 'TASK-1',
+      columnIndex: 1,
+    })).toBe(true)
+  })
+
+  test('status RO with writable swimlane allows lane-only drag but not column drop', () => {
+    const store = createStore()
+    frappe.model.can_write.mockReturnValue(true)
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status'],
+      status_field_meta: { fieldname: 'status', read_only: 1 },
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 0 },
+      highlight_table: [],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{ name: 'TASK-1', subject: 'One', status: 'Open' }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'p1',
+        label: 'P1',
+        columns: [
+          {
+            name: 'open',
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1', subject: 'One', status: 'Open' }],
+          },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    seedMoveOptions(store, ['TASK-1'])
+    store.commit('SET_ACTIVE_DRAG', {
+      cardName: 'TASK-1',
+      fromColumn: 0,
+      fromLaneKey: 'p1',
+    })
+
+    expect(store.getters.canDragCard('TASK-1')).toBe(true)
+    expect(store.getters.isDropAllowed({
+      cardName: 'TASK-1',
+      columnIndex: 1,
+    })).toBe(false)
+    expect(store.getters.isCellDropAllowed({
+      cardName: 'TASK-1',
+      columnIndex: 0,
+      laneColumnIndex: 0,
+      laneKey: 'p2',
+    })).toBe(true)
+    expect(store.getters.isCellDropAllowed({
+      cardName: 'TASK-1',
+      columnIndex: 1,
+      laneColumnIndex: 1,
+      laneKey: 'p1',
+    })).toBe(false)
+  })
 })
 
 describe('card creation', () => {
@@ -1691,6 +2228,45 @@ describe('column reorder', () => {
         order: JSON.stringify(['Done', 'Open', 'Review']),
       },
     }))
+  })
+
+  test('reorders lane columns together with board columns', async () => {
+    frappe.call.mockResolvedValue({
+      message: {
+        columns: [
+          { name: 'done', column_name: 'Done' },
+          { name: 'open', column_name: 'Open' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+    })
+    const store = boardStore()
+    store.commit('SET_LANES', [
+      {
+        key: 'alpha',
+        label: 'Alpha',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'L1' }] },
+          { name: 'done', column_name: 'Done', cards: [{ name: 'L2' }] },
+          { name: 'review', column_name: 'Review', cards: [] },
+        ],
+      },
+    ])
+
+    await store.dispatch('updateColumnOrder', ['Done', 'Open', 'Review'])
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+    expect(store.state.lanes[0].columns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+    expect(store.state.lanes[0].columns[0].cards[0].name).toBe('L2')
+    expect(store.state.lanes[0].columns[1].cards[0].name).toBe('L1')
   })
 
   test('rolls back when column reorder fails', async () => {
@@ -2452,6 +3028,10 @@ describe('hide column', () => {
 })
 
 describe('persistTagTransfer', () => {
+  beforeEach(() => {
+    frappe.model.can_write.mockReturnValue(true)
+  })
+
   function seedTaggedCards(store) {
     store.commit('SET_KANBAN_CONFIG', {
       board_name: 'Task Board',
@@ -2617,5 +3197,382 @@ describe('density force-collapse', () => {
     store.commit('BEGIN_BOARD_CONTEXT')
 
     expect(store.state.densityForceCollapsedCards).toEqual({})
+  })
+})
+
+describe('swimlane expand state', () => {
+  test('expandedLaneKeys supports many persisted lanes plus drag overlay', () => {
+    const store = createStore()
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alice', 'carol'])
+    expect(store.getters.expandedLaneKeys).toEqual(['alice', 'carol'])
+    store.commit('SET_DRAG_EXPANDED_LANE', 'bob')
+    expect(store.getters.expandedLaneKeys).toEqual(['alice', 'carol', 'bob'])
+    store.commit('SET_DRAG_EXPANDED_LANE', 'alice')
+    expect(store.getters.expandedLaneKeys).toEqual(['alice', 'carol'])
+    expect(store.getters.isLaneExpanded('bob')).toBe(false)
+    expect(store.getters.isLaneExpanded('alice')).toBe(true)
+  })
+
+  test('toggleLaneExpanded opens without fetching; collapse keeps cards and hydration', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_LANES', [
+      {
+        key: 'alice',
+        label: 'Alice',
+        columns: [{ name: 'open', column_name: 'Open', cards: [{ name: 'T1' }] }],
+      },
+      {
+        key: 'bob',
+        label: 'Bob',
+        columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+      },
+    ])
+    store.commit('SET_CELL_PAGINATION', {
+      'alice::Open': { offset: 1, hasMore: false, loading: false },
+      'bob::Open': { offset: 0, hasMore: true, loading: false },
+    })
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alice'])
+    store.commit('SET_LANE_HYDRATION', { laneKey: 'alice', status: 'ready' })
+
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'bob' })
+    expect(store.state.expandedLaneKeys).toEqual(['alice', 'bob'])
+    expect(store.state.lanes[1].columns[0].cards).toEqual([])
+    expect(frappe.call).not.toHaveBeenCalled()
+
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'alice' })
+    expect(store.state.expandedLaneKeys).toEqual(['bob'])
+    expect(store.state.lanes[0].columns[0].cards).toEqual([{ name: 'T1' }])
+    expect(store.state.laneHydration.alice).toBe('ready')
+    expect(store.state.cellPagination['alice::Open']).toEqual({
+      offset: 1,
+      hasMore: false,
+      loading: false,
+    })
+
+    frappe.call.mockClear()
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'alice' })
+    expect(store.state.expandedLaneKeys).toEqual(['bob', 'alice'])
+    const hydrated = await store.dispatch('ensureLaneHydrated', { laneKey: 'alice' })
+    expect(hydrated).toBe(true)
+    expect(frappe.call).not.toHaveBeenCalled()
+    expect(store.state.lanes[0].columns[0].cards).toEqual([{ name: 'T1' }])
+  })
+
+  test('ensureLaneHydrated loads lane-wide then tops up cells; second call is no-op', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status', 'subject'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'proj-a',
+        label: 'Proj A',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_CELL_PAGINATION', {
+      'proj-a::Open': { offset: 0, hasMore: true, loading: false },
+      'proj-a::Done': { offset: 0, hasMore: true, loading: false },
+    })
+    store.commit('SET_CELL_TOTALS', {
+      'proj-a': { Open: 20, Done: 2 },
+    })
+
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.get_swimlane_lane_page') {
+        return {
+          message: {
+            keys: ['name', 'status', 'subject'],
+            values: [
+              ['T1', 'Open', 'One'],
+              ['T2', 'Done', 'Two'],
+            ],
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_swimlane_column_page') {
+        expect(args.column).toBe('Open')
+        const start = Number(args.start) || 0
+        const pageLength = Number(args.page_length) || 0
+        const values = []
+        for (let index = 0; index < pageLength; index += 1) {
+          values.push([`TX-${start + index}`, 'Open', `Extra ${start + index}`])
+        }
+        return {
+          message: {
+            keys: ['name', 'status', 'subject'],
+            values,
+          },
+        }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('ensureLaneHydrated', { laneKey: 'proj-a' })
+
+    const laneCalls = frappe.call.mock.calls.filter(
+      ([payload]) => payload.method === 'quick_kanban.api.get_swimlane_lane_page',
+    )
+    expect(laneCalls).toHaveLength(1)
+    expect(laneCalls[0][0].args.page_length).toBe(100)
+
+    const openCards = store.state.lanes[0].columns[0].cards
+    const doneCards = store.state.lanes[0].columns[1].cards
+    expect(openCards.length).toBe(15)
+    expect(doneCards.map((card) => card.name)).toEqual(['T2'])
+    expect(store.state.laneHydration['proj-a']).toBe('ready')
+
+    frappe.call.mockClear()
+    await store.dispatch('ensureLaneHydrated', { laneKey: 'proj-a' })
+    expect(frappe.call).not.toHaveBeenCalled()
+  })
+
+  test('registers user info from swimlane lane page before grouping cards', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status', '_assign'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+      pageSize: 20,
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'proj-a',
+        label: 'Proj A',
+        columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+      },
+    ])
+    store.commit('SET_CELL_TOTALS', { 'proj-a': { Open: 1 } })
+
+    const userInfo = {
+      'one@example.com': {
+        fullname: 'One User',
+        image: '/files/one.png',
+      },
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_swimlane_lane_page') {
+        return {
+          message: {
+            keys: ['name', 'status', '_assign'],
+            values: [['TASK-1', 'Open', '["one@example.com"]']],
+            user_info: userInfo,
+          },
+        }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('fetchLaneKanban', { laneKey: 'proj-a' })
+
+    expect(frappe.update_user_info).toHaveBeenCalledWith(userInfo)
+    expect(store.state.lanes[0].columns[0].cards[0]._assign).toEqual({
+      'one@example.com': 'One User',
+    })
+  })
+
+  test('refreshSwimlaneBoard does not fetch card pages', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', ['proj-a'])
+
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_swimlane_lanes') {
+        return {
+          message: [{ key: 'proj-a', label: 'Proj A' }],
+        }
+      }
+      if (method === 'quick_kanban.api.get_cell_totals') {
+        return { message: { 'proj-a': { Open: 3 } } }
+      }
+      throw new Error(`Unexpected method ${method}`)
+    })
+
+    await store.dispatch('refreshSwimlaneBoard', { args: { filters: [] } })
+
+    expect(store.state.lanes).toHaveLength(1)
+    expect(store.state.lanes[0].columns[0].cards).toEqual([])
+    expect(store.state.laneHydration).toEqual({})
+    const methods = frappe.call.mock.calls.map(([payload]) => payload.method)
+    expect(methods).toEqual([
+      'quick_kanban.api.get_swimlane_lanes',
+      'quick_kanban.api.get_cell_totals',
+    ])
+  })
+
+  test('refreshSwimlaneBoard prefetches user_info for assign lanes', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status'],
+      swimlane_field: '__assign',
+      swimlane_mode: 'assign',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+
+    const userInfo = {
+      'alice@example.com': {
+        fullname: 'Alice',
+        image: '/files/alice.jpg',
+      },
+    }
+
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.get_swimlane_lanes') {
+        return {
+          message: [
+            { key: 'alice@example.com', label: 'Alice' },
+            { key: '', label: 'Unassigned' },
+          ],
+        }
+      }
+      if (method === 'frappe.desk.form.load.get_user_info_for_viewers') {
+        expect(JSON.parse(args.users)).toEqual(['alice@example.com'])
+        return { message: userInfo }
+      }
+      if (method === 'quick_kanban.api.get_cell_totals') {
+        return { message: {} }
+      }
+      throw new Error(`Unexpected method ${method}`)
+    })
+
+    await store.dispatch('refreshSwimlaneBoard', { args: { filters: [] } })
+
+    expect(frappe.update_user_info).toHaveBeenCalledWith(userInfo)
+    const methods = frappe.call.mock.calls.map(([payload]) => payload.method)
+    expect(methods).toEqual([
+      'quick_kanban.api.get_swimlane_lanes',
+      'frappe.desk.form.load.get_user_info_for_viewers',
+      'quick_kanban.api.get_cell_totals',
+    ])
+  })
+
+  test('forEachCardInstance updates assignments across lanes', () => {
+    const store = createStore()
+    store.commit('SET_LANES', [
+      {
+        key: 'alice',
+        label: 'Alice',
+        columns: [
+          {
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1', _assign: { alice: 'Alice' } }],
+          },
+        ],
+      },
+      {
+        key: 'bob',
+        label: 'Bob',
+        columns: [
+          {
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1', _assign: { alice: 'Alice', bob: 'Bob' } }],
+          },
+        ],
+      },
+    ])
+    store.commit('UPDATE_CARD_ASSIGNMENTS', {
+      cardName: 'TASK-1',
+      assignments: { bob: 'Bob' },
+    })
+    expect(store.state.lanes[0].columns[0].cards[0]._assign).toEqual({ bob: 'Bob' })
+    expect(store.state.lanes[1].columns[0].cards[0]._assign).toEqual({ bob: 'Bob' })
+  })
+
+  test('loadCellPage fills cards and bumps dragSyncGeneration for VirtualList remount', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status', 'subject'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'PL-RACE-TEST-2026',
+        label: 'PL-RACE-TEST-2026',
+        columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+      },
+    ])
+    store.commit('SET_CELL_PAGINATION', {
+      'PL-RACE-TEST-2026::Open': { offset: 0, hasMore: true, loading: false },
+    })
+    store.commit('SET_CELL_TOTALS', {
+      'PL-RACE-TEST-2026': { Open: 2 },
+    })
+    const before = store.state.dragSyncGeneration
+    frappe.call.mockResolvedValueOnce({
+      message: {
+        keys: ['name', 'status', 'subject'],
+        values: [
+          ['TASK-1', 'Open', 'One'],
+          ['TASK-2', 'Open', 'Two'],
+        ],
+      },
+    })
+
+    await store.dispatch('loadCellPage', {
+      laneIndex: 0,
+      columnIndex: 0,
+      reset: true,
+      pageSize: 30,
+    })
+
+    expect(store.state.lanes[0].columns[0].cards.map((card) => card.name)).toEqual([
+      'TASK-1',
+      'TASK-2',
+    ])
+    expect(store.state.dragSyncGeneration).toBe(before + 1)
   })
 })

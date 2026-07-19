@@ -4,8 +4,10 @@ import App from './App.vue'
 import store from './utils/store'
 import {
   readCollapsedColumnsPreference,
+  readExpandedLanesPreference,
   readMinimizeCardsPreference,
   writeCollapsedColumnsPreference,
+  writeExpandedLanesPreference,
   writeMinimizeCardsPreference,
 } from './utils/kanban'
 
@@ -72,6 +74,12 @@ function applyCollapsedColumnsPreference(boardName) {
   return value
 }
 
+function applyExpandedLanePreference(boardName) {
+  const value = readExpandedLanesPreference(boardName)
+  store.commit('SET_EXPANDED_LANE_KEYS', value)
+  return value
+}
+
 window.setQuickKanbanColumnCollapsed = (columnKey, collapsed, { persist = true } = {}) => {
   if (!columnKey) {
     return store.state.collapsedColumns
@@ -97,6 +105,7 @@ store.subscribe((mutation, state) => {
     }
     applyMinimizePreference(state.config.board_name)
     applyCollapsedColumnsPreference(state.config.board_name)
+    applyExpandedLanePreference(state.config.board_name)
     return
   }
   if (
@@ -108,6 +117,16 @@ store.subscribe((mutation, state) => {
       state.collapsedColumns,
     )
   }
+  if (
+    mutation.type === 'SET_EXPANDED_LANE_KEYS'
+    || mutation.type === 'TOGGLE_LANE_EXPANDED'
+    || mutation.type === 'ADD_EXPANDED_LANE'
+  ) {
+    writeExpandedLanesPreference(
+      state.config.board_name,
+      state.expandedLaneKeys,
+    )
+  }
 })
 
 if (store.state.config?.ref_doctype) {
@@ -115,6 +134,7 @@ if (store.state.config?.ref_doctype) {
 }
 applyMinimizePreference(store.state.config?.board_name)
 applyCollapsedColumnsPreference(store.state.config?.board_name)
+applyExpandedLanePreference(store.state.config?.board_name)
 
 let app
 let mountedTarget

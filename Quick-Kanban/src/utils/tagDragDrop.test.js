@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { beforeEach, expect, test } from 'vitest'
 import {
   TAG_DRAG_MODE_COPY,
   TAG_DRAG_MODE_MOVE,
@@ -17,6 +17,10 @@ import {
   parseTagList,
   removeTagFromList,
 } from './tagDragDrop'
+
+beforeEach(() => {
+  frappe.model.can_write.mockReturnValue(true)
+})
 
 test('modeFromPointerButton maps LMB to copy and RMB to move', () => {
   expect(modeFromPointerButton(0)).toBe(TAG_DRAG_MODE_COPY)
@@ -74,6 +78,23 @@ test('canDropTag does not depend on density metadata', () => {
     targetName: 'TASK-B',
     targetUserTags: '',
   })).toBe(true)
+})
+
+test('canDropTag rejects when target or source cannot write', () => {
+  expect(canDropTag({
+    tag: 'alpha',
+    sourceName: 'TASK-1',
+    targetName: 'TASK-2',
+    targetUserTags: '',
+    canWriteTarget: false,
+  })).toBe(false)
+  expect(canDropTag({
+    tag: 'alpha',
+    sourceName: 'TASK-1',
+    targetName: 'TASK-2',
+    targetUserTags: '',
+    canWriteSource: false,
+  })).toBe(false)
 })
 
 test('hasCrossedDragThreshold uses configured pixel distance', () => {

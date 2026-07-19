@@ -215,8 +215,12 @@ async function onToggleLike() {
   const add = isLiked.value ? 'No' : 'Yes'
   try {
     if (typeof frappe.ui?.toggle_like === 'function' && likeButtonRef.value && globalThis.$) {
-      await new Promise((resolve) => {
-        frappe.ui.toggle_like($(likeButtonRef.value), props.doctype, props.card.name, resolve)
+      await new Promise((resolve, reject) => {
+        try {
+          frappe.ui.toggle_like($(likeButtonRef.value), props.doctype, props.card.name, resolve)
+        } catch (error) {
+          reject(error)
+        }
       })
     } else {
       await frappe.call({
@@ -233,6 +237,13 @@ async function onToggleLike() {
       fieldname: '_liked_by',
       value: toggleLikedByValue(props.card._liked_by, sessionUser.value, add === 'Yes'),
     })
+  } catch (_error) {
+    const message = globalThis.__
+      ? globalThis.__('Could not update like.')
+      : 'Could not update like.'
+    if (typeof globalThis.frappe?.show_alert === 'function') {
+      globalThis.frappe.show_alert({ message, indicator: 'red' })
+    }
   } finally {
     likeBusy.value = false
   }

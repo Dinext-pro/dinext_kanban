@@ -121,6 +121,20 @@ test('toggles like via desk API and updates card', async () => {
   expect(store.state.columns[0].cards[0]._liked_by).toContain('Administrator')
 })
 
+test('shows alert and keeps like state when toggle_like fails', async () => {
+  frappe.call.mockRejectedValue(new Error('like failed'))
+  frappe.show_alert.mockClear()
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  const before = store.state.columns[0].cards[0]._liked_by
+  await wrapper.get('.like-action').trigger('click')
+  await flushPromises()
+  expect(frappe.show_alert).toHaveBeenCalledWith(expect.objectContaining({
+    indicator: 'red',
+  }))
+  expect(store.state.columns[0].cards[0]._liked_by).toBe(before)
+})
+
 test('opens the document form from comments icon and scrolls to comments', async () => {
   const store = createStore()
   const wrapper = mountExtra(store)

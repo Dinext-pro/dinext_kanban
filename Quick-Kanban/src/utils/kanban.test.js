@@ -18,6 +18,7 @@ import {
   isActiveColumn,
   isLinkLikeField,
   isNearScrollEnd,
+  ensureCardFetchFields,
   normalizeBoardConfig,
   normalizeUserTagsForEditor,
   parseCardAccentColor,
@@ -36,6 +37,10 @@ import {
   collapsedColumnsStorageKey,
   readCollapsedColumnsPreference,
   writeCollapsedColumnsPreference,
+  expandedLanesStorageKey,
+  expandedLaneStorageKey,
+  readExpandedLanesPreference,
+  writeExpandedLanesPreference,
 } from './kanban'
 
 const translationMap = {
@@ -168,6 +173,42 @@ describe('getAddableColumnCandidates', () => {
   })
 })
 
+describe('ensureCardFetchFields', () => {
+  test('prepends name/title/status and list std meta fields when board fields omit them', () => {
+    expect(ensureCardFetchFields(
+      ['exp_end_date', 'priority', 'project', 'type'],
+      { titleField: 'subject', statusField: 'status' },
+    )).toEqual([
+      'name',
+      'subject',
+      'exp_end_date',
+      'priority',
+      'project',
+      'type',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
+  })
+
+  test('does not duplicate identity fields already present', () => {
+    expect(ensureCardFetchFields(
+      ['name', 'subject', 'status', '_assign', '_user_tags', '_comments', '_liked_by'],
+      { titleField: 'subject', statusField: 'status' },
+    )).toEqual([
+      'name',
+      'subject',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
+  })
+})
+
 describe('normalizeBoardConfig', () => {
   test('normalizes missing optional values and includes the highlighted field', () => {
     const config = normalizeBoardConfig({
@@ -192,7 +233,16 @@ describe('normalizeBoardConfig', () => {
       ref_doctype: 'Task',
       field_name: 'status',
       title_field: 'subject',
-      fields: ['name', 'subject', 'priority'],
+      fields: [
+        'name',
+        'subject',
+        'priority',
+        'status',
+        '_assign',
+        '_user_tags',
+        '_comments',
+        '_liked_by',
+      ],
       highlighted_field: 'priority',
       highlight_table: [],
       show_labels: true,
@@ -202,6 +252,41 @@ describe('normalizeBoardConfig', () => {
       status_field_meta: { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
       highlighted_field_meta: { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
     })
+  })
+
+  test('always injects name and title even when board fields omit them', () => {
+    const config = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['exp_end_date', 'priority', 'project', 'type'],
+    }, {
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+        { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+      ],
+    })
+
+    expect(config.fields).toEqual([
+      'name',
+      'subject',
+      'exp_end_date',
+      'priority',
+      'project',
+      'type',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
+    expect(config.display_fields.map((field) => field.fieldname)).toEqual([
+      'exp_end_date',
+      'priority',
+      'project',
+      'type',
+    ])
   })
 
   test('maps custom_show_tags to show_tags', () => {
@@ -254,7 +339,14 @@ describe('normalizeBoardConfig', () => {
       fields: '{invalid',
     }, {})
 
-    expect(config.fields).toEqual(['name'])
+    expect(config.fields).toEqual([
+      'name',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
   })
 
   test('accepts fields already parsed by the native Frappe Kanban view', () => {
@@ -265,7 +357,15 @@ describe('normalizeBoardConfig', () => {
       fields: ['name', 'subject'],
     }, { title_field: 'subject' })
 
-    expect(config.fields).toEqual(['name', 'subject'])
+    expect(config.fields).toEqual([
+      'name',
+      'subject',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
   })
 
   test('auto-includes color field and excludes it from display_fields', () => {
@@ -283,7 +383,16 @@ describe('normalizeBoardConfig', () => {
       ],
     })
 
-    expect(config.fields).toEqual(['name', 'subject', 'color'])
+    expect(config.fields).toEqual([
+      'name',
+      'subject',
+      'color',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
     expect(config.color_field).toBe('color')
     expect(config.color_field_meta).toMatchObject({
       fieldname: 'color',
@@ -740,6 +849,37 @@ describe('collapsed columns preference', () => {
     writeCollapsedColumnsPreference('Task Board', {}, storage)
     expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({})
     expect(storage.data['quick_kanban:collapsed_columns:Task Board']).toBeUndefined()
+  })
+
+  test('persists expanded lane keys as JSON and migrates legacy single key', () => {
+    const storage = {
+      data: {},
+      getItem(key) {
+        return Object.prototype.hasOwnProperty.call(this.data, key) ? this.data[key] : null
+      },
+      setItem(key, value) {
+        this.data[key] = String(value)
+      },
+      removeItem(key) {
+        delete this.data[key]
+      },
+    }
+
+    expect(expandedLanesStorageKey('Task Board')).toBe('quick_kanban:expanded_lanes:Task Board')
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual([])
+
+    storage.data[expandedLaneStorageKey('Task Board')] = 'alice'
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual(['alice'])
+
+    writeExpandedLanesPreference('Task Board', ['alice', 'bob', 'alice'], storage)
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual(['alice', 'bob'])
+    expect(storage.data[expandedLanesStorageKey('Task Board')]).toBe(
+      JSON.stringify(['alice', 'bob']),
+    )
+    expect(storage.data[expandedLaneStorageKey('Task Board')]).toBeUndefined()
+
+    writeExpandedLanesPreference('Task Board', [], storage)
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual([])
   })
 })
 
