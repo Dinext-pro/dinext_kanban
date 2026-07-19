@@ -231,12 +231,61 @@ export function resolveCreateFormMode(column, config, createOptions = null) {
   }
 }
 
+function normalizeFieldtypeName(fieldtype) {
+  return String(fieldtype || '').replace(/ /g, '')
+}
+
+/**
+ * Apply create defaults onto a new doc. Table / Table MultiSelect values are
+ * applied as child rows via frappe.model.add_child when available.
+ */
 export function applyCreateDefaults(doc, defaults = {}) {
   if (!doc || !defaults) {
     return doc
   }
-  Object.assign(doc, defaults)
+
+  const meta = typeof frappe?.get_meta === 'function'
+    ? frappe.get_meta(doc.doctype)
+    : null
+  const fieldsByName = Object.fromEntries(
+    (meta?.fields || []).map((field) => [field.fieldname, field]),
+  )
+
+  for (const [fieldname, value] of Object.entries(defaults)) {
+    const df = fieldsByName[fieldname]
+    const fieldtype = normalizeFieldtypeName(df?.fieldtype)
+    if (
+      (fieldtype === 'Table' || fieldtype === 'TableMultiSelect')
+      && Array.isArray(value)
+    ) {
+      if (!Array.isArray(doc[fieldname])) {
+        doc[fieldname] = []
+      }
+      for (const row of value) {
+        if (typeof frappe?.model?.add_child === 'function' && df?.options) {
+          const child = frappe.model.add_child(doc, df.options, fieldname)
+          Object.assign(child, row)
+        } else {
+          doc[fieldname].push({ ...row })
+        }
+      }
+      continue
+    }
+    doc[fieldname] = value
+  }
   return doc
+}
+
+/** Flat route_options cannot carry child-table rows. */
+export function routeOptionsFromDefaults(defaults = {}) {
+  const options = {}
+  for (const [fieldname, value] of Object.entries(defaults || {})) {
+    if (Array.isArray(value)) {
+      continue
+    }
+    options[fieldname] = value
+  }
+  return options
 }
 
 function registerFullFormAfterSave(onCreated) {
@@ -282,7 +331,7 @@ export function openCreateForm({
 
   if (mode === 'full_form') {
     return frappe.model.with_doctype(doctype, () => {
-      frappe.route_options = { ...defaults }
+      frappe.route_options = routeOptionsFromDefaults(defaults)
       const doc = frappe.model.get_new_doc(doctype)
       applyCreateDefaults(doc, defaults)
       registerFullFormAfterSave(handleCreated)

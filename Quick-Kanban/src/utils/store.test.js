@@ -2104,6 +2104,12 @@ describe('card creation', () => {
     expect(store.state.columns[0].cards[0].name).toBe('TASK-NEW')
     expect(store.state.columns[0].cards[1].name).toBe('TASK-1')
     expect(store.state.recentCreatedCards['TASK-NEW']).toBe('Open')
+    expect(store.state.revealCreatedCard).toEqual({
+      cardName: 'TASK-NEW',
+      columnIndex: 0,
+      cardIndex: 0,
+      laneIndex: null,
+    })
     expect(store.state.pendingCreate).toBeNull()
   })
 
@@ -2178,6 +2184,177 @@ describe('card creation', () => {
     expect(created).toBe(false)
     expect(store.state.columns[1].cards).toHaveLength(0)
     expect(store.state.pendingCreate).toBeNull()
+  })
+
+  test('startCreateCard merges field swimlane defaults and stores pending lane', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 0 },
+    })
+    frappe.model.can_write = vi.fn(() => true)
+    frappe.model.get_new_doc.mockReturnValue({ doctype: 'Task', name: 'new-Task-1' })
+    let capturedDefaults = null
+    frappe.ui.form.make_quick_entry.mockImplementation((_dt, _cb, _init, doc) => {
+      capturedDefaults = { ...doc }
+      return Promise.resolve({})
+    })
+
+    await store.dispatch('startCreateCard', {
+      columnIndex: 0,
+      column: store.state.columns[0],
+      laneKey: 'PROJ-1',
+    })
+
+    expect(store.state.pendingCreate).toMatchObject({
+      column_name: 'Open',
+      laneKey: 'PROJ-1',
+      assign_to: null,
+    })
+    expect(capturedDefaults).toMatchObject({
+      status: 'Open',
+      project: 'PROJ-1',
+    })
+  })
+
+  test('startCreateCard stores assign_to for assign swimlanes', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      swimlane_mode: 'assign',
+      swimlane_field: '__assign',
+    })
+    frappe.model.can_write = vi.fn(() => true)
+    frappe.model.get_new_doc.mockReturnValue({ doctype: 'Task', name: 'new-Task-1' })
+    frappe.ui.form.make_quick_entry.mockResolvedValue({})
+
+    await store.dispatch('startCreateCard', {
+      columnIndex: 0,
+      column: store.state.columns[0],
+      laneKey: 'alice@example.com',
+    })
+
+    expect(store.state.pendingCreate).toMatchObject({
+      laneKey: 'alice@example.com',
+      assign_to: 'alice@example.com',
+    })
+  })
+
+  test('prepends a created card into the swimlane cell', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_field_meta: { fieldname: 'project', read_only: 0 },
+      fields: ['name', 'subject', 'status', 'project'],
+    })
+    store.commit('SET_LANES', [
+      {
+        key: 'PROJ-1',
+        label: 'Project 1',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_CELL_TOTALS', { 'PROJ-1': { Open: 0, Done: 0 } })
+    store.commit('SET_PENDING_CREATE', {
+      column_name: 'Open',
+      columnIndex: 0,
+      board_name: 'Task Board',
+      form_mode: 'quick_entry',
+      laneKey: 'PROJ-1',
+    })
+
+    const created = await store.dispatch('handleCardCreated', {
+      doc: {
+        name: 'TASK-LANE',
+        subject: 'Lane task',
+        status: 'Open',
+        project: 'PROJ-1',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+
+    expect(created).toBe(true)
+    expect(store.state.lanes[0].columns[0].cards[0].name).toBe('TASK-LANE')
+    expect(store.state.cellTotals['PROJ-1'].Open).toBe(1)
+    expect(store.state.columns[0].cards.map((card) => card.name)).toEqual(['TASK-1'])
+    expect(store.state.revealCreatedCard).toEqual({
+      cardName: 'TASK-LANE',
+      columnIndex: 0,
+      cardIndex: 0,
+      laneIndex: 0,
+    })
+  })
+
+  test('assigns user after create then prepends into assign lane', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      swimlane_mode: 'assign',
+      swimlane_field: '__assign',
+    })
+    store.commit('SET_LANES', [
+      {
+        key: 'alice@example.com',
+        label: 'Alice',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_CELL_TOTALS', { 'alice@example.com': { Open: 2, Done: 0 } })
+    store.commit('SET_PENDING_CREATE', {
+      column_name: 'Open',
+      columnIndex: 0,
+      board_name: 'Task Board',
+      form_mode: 'quick_entry',
+      laneKey: 'alice@example.com',
+      assign_to: 'alice@example.com',
+    })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'frappe.desk.form.assign_to.add') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    const created = await store.dispatch('handleCardCreated', {
+      doc: {
+        name: 'TASK-ASSIGN',
+        subject: 'Assigned task',
+        status: 'Open',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+
+    expect(created).toBe(true)
+    expect(frappe.call).toHaveBeenCalledWith({
+      method: 'frappe.desk.form.assign_to.add',
+      args: {
+        doctype: 'Task',
+        name: 'TASK-ASSIGN',
+        assign_to: ['alice@example.com'],
+        description: 'TASK-ASSIGN',
+      },
+    })
+    expect(store.state.lanes[0].columns[0].cards[0]).toMatchObject({
+      name: 'TASK-ASSIGN',
+      _assign: { 'alice@example.com': 'alice@example.com' },
+    })
+    expect(store.state.cellTotals['alice@example.com'].Open).toBe(3)
+    expect(store.state.revealCreatedCard).toEqual({
+      cardName: 'TASK-ASSIGN',
+      columnIndex: 0,
+      cardIndex: 0,
+      laneIndex: 0,
+    })
   })
 
   test('keeps recent creates pinned to the top after hydration', async () => {

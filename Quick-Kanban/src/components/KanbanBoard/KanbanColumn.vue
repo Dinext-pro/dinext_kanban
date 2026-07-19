@@ -737,6 +737,7 @@ function startCreate(_columnName) {
   store.dispatch('startCreateCard', {
     columnIndex: props.columnIndex,
     column: props.column,
+    laneKey: props.laneKey,
   })
 }
 

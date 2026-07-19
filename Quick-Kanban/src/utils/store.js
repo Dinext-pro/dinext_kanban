@@ -1,6 +1,7 @@
 import { createStore } from 'vuex'
 import {
   attachColumnDisplayNames,
+  cardMatchesLane,
   cellKey,
   flattenCardsFromColumns,
   getAddableColumnCandidates,
@@ -33,6 +34,7 @@ import {
   resolveCreateFormMode,
   showCreateBlockedMessage,
 } from './createValidation'
+import { buildSwimlaneCreateDefaults } from './swimlaneCreate'
 import { validateMoveMandatory } from './moveValidation'
 import {
   TAG_DRAG_MODE_MOVE,
@@ -414,6 +416,13 @@ function docToCard(doc, config) {
   if (config.title_field in doc) {
     card[config.title_field] = doc[config.title_field]
   }
+  if (
+    config.swimlane_field
+    && config.swimlane_field !== '__assign'
+    && config.swimlane_field in doc
+  ) {
+    card[config.swimlane_field] = doc[config.swimlane_field]
+  }
   card._assign = mapAssignments(doc._assign)
   return card
 }
@@ -460,6 +469,7 @@ export function createKanbanStore() {
       dragSyncGeneration: 0,
       createOptionsByColumn: {},
       pendingCreate: null,
+      revealCreatedCard: null,
       recentCreatedCards: {},
       boardPerms: { write: false },
       cardMoveFlash: {},
@@ -840,6 +850,7 @@ export function createKanbanStore() {
         state.activeInlineEdit = null
         state.pendingFieldUpdates = {}
         state.linkTitlesVersion = 0
+        state.revealCreatedCard = null
       },
       SET_ACTIVE_INLINE_EDIT(state, payload) {
         state.activeInlineEdit = payload
@@ -1041,6 +1052,12 @@ export function createKanbanStore() {
       CLEAR_PENDING_CREATE(state) {
         state.pendingCreate = null
       },
+      SET_REVEAL_CREATED_CARD(state, payload) {
+        state.revealCreatedCard = payload || null
+      },
+      CLEAR_REVEAL_CREATED_CARD(state) {
+        state.revealCreatedCard = null
+      },
       TRACK_RECENT_CREATED_CARD(state, { cardName, columnName }) {
         state.recentCreatedCards = {
           ...state.recentCreatedCards,
@@ -1064,6 +1081,48 @@ export function createKanbanStore() {
             state.columnTotals = {
               ...state.columnTotals,
               [key]: state.columnTotals[key] + 1,
+            }
+          }
+        }
+        cards.unshift(card)
+        column.cards = cards
+        state.dragSyncGeneration += 1
+      },
+      PREPEND_CREATED_CARD_TO_CELL(state, {
+        laneKey,
+        columnName,
+        card,
+        incrementTotal = true,
+      }) {
+        const lane = (state.lanes || []).find(
+          (row) => String(row.key ?? '') === String(laneKey ?? ''),
+        )
+        if (!lane) return
+
+        const column = (lane.columns || []).find(
+          (row) => row.column_name === columnName,
+        )
+        if (!column) return
+
+        const cards = [...(column.cards || [])]
+        const existingIndex = cards.findIndex(({ name }) => name === card.name)
+        if (existingIndex >= 0) {
+          cards.splice(existingIndex, 1)
+        } else if (incrementTotal) {
+          const key = String(laneKey ?? '')
+          const colKey = column.column_name
+          const laneTotals = { ...(state.cellTotals[key] || {}) }
+          if (Number.isFinite(laneTotals[colKey])) {
+            laneTotals[colKey] += 1
+            state.cellTotals = {
+              ...state.cellTotals,
+              [key]: laneTotals,
+            }
+          }
+          if (Number.isFinite(state.columnTotals[colKey])) {
+            state.columnTotals = {
+              ...state.columnTotals,
+              [colKey]: state.columnTotals[colKey] + 1,
             }
           }
         }
@@ -2106,7 +2165,7 @@ export function createKanbanStore() {
           commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
         }
       },
-      startCreateCard({ commit, dispatch, state }, { columnIndex, column }) {
+      startCreateCard({ commit, dispatch, state }, { columnIndex, column, laneKey = null }) {
         const formMode = resolveCreateFormMode(
           column,
           state.config,
@@ -2121,14 +2180,18 @@ export function createKanbanStore() {
           return false
         }
 
+        const swimlanePlan = buildSwimlaneCreateDefaults(state.config, laneKey)
         const defaults = {
           [state.config.field_name]: column.column_name,
+          ...swimlanePlan.defaults,
         }
         commit('SET_PENDING_CREATE', {
           column_name: column.column_name,
           columnIndex,
           board_name: state.config.board_name,
           form_mode: formMode.mode,
+          laneKey: laneKey != null ? String(laneKey) : null,
+          assign_to: swimlanePlan.assignTo,
         })
 
         return openCreateForm({
@@ -2140,7 +2203,7 @@ export function createKanbanStore() {
           },
         })
       },
-      handleCardCreated({ commit, dispatch, state }, { doc }) {
+      async handleCardCreated({ commit, dispatch, state }, { doc }) {
         if (!doc?.name || !state.config?.field_name) {
           return false
         }
@@ -2167,10 +2230,60 @@ export function createKanbanStore() {
         }
 
         const card = docToCard(doc, state.config)
-        commit('PREPEND_CREATED_CARD', { columnIndex, card })
+
+        const assignTo = pending?.assign_to
+        if (assignTo && state.config.swimlane_mode === 'assign') {
+          try {
+            await frappe.call({
+              method: 'frappe.desk.form.assign_to.add',
+              args: {
+                doctype: state.config.ref_doctype,
+                name: doc.name,
+                assign_to: [assignTo],
+                description: doc.description || doc.name,
+              },
+            })
+            const existing = Object.keys(card._assign || {})
+            if (!existing.includes(assignTo)) {
+              card._assign = mapAssignments(
+                JSON.stringify([...existing, assignTo]),
+              )
+            }
+          } catch {
+            // Card was created; assignment failure should not block board update.
+          }
+        }
+
+        const columnName = state.columns[columnIndex]?.column_name || statusValue
+        if (swimlanesActive(state) && pending?.laneKey != null) {
+          if (!cardMatchesLane(card, pending.laneKey, state.config)) {
+            commit('CLEAR_PENDING_CREATE')
+            return false
+          }
+          commit('PREPEND_CREATED_CARD_TO_CELL', {
+            laneKey: pending.laneKey,
+            columnName,
+            card,
+          })
+        } else {
+          commit('PREPEND_CREATED_CARD', { columnIndex, card })
+        }
         commit('TRACK_RECENT_CREATED_CARD', {
           cardName: card.name,
-          columnName: state.columns[columnIndex]?.column_name || statusValue,
+          columnName,
+        })
+        let laneIndex = null
+        if (pending?.laneKey != null) {
+          const found = (state.lanes || []).findIndex(
+            (lane) => String(lane.key ?? '') === String(pending.laneKey),
+          )
+          laneIndex = found >= 0 ? found : null
+        }
+        commit('SET_REVEAL_CREATED_CARD', {
+          cardName: card.name,
+          columnIndex,
+          cardIndex: 0,
+          laneIndex,
         })
         commit('CLEAR_PENDING_CREATE')
         dispatch('scheduleMoveOptionsRefresh')
