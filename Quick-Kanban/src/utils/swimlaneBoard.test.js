@@ -6,6 +6,7 @@ import {
   encodeCellListId,
   getExpandedLaneKeys,
   measureColumnContentHeight,
+  reconcileCardInstancesAcrossLanes,
   resolveExpandedLaneKeys,
   sortLanesByOccupancy,
 } from './swimlaneBoard'
@@ -106,6 +107,165 @@ describe('laneKeysFromCard', () => {
     expect(resolveSwimlaneMode(SWIMLANE_ASSIGN)).toBe('assign')
     expect(resolveSwimlaneMode('owner', { fieldtype: 'Link' })).toBe('field')
     expect(resolveSwimlaneMode('users', { fieldtype: 'Table MultiSelect' })).toBe('multi')
+  })
+})
+
+describe('reconcileCardInstancesAcrossLanes', () => {
+  const assignConfig = {
+    field_name: 'status',
+    swimlane_mode: 'assign',
+    swimlane_field: SWIMLANE_ASSIGN,
+    swimlane_is_multi: true,
+  }
+
+  function dualLaneBoard(cardFields = {}) {
+    const base = {
+      name: 'TASK-1',
+      status: 'Open',
+      _assign: { alice: 'Alice', bob: 'Bob' },
+      ...cardFields,
+    }
+    return [
+      {
+        key: 'alice',
+        columns: [
+          { column_name: 'Open', cards: [{ ...base }] },
+          { column_name: 'Done', cards: [] },
+        ],
+      },
+      {
+        key: 'bob',
+        columns: [
+          { column_name: 'Open', cards: [{ ...base }] },
+          { column_name: 'Done', cards: [] },
+        ],
+      },
+    ]
+  }
+
+  test('moves sibling copies into the status column', () => {
+    const lanes = dualLaneBoard({ status: 'Done' })
+    expect(reconcileCardInstancesAcrossLanes(lanes, assignConfig, 'TASK-1')).toBe(true)
+    expect(lanes[0].columns[0].cards).toEqual([])
+    expect(lanes[0].columns[1].cards[0]).toMatchObject({ name: 'TASK-1', status: 'Done' })
+    expect(lanes[1].columns[0].cards).toEqual([])
+    expect(lanes[1].columns[1].cards[0]).toMatchObject({ name: 'TASK-1', status: 'Done' })
+  })
+
+  test('prunes copies from lanes that no longer match membership', () => {
+    const lanes = dualLaneBoard({
+      _assign: { bob: 'Bob' },
+    })
+    expect(reconcileCardInstancesAcrossLanes(lanes, assignConfig, 'TASK-1')).toBe(true)
+    expect(lanes[0].columns[0].cards).toEqual([])
+    expect(lanes[1].columns[0].cards).toHaveLength(1)
+    expect(lanes[1].columns[0].cards[0]._assign).toEqual({ bob: 'Bob' })
+  })
+
+  test('prepends into a loaded membership lane that is missing the card', () => {
+    const lanes = [
+      {
+        key: 'alice',
+        columns: [
+          {
+            column_name: 'Open',
+            cards: [{
+              name: 'TASK-1',
+              status: 'Open',
+              _assign: { alice: 'Alice', bob: 'Bob' },
+            }],
+          },
+          { column_name: 'Done', cards: [] },
+        ],
+      },
+      {
+        key: 'bob',
+        columns: [
+          { column_name: 'Open', cards: [] },
+          { column_name: 'Done', cards: [] },
+        ],
+      },
+    ]
+    const prepended = []
+    const touched = reconcileCardInstancesAcrossLanes(
+      lanes,
+      assignConfig,
+      'TASK-1',
+      {
+        canPrependToCell: (laneKey, columnName) => {
+          prepended.push([laneKey, columnName])
+          return laneKey === 'bob' && columnName === 'Open'
+        },
+      },
+    )
+    expect(touched).toBe(true)
+    expect(prepended).toEqual([['bob', 'Open']])
+    expect(lanes[1].columns[0].cards[0]).toMatchObject({
+      name: 'TASK-1',
+      status: 'Open',
+    })
+  })
+
+  test('does not prepend when canPrependToCell denies the cell', () => {
+    const lanes = [
+      {
+        key: 'alice',
+        columns: [
+          {
+            column_name: 'Open',
+            cards: [{
+              name: 'TASK-1',
+              status: 'Open',
+              _assign: { alice: 'Alice', bob: 'Bob' },
+            }],
+          },
+        ],
+      },
+      {
+        key: 'bob',
+        columns: [{ column_name: 'Open', cards: [] }],
+      },
+    ]
+    expect(reconcileCardInstancesAcrossLanes(
+      lanes,
+      assignConfig,
+      'TASK-1',
+      { canPrependToCell: () => false },
+    )).toBe(false)
+    expect(lanes[1].columns[0].cards).toEqual([])
+  })
+
+  test('field-mode single membership only repositions within its lane', () => {
+    const lanes = [
+      {
+        key: 'proj-a',
+        columns: [
+          {
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1', status: 'Done', project: 'proj-a' }],
+          },
+          { column_name: 'Done', cards: [] },
+        ],
+      },
+      {
+        key: 'proj-b',
+        columns: [
+          { column_name: 'Open', cards: [] },
+          { column_name: 'Done', cards: [] },
+        ],
+      },
+    ]
+    const config = {
+      field_name: 'status',
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+      swimlane_is_multi: false,
+    }
+    expect(reconcileCardInstancesAcrossLanes(lanes, config, 'TASK-1')).toBe(true)
+    expect(lanes[0].columns[0].cards).toEqual([])
+    expect(lanes[0].columns[1].cards[0].name).toBe('TASK-1')
+    expect(lanes[1].columns[0].cards).toEqual([])
+    expect(lanes[1].columns[1].cards).toEqual([])
   })
 })
 

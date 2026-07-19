@@ -698,6 +698,7 @@ async function moveCard(toColumn) {
       toColumn,
       fromIndex,
       toIndex,
+      fromLaneIndex: props.laneIndex,
     })
     if (moved && scrollToMovedCard) {
       try {

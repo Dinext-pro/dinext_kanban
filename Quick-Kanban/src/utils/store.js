@@ -22,6 +22,7 @@ import {
   getExpandedLaneKeys,
   laneTotalFromCells,
   normalizeExpandedLaneKeys,
+  reconcileCardInstancesAcrossLanes,
   resolveExpandedLaneKeys,
   sortLanesByOccupancy,
 } from './swimlaneBoard'
@@ -225,6 +226,59 @@ function findLaneIndexForCard(state, cardName) {
     }
   }
   return -1
+}
+
+function multiSwimlaneActive(state) {
+  return Boolean(
+    swimlanesActive(state)
+    && state.config?.swimlane_is_multi
+    && state.lanes?.length,
+  )
+}
+
+function canPrependReconcileCell(state, laneKey, columnName) {
+  const lane = (state.lanes || []).find(
+    (row) => String(row.key ?? '') === String(laneKey ?? ''),
+  )
+  if (!lane) {
+    return false
+  }
+  const column = (lane.columns || []).find(
+    (row) => row.column_name === columnName,
+  )
+  if (!column) {
+    return false
+  }
+  const pagination = state.cellPagination[cellKey(laneKey, columnName)]
+  if (!pagination || pagination.loading) {
+    return false
+  }
+  if ((column.cards || []).length > 0) {
+    return true
+  }
+  if (pagination.offset > 0) {
+    return true
+  }
+  return pagination.hasMore === false
+}
+
+function fieldAffectsSwimlaneLayout(state, fieldname) {
+  if (!fieldname) {
+    return false
+  }
+  if (fieldname === state.config?.field_name) {
+    return true
+  }
+  if (fieldname === '_assign' && state.config?.swimlane_mode === 'assign') {
+    return true
+  }
+  if (
+    state.config?.swimlane_mode === 'multi'
+    && fieldname === state.config?.swimlane_field
+  ) {
+    return true
+  }
+  return false
 }
 
 function collectVisibleCardNames(state) {
@@ -1037,6 +1091,23 @@ export function createKanbanStore() {
         forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
           card._assign = assignments
         })
+      },
+      RECONCILE_CARD_INSTANCES(state, cardName) {
+        if (!multiSwimlaneActive(state) || !cardName) {
+          return
+        }
+        const touched = reconcileCardInstancesAcrossLanes(
+          state.lanes,
+          state.config,
+          cardName,
+          {
+            canPrependToCell: (laneKey, columnName) =>
+              canPrependReconcileCell(state, laneKey, columnName),
+          },
+        )
+        if (touched) {
+          state.dragSyncGeneration += 1
+        }
       },
       UPDATE_CARD_MODIFIED(state, { cardName, modified }) {
         forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
@@ -1975,6 +2046,9 @@ export function createKanbanStore() {
               laneKey: toLane.key,
             })
           }
+          if (multiSwimlaneActive(state)) {
+            commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
           if (columnChanged) {
             commit('CLEAR_CARD_MOVE_OPTIONS', cardName)
           }
@@ -2477,9 +2551,12 @@ export function createKanbanStore() {
         if (state.pendingMoves[payload.cardName]) return false
 
         if (swimlanesActive(state) && state.lanes?.length) {
-          const fromLaneIndex = findLaneIndexForCard(state, payload.cardName)
+          const fromLaneIndex = Number.isFinite(payload.fromLaneIndex)
+            ? payload.fromLaneIndex
+            : findLaneIndexForCard(state, payload.cardName)
           if (fromLaneIndex < 0) return false
           const fromLane = state.lanes[fromLaneIndex]
+          if (!fromLane) return false
           const toLaneIndex = fromLaneIndex
           const toLane = state.lanes[toLaneIndex]
           const fromColumn = payload.fromColumn
@@ -2624,6 +2701,9 @@ export function createKanbanStore() {
             userResponse.message,
           ),
         })
+        if (multiSwimlaneActive(state)) {
+          commit('RECONCILE_CARD_INSTANCES', cardName)
+        }
       },
       async updateCardField(
         { commit, state },
@@ -2664,6 +2744,12 @@ export function createKanbanStore() {
             value: saved?.[fieldname] ?? value,
             modified: saved?.modified,
           })
+          if (
+            multiSwimlaneActive(state)
+            && fieldAffectsSwimlaneLayout(state, fieldname)
+          ) {
+            commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
           if (typeof frappe.model?.clear_doc === 'function') {
             frappe.model.clear_doc(state.config.ref_doctype, cardName)
           }
@@ -2678,6 +2764,12 @@ export function createKanbanStore() {
             fieldname,
             value: priorValue,
           })
+          if (
+            multiSwimlaneActive(state)
+            && fieldAffectsSwimlaneLayout(state, fieldname)
+          ) {
+            commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
           frappe.show_alert({
             message: __('Could not update the field.', null, 'QuickKanban.Inline'),
             indicator: 'red',
