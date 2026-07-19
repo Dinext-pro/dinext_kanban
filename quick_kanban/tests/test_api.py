@@ -643,6 +643,100 @@ class TestSwimlaneApi(FrappeTestCase):
         )
         self.assertEqual(empty_page["values"], [])
 
+    def test_closed_assign_todo_excluded_from_swimlane(self):
+        """Closed ToDo (and leftover DocShare) must not create assign-lane membership."""
+        from frappe.desk.form.assign_to import add as assign_add
+        from frappe.desk.form.assign_to import set_status as assign_set_status
+        from quick_kanban.api import get_swimlane_column_page, get_swimlane_lanes
+
+        users = frappe.get_all(
+            "User",
+            filters={"enabled": 1, "user_type": "System User"},
+            pluck="name",
+            limit=10,
+        )
+        assignee = next(
+            (user for user in users if user not in ("Administrator", "Guest")),
+            None,
+        )
+        if not assignee:
+            self.skipTest("Need a non-Administrator system user for assign swimlane test")
+
+        todo = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Swimlane closed assign",
+                "status": "Open",
+            }
+        ).insert()
+        assign_add(
+            {
+                "assign_to": [assignee],
+                "doctype": "ToDo",
+                "name": todo.name,
+            }
+        )
+        assign_set_status(
+            "ToDo",
+            todo.name,
+            assign_to=assignee,
+            status="Closed",
+            ignore_permissions=True,
+        )
+        # Optional leftover share (Frappe may keep DocShare after close on some doctypes).
+        if not frappe.db.exists(
+            "DocShare",
+            {"share_doctype": "ToDo", "share_name": todo.name, "user": assignee},
+        ):
+            frappe.share.add("ToDo", todo.name, assignee, read=1)
+
+        self.assertNotIn(
+            assignee,
+            frappe.parse_json(frappe.db.get_value("ToDo", todo.name, "_assign") or "[]"),
+        )
+        self.assertTrue(
+            frappe.db.exists(
+                "DocShare",
+                {"share_doctype": "ToDo", "share_name": todo.name, "user": assignee},
+            ),
+        )
+
+        doc_filters = [["ToDo", "name", "=", todo.name]]
+        lane_keys = {lane["key"] for lane in get_swimlane_lanes("ToDo", "__assign", filters=doc_filters)}
+        self.assertNotIn(assignee, lane_keys)
+        self.assertIn("", lane_keys)
+
+        page = get_swimlane_column_page(
+            "ToDo",
+            "status",
+            "Open",
+            "__assign",
+            assignee,
+            fields=["status"],
+            filters=doc_filters,
+            start=0,
+            page_length=50,
+        )
+        name_idx = page["keys"].index("name")
+        names = [row[name_idx] for row in page["values"]]
+        self.assertNotIn(todo.name, names)
+
+        unassigned_page = get_swimlane_column_page(
+            "ToDo",
+            "status",
+            "Open",
+            "__assign",
+            "",
+            fields=["status"],
+            filters=doc_filters,
+            start=0,
+            page_length=50,
+        )
+        unassigned_names = [
+            row[unassigned_page["keys"].index("name")] for row in unassigned_page["values"]
+        ]
+        self.assertIn(todo.name, unassigned_names)
+
     def test_move_card_to_cell_changes_status(self):
         from quick_kanban.api import move_card_to_cell
 
