@@ -131,7 +131,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useStore } from 'vuex'
 import { useDismissibleMenu } from '../../utils/menu'
 import {
@@ -152,6 +152,7 @@ const props = defineProps({
   card: { type: Object, required: true },
   doctype: { type: String, required: true },
 })
+const emit = defineEmits(['files-menu-open'])
 
 const store = useStore()
 const __ = globalThis.__
@@ -166,6 +167,16 @@ const filesMenuStyle = ref({})
 const filesLoading = ref(false)
 const attachments = ref([])
 const docstatus = ref(Number(props.card.docstatus) || 0)
+
+watch(filesMenuOpen, (open) => {
+  emit('files-menu-open', open)
+})
+
+onBeforeUnmount(() => {
+  if (filesMenuOpen.value) {
+    emit('files-menu-open', false)
+  }
+})
 
 const sessionUser = computed(() => globalThis.frappe?.session?.user || '')
 const isLiked = computed(() => isLikedByUser(props.card._liked_by, sessionUser.value))
