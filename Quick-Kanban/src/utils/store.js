@@ -1723,15 +1723,16 @@ export function createKanbanStore() {
               columnIndex,
               cards,
             })
+            // Full replace: remount VirtualList so Sortable/virtual state resets.
+            commit('BUMP_DRAG_SYNC')
           } else {
             commit('APPEND_COLUMN_CARDS', {
               laneIndex: resolvedLaneIndex,
               columnIndex,
               cards,
             })
+            // Incremental append: do not remount — key bump collapses sticky Add.
           }
-          // Remount vue-virtual-draglist after server-driven card loads.
-          commit('BUMP_DRAG_SYNC')
           commit('SET_CELL_PAGE_STATE', {
             key,
             changes: {
@@ -2041,8 +2042,7 @@ export function createKanbanStore() {
             columnIndex,
             cards: pageColumn.cards,
           })
-          // Remount vue-virtual-draglist so padding height includes newly loaded cards.
-          commit('BUMP_DRAG_SYNC')
+          // Incremental append: do not remount VirtualList (sticky Add flicker).
           commit('SET_COLUMN_PAGE_STATE', {
             key,
             changes: {
