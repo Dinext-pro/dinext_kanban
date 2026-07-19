@@ -142,33 +142,56 @@ const getConfig = () => {
     return configPromise;
 };
 
+function parseJsonArray(value, fallback = []) {
+    if (Array.isArray(value)) {
+        return value;
+    }
+    if (typeof value !== "string") {
+        return fallback;
+    }
+    try {
+        const parsed = JSON.parse(value || "[]");
+        return Array.isArray(parsed) ? parsed : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+/**
+ * Normalize fields/filters on a working board object for Kanban runtime.
+ * Must only be called on a detached copy — never on the synced locals doc —
+ * so Code fields stay JSON strings for Form save.
+ */
 function normalizeBoardDoc(board) {
     if (!board) {
         return;
     }
 
-    if (typeof board.fields === "string") {
-        try {
-            board.fields = JSON.parse(board.fields || "[]");
-        } catch {
-            board.fields = [];
-        }
-    }
-
-    if (!Array.isArray(board.fields)) {
-        board.fields = [];
-    }
-
-    if (typeof board.filters === "string") {
-        try {
-            board.filters_array = JSON.parse(board.filters || "[]");
-        } catch {
-            board.filters_array = [];
-        }
-    }
+    board.fields = parseJsonArray(board.fields, []);
+    board.filters_array = parseJsonArray(
+        board.filters_array ?? board.filters,
+        [],
+    );
 }
 
 const QuickKanbanView = class KanbanView extends NativeKanbanView {
+    set_board_perms_and_push_menu_items() {
+        // Perms arrive async after first paint; remount Group By when write is known.
+        return Promise.resolve(super.set_board_perms_and_push_menu_items()).then(() => {
+            if (!bootstrap?.shouldUseBeta) {
+                this.setup_groupby_control();
+                return;
+            }
+            return getConfig()
+                .then((config) => {
+                    if (bootstrap.shouldUseBeta(config, frappe.session.user)) {
+                        this.setup_groupby_control();
+                    }
+                })
+                .catch(() => {});
+        });
+    }
+
     async setup_defaults() {
         await super.setup_defaults();
         try {
@@ -179,6 +202,16 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         } catch {
             // The render path falls back to the native board.
         }
+    }
+
+    get_board() {
+        return frappe.db.get_doc("Kanban Board", this.board_name).then((board) => {
+            // Shallow-copy so JSON.parse of fields does not pollute locals
+            // (Kanban Board.fields is Code/JSON and Form save rejects lists).
+            this.board = { ...board };
+            normalizeBoardDoc(this.board);
+            this.filters = this.board.filters_array;
+        });
     }
 
     async set_fields() {
@@ -246,10 +279,10 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             || document.querySelector(".filter-selector");
     }
 
-    setup_minimize_cards_control() {
+    resolveCustomActionsHost() {
         const filterSelector = this.resolveFilterSelector();
         if (!filterSelector?.parentNode) {
-            return;
+            return null;
         }
 
         // Prefer sibling of .filter-section under .custom-actions so we don't
@@ -258,8 +291,25 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             || (filterSelector.parentNode?.classList?.contains?.("filter-section")
                 ? filterSelector.parentNode
                 : null);
-        const host = filterSection?.parentNode || filterSelector.parentNode;
-        const insertBeforeNode = filterSection || filterSelector;
+        return {
+            host: filterSection?.parentNode || filterSelector.parentNode,
+            insertBeforeNode: filterSection || filterSelector,
+        };
+    }
+
+    canEditBoardSettings() {
+        if (this.board_perms?.write) {
+            return true;
+        }
+        return Boolean(window.__quickKanbanStore?.getters?.canEditBoard);
+    }
+
+    setup_minimize_cards_control() {
+        const placement = this.resolveCustomActionsHost();
+        if (!placement) {
+            return;
+        }
+        const { host, insertBeforeNode } = placement;
 
         let control = host.querySelector(".quick-kanban-minimize-control");
 
@@ -267,12 +317,23 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             const labelText = __("Minimize", null, "QuickKanban.Board");
             control = document.createElement("label");
             control.className = "quick-kanban-minimize-control";
+            control.setAttribute("title", labelText);
+            control.setAttribute("aria-label", labelText);
 
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
             const labelSpan = document.createElement("span");
             labelSpan.className = "quick-kanban-minimize-label";
-            labelSpan.textContent = labelText;
+            labelSpan.setAttribute("aria-hidden", "true");
+            // collapse = corner arrows inward — compact/minimized cards, not column width.
+            const iconHtml = frappe.utils?.icon?.("collapse", "sm");
+            if (iconHtml) {
+                labelSpan.innerHTML = iconHtml;
+            } else {
+                // Fallback when Desk icon sprites are unavailable (tests / early boot).
+                labelSpan.innerHTML =
+                    '<svg class="icon icon-sm" aria-hidden="true"><use href="#icon-collapse"></use></svg>';
+            }
             control.append(checkbox, labelSpan);
 
             checkbox.addEventListener("change", () => {
@@ -303,6 +364,208 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         this.$minimize_cards_control = null;
     }
 
+    getSwimlaneFieldValue() {
+        return String(this.board?.custom_swimlane_field || "").trim();
+    }
+
+    getGroupByNoneLabel() {
+        return __("No Grouping", null, "QuickKanban.Board");
+    }
+
+    updateGroupByButtonLabel() {
+        const control = this.$groupby_control
+            || document.querySelector(".quick-kanban-groupby-control");
+        const textEl = control?.querySelector?.(".dropdown-text");
+        if (!textEl) {
+            return;
+        }
+        const value = this.getSwimlaneFieldValue();
+        const labels = this._groupby_labels || {};
+        textEl.textContent = value
+            ? (labels[value] || value)
+            : this.getGroupByNoneLabel();
+    }
+
+    setup_groupby_control() {
+        if (!this.canEditBoardSettings()) {
+            this.remove_groupby_control();
+            return;
+        }
+
+        const placement = this.resolveCustomActionsHost();
+        if (!placement) {
+            return;
+        }
+        const { host, insertBeforeNode } = placement;
+
+        let control = host.querySelector(".quick-kanban-groupby-control");
+        if (!control) {
+            control = document.createElement("div");
+            control.className = "quick-kanban-groupby-control";
+
+            const btnGroup = document.createElement("div");
+            btnGroup.className = "btn-group";
+
+            const groupByLabel = __("Group By", null, "QuickKanban.Board");
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn btn-default btn-sm dropdown-toggle";
+            button.setAttribute("data-toggle", "dropdown");
+            button.setAttribute("aria-haspopup", "true");
+            button.setAttribute("aria-expanded", "false");
+            button.setAttribute("title", groupByLabel);
+            button.setAttribute("aria-label", groupByLabel);
+
+            const dropdownText = document.createElement("span");
+            dropdownText.className = "dropdown-text";
+            dropdownText.textContent = this.getGroupByNoneLabel();
+            button.append(dropdownText);
+
+            const menu = document.createElement("ul");
+            menu.className = "dropdown-menu dropdown-menu-right";
+
+            btnGroup.append(button, menu);
+            control.append(btnGroup);
+            host.insertBefore(control, insertBeforeNode);
+        }
+
+        this.$groupby_control = control;
+        this._groupby_labels = this._groupby_labels || {};
+        this.updateGroupByButtonLabel();
+        this.load_groupby_options();
+    }
+
+    load_groupby_options() {
+        const doctype = this.board?.reference_doctype || this.doctype;
+        const control = this.$groupby_control;
+        if (!doctype || !control) {
+            return;
+        }
+
+        const requestToken = Symbol("groupby-options");
+        this._groupby_options_token = requestToken;
+
+        frappe.call({
+            method: "quick_kanban.api.get_swimlane_field_options",
+            args: { doctype },
+            callback: (r) => {
+                if (this._groupby_options_token !== requestToken) {
+                    return;
+                }
+                const rows = r.message || [];
+                this._groupby_labels = {};
+                for (const row of rows) {
+                    const value = typeof row === "string" ? row : row.value;
+                    const label = typeof row === "string"
+                        ? row
+                        : (row.label || row.value);
+                    if (value) {
+                        this._groupby_labels[value] = label;
+                    }
+                }
+                this.render_groupby_menu(rows);
+                this.updateGroupByButtonLabel();
+            },
+        });
+    }
+
+    render_groupby_menu(rows) {
+        const control = this.$groupby_control;
+        const menu = control?.querySelector?.(".dropdown-menu");
+        if (!menu) {
+            return;
+        }
+
+        menu.replaceChildren();
+        const current = this.getSwimlaneFieldValue();
+        const options = [
+            { value: "", label: this.getGroupByNoneLabel() },
+            ...rows.map((row) => (
+                typeof row === "string"
+                    ? { value: row, label: row }
+                    : { value: row.value, label: row.label || row.value }
+            )),
+        ];
+
+        for (const option of options) {
+            const li = document.createElement("li");
+            const link = document.createElement("a");
+            link.className = "dropdown-item option";
+            if (option.value === current) {
+                link.classList.add("active");
+            }
+            link.href = "#";
+            link.setAttribute("data-value", option.value);
+            link.textContent = option.label;
+            link.addEventListener("click", (event) => {
+                event.preventDefault();
+                this.apply_groupby_field(option.value);
+            });
+            li.append(link);
+            menu.append(li);
+        }
+    }
+
+    apply_groupby_field(swimlane_field) {
+        const boardName = this.board_name || this.board?.name;
+        if (!boardName || this._groupby_saving) {
+            return;
+        }
+
+        const nextValue = String(swimlane_field || "").trim();
+        if (nextValue === this.getSwimlaneFieldValue()) {
+            return;
+        }
+
+        this._groupby_saving = true;
+        const control = this.$groupby_control;
+        control?.classList?.add("is-saving");
+
+        frappe.call({
+            method: "quick_kanban.api.set_swimlane_field",
+            args: {
+                board_name: boardName,
+                swimlane_field: nextValue,
+            },
+            callback: (r) => {
+                const saved = r.message?.custom_swimlane_field ?? nextValue;
+                if (this.board) {
+                    this.board.custom_swimlane_field = saved;
+                }
+                this.updateGroupByButtonLabel();
+                this.render_groupby_menu(
+                    Object.entries(this._groupby_labels || {}).map(([value, label]) => ({
+                        value,
+                        label,
+                    })),
+                );
+                const store = window.__quickKanbanStore;
+                if (store?.dispatch) {
+                    store.dispatch("refreshBoard", {
+                        board_name: boardName,
+                        forceConfig: true,
+                    });
+                }
+            },
+            error: () => {
+                this.updateGroupByButtonLabel();
+            },
+            always: () => {
+                this._groupby_saving = false;
+                control?.classList?.remove("is-saving");
+            },
+        });
+    }
+
+    remove_groupby_control() {
+        const control = this.$groupby_control
+            || document.querySelector(".quick-kanban-groupby-control");
+        control?.remove?.();
+        this.$groupby_control = null;
+        this._groupby_labels = null;
+        this._groupby_options_token = null;
+    }
+
     render() {
         const renderToken = Symbol("quick-kanban-render");
         this.quick_kanban_render_token = renderToken;
@@ -314,6 +577,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
                     return this.renderBeta();
                 }
                 this.remove_minimize_cards_control();
+                this.remove_groupby_control();
                 this.renderOld();
             })
             .catch(() => {
@@ -323,8 +587,14 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
                     indicator: "orange",
                 });
                 this.remove_minimize_cards_control();
+                this.remove_groupby_control();
                 this.renderOld();
             });
+    }
+
+    setup_page_head_controls() {
+        this.setup_minimize_cards_control();
+        this.setup_groupby_control();
     }
 
     async renderBeta() {
@@ -336,7 +606,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         };
         const mountNode = this.$result.find("#kanbanapp")[0] || null;
 
-        this.setup_minimize_cards_control();
+        this.setup_page_head_controls();
 
         if (mountNode && window.isQuickKanbanMountedOn?.(mountNode) && window.hydrateQuickKanban) {
             window.hydrateQuickKanban(initialData);
@@ -349,10 +619,11 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             try {
                 await ensureQuickKanbanBundle();
                 window.mountQuickKanban?.(mountNode);
-                this.setup_minimize_cards_control();
+                this.setup_page_head_controls();
             } catch {
                 delete window.quickKanbanInitialData;
                 this.remove_minimize_cards_control();
+                this.remove_groupby_control();
                 frappe.show_alert({
                     message: __("Quick Kanban failed to load. Using the standard Kanban view."),
                     indicator: "orange",
@@ -368,10 +639,11 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         try {
             await ensureQuickKanbanBundle();
             window.mountQuickKanban?.(this.$result.find("#kanbanapp")[0]);
-            this.setup_minimize_cards_control();
+            this.setup_page_head_controls();
         } catch {
             delete window.quickKanbanInitialData;
             this.remove_minimize_cards_control();
+            this.remove_groupby_control();
             frappe.show_alert({
                 message: __("Quick Kanban failed to load. Using the standard Kanban view."),
                 indicator: "orange",
@@ -382,6 +654,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
 
     renderOld() {
         this.remove_minimize_cards_control();
+        this.remove_groupby_control();
         const hadBetaMount = this.$result.find("#kanbanapp").length;
         window.unmountQuickKanban?.();
         if (hadBetaMount) this.$result.empty?.();
@@ -412,9 +685,11 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
                 return;
             }
 
-            dialog.set_secondary_action_label(__("Open Kanban Board"));
+            dialog.set_secondary_action_label(__("Advanced Settings", null, "QuickKanban.Board"));
             dialog.set_secondary_action(() => {
                 dialog.hide();
+                // Drop any polluted locals so Form reloads a clean Code/JSON string.
+                frappe.model?.clear_doc?.("Kanban Board", board_name);
                 frappe.set_route("Form", "Kanban Board", board_name);
             });
         };

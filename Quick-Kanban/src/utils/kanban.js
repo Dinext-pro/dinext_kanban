@@ -6,6 +6,12 @@ const CARD_COLOR_FIELDNAME = 'color'
 const CARD_ACCENT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?([0-9A-Fa-f]{2})?$/
 const MINIMIZE_CARDS_STORAGE_PREFIX = 'quick_kanban:minimize_cards:'
 const COLLAPSED_COLUMNS_STORAGE_PREFIX = 'quick_kanban:collapsed_columns:'
+const EXPANDED_LANE_STORAGE_PREFIX = 'quick_kanban:expanded_lane:'
+const EXPANDED_LANES_STORAGE_PREFIX = 'quick_kanban:expanded_lanes:'
+
+export const SWIMLANE_ASSIGN = '__assign'
+export const SWIMLANE_UNASSIGNED = ''
+export const LANE_DRAG_EXPAND_DELAY_MS = 400
 
 export const QUICK_KANBAN_BOARD_TRANSLATION_CONTEXT = 'QuickKanban.Board'
 export const QUICK_KANBAN_COLUMN_TRANSLATION_CONTEXT = 'QuickKanban.Column'
@@ -13,6 +19,8 @@ export const CARD_EXPAND_DELAY_MS = 400
 export const CARD_COLLAPSE_DELAY_MS = 300
 export const CARD_DENSITY_ANIMATION_MS = 200
 export const COLUMN_COLLAPSE_ANIMATION_MS = 220
+export const SWIMLANE_LANE_ANIMATION_MS = 220
+export const COLLAPSED_COLUMN_WIDTH_PX = 52
 export const COLUMN_DRAG_EXPAND_DELAY_MS = 400
 export const DEFAULT_COLUMN_WIDTH_PX = 250
 export const COLUMN_WIDTH_MIN_VIEWPORT_RATIO = 0.15
@@ -120,6 +128,125 @@ export function writeCollapsedColumnsPreference(
   } catch {
     // Ignore quota / private-mode storage failures.
   }
+}
+
+export function expandedLaneStorageKey(boardName) {
+  return `${EXPANDED_LANE_STORAGE_PREFIX}${boardName || ''}`
+}
+
+export function expandedLanesStorageKey(boardName) {
+  return `${EXPANDED_LANES_STORAGE_PREFIX}${boardName || ''}`
+}
+
+/** @returns {string[]} */
+export function readExpandedLanesPreference(boardName, storage = globalThis.localStorage) {
+  try {
+    const raw = storage?.getItem?.(expandedLanesStorageKey(boardName))
+    if (raw != null) {
+      try {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) {
+          return [...new Set(parsed.map((value) => String(value ?? '')))]
+        }
+      } catch {
+        // Fall through to legacy single-key formats below.
+      }
+      if (raw !== '') {
+        return [String(raw)]
+      }
+    }
+    const legacy = storage?.getItem?.(expandedLaneStorageKey(boardName))
+    if (legacy != null && legacy !== '') {
+      return [String(legacy)]
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
+export function writeExpandedLanesPreference(boardName, laneKeys, storage = globalThis.localStorage) {
+  try {
+    const key = expandedLanesStorageKey(boardName)
+    const legacyKey = expandedLaneStorageKey(boardName)
+    const unique = [...new Set((laneKeys || []).map((value) => String(value ?? '')))]
+    if (!unique.length) {
+      storage?.removeItem?.(key)
+      storage?.removeItem?.(legacyKey)
+      return
+    }
+    storage?.setItem?.(key, JSON.stringify(unique))
+    storage?.removeItem?.(legacyKey)
+  } catch {
+    // Ignore quota / private-mode storage failures.
+  }
+}
+
+export function resolveSwimlaneMode(swimlaneField, fieldMeta = null) {
+  const fieldname = String(swimlaneField || '').trim()
+  if (!fieldname) {
+    return 'off'
+  }
+  if (fieldname === SWIMLANE_ASSIGN) {
+    return 'assign'
+  }
+  const fieldtype = normalizeFieldtype(fieldMeta)
+  if (fieldtype === 'TableMultiSelect') {
+    return 'multi'
+  }
+  return 'field'
+}
+
+export function cellKey(laneKey, columnName) {
+  return `${laneKey ?? ''}::${columnName ?? ''}`
+}
+
+export function parseAssignmentList(value) {
+  return parseAssignments(value)
+}
+
+/**
+ * Lane keys a card belongs to (multi-value → several keys; empty → Unassigned).
+ */
+export function laneKeysFromCard(card, config) {
+  const mode = config?.swimlane_mode || 'off'
+  if (mode === 'off') {
+    return []
+  }
+  if (mode === 'assign') {
+    const users = parseAssignments(card?._assign)
+    if (!users.length) {
+      return [SWIMLANE_UNASSIGNED]
+    }
+    return users.map(String)
+  }
+  if (mode === 'multi') {
+    const field = config.swimlane_field
+    const rows = card?.[field]
+    const values = []
+    if (Array.isArray(rows)) {
+      const linkField = config.swimlane_link_field
+      for (const row of rows) {
+        const value = linkField ? row?.[linkField] : (row?.name || row)
+        if (value) {
+          values.push(String(value))
+        }
+      }
+    }
+    if (!values.length) {
+      return [SWIMLANE_UNASSIGNED]
+    }
+    return values
+  }
+  const value = card?.[config.swimlane_field]
+  if (value == null || value === '') {
+    return [SWIMLANE_UNASSIGNED]
+  }
+  return [String(value)]
+}
+
+export function cardMatchesLane(card, laneKey, config) {
+  return laneKeysFromCard(card, config).includes(String(laneKey ?? ''))
 }
 
 const ALWAYS_TRANSLATED_VALUE_TYPES = new Set(['Select', 'Autocomplete'])
@@ -432,6 +559,35 @@ export function attachColumnDisplayNames(
   }))
 }
 
+/**
+ * Card list fetch must always include identity + title + status + assignees +
+ * tags + comments + likes (ListView std_fields parity for swimlane API).
+ * Board.fields often stores only display extras (no name/subject).
+ */
+export function ensureCardFetchFields(
+  fields = [],
+  { titleField = 'name', statusField = null } = {},
+) {
+  const result = []
+  const seen = new Set()
+  const push = (field) => {
+    if (!field || seen.has(field)) return
+    seen.add(field)
+    result.push(field)
+  }
+  push('name')
+  push(titleField)
+  for (const field of fields || []) {
+    push(field)
+  }
+  push(statusField)
+  push('_assign')
+  push('_user_tags')
+  push('_comments')
+  push('_liked_by')
+  return result
+}
+
 export function normalizeBoardConfig(board, meta = {}) {
   let fields = DEFAULT_FIELDS
 
@@ -460,7 +616,24 @@ export function normalizeBoardConfig(board, meta = {}) {
   if (colorField && !fields.includes(colorField)) {
     fields = [...fields, colorField]
   }
+  const swimlaneField = (board.custom_swimlane_field || '').trim()
+  let swimlaneFieldMeta = null
+  const swimlaneLinkField = ''
+  if (swimlaneField && swimlaneField !== SWIMLANE_ASSIGN) {
+    swimlaneFieldMeta = metaByField[swimlaneField] || { fieldname: swimlaneField }
+    if (
+      normalizeFieldtype(swimlaneFieldMeta) !== 'TableMultiSelect'
+      && !fields.includes(swimlaneField)
+    ) {
+      fields = [...fields, swimlaneField]
+    }
+  }
+  const swimlaneMode = resolveSwimlaneMode(swimlaneField, swimlaneFieldMeta)
   const titleField = meta.title_field || 'name'
+  fields = ensureCardFetchFields(fields, {
+    titleField,
+    statusField: board.field_name,
+  })
   const statusFieldMeta = metaByField[board.field_name] || {
     fieldname: board.field_name,
   }
@@ -473,6 +646,12 @@ export function normalizeBoardConfig(board, meta = {}) {
       field !== titleField &&
       field !== highlightedField &&
       field !== colorField &&
+      field !== swimlaneField &&
+      field !== board.field_name &&
+      field !== '_assign' &&
+      field !== '_user_tags' &&
+      field !== '_comments' &&
+      field !== '_liked_by' &&
       field !== 'name',
     )
     .map((field) => metaByField[field] || { fieldname: field, label: field })
@@ -496,6 +675,11 @@ export function normalizeBoardConfig(board, meta = {}) {
     show_labels: Boolean(board.show_labels),
     show_tags: Boolean(board.custom_show_tags),
     show_extra_info: Boolean(board.custom_show_extra_info),
+    swimlane_field: swimlaneField,
+    swimlane_field_meta: swimlaneFieldMeta,
+    swimlane_mode: swimlaneMode,
+    swimlane_is_multi: swimlaneMode === 'assign' || swimlaneMode === 'multi',
+    swimlane_link_field: swimlaneLinkField,
   }
 }
 

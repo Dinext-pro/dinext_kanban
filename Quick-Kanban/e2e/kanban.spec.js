@@ -151,7 +151,7 @@ test('menu move scrolls horizontally to the destination column', async ({ page }
   expect(doneListBox.x).toBeLessThan(boardBox.x + boardBox.width)
 })
 
-test('menu move scrolls vertically to the card position', async ({ page }) => {
+test('menu move places the card at the top of the destination column', async ({ page }) => {
   await page.addInitScript(() => {
     window.__customQuickKanbanCards = [
       {
@@ -179,15 +179,16 @@ test('menu move scrolls vertically to the card position', async ({ page }) => {
 
   const doneList = page.getByLabel('Cards in Done')
   await doneList.evaluate((element) => {
-    element.scrollTop = 0
+    element.scrollTop = 200
   })
 
   await openWithoutAutoScroll(page.getByLabel('Move First task'))
   await page.getByLabel('Move First task to Done').click()
 
   await expect(doneList).toContainText('First task')
+  await expect(doneList.locator('.kanban-card').first()).toContainText('First task')
   await expect.poll(() => doneList.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0)
+    .toBeLessThan(40)
 })
 
 test('menu move scrolls to the card in a paginated destination column', async ({ page }) => {
@@ -230,8 +231,7 @@ test('menu move scrolls to the card in a paginated destination column', async ({
   await page.getByLabel('Move First task to Done').click()
 
   await expect(doneList).toContainText('First task')
-  await expect.poll(() => doneList.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0)
+  await expect(doneList.locator('.kanban-card').first()).toContainText('First task')
 
   const visible = await page.evaluate(() => {
     const list = document.querySelector('[aria-label="Cards in Done"]')
@@ -245,6 +245,150 @@ test('menu move scrolls to the card in a paginated destination column', async ({
     return cardRect.bottom > listRect.top + 8 && cardRect.top < listRect.bottom - 8
   })
   expect(visible).toBe(true)
+})
+
+test('menu move expands a collapsed destination column and reveals the card', async ({ page }) => {
+  await waitUntilMoveReady(page)
+  await page.evaluate(() => {
+    window.__quickKanbanStore.commit('SET_COLUMN_COLLAPSED', {
+      columnKey: 'Done',
+      collapsed: true,
+    })
+  })
+  await expect(page.locator('.kanban-column[data-column-value="Done"]')).toHaveClass(
+    /kanban-column--collapsed/,
+  )
+
+  await openWithoutAutoScroll(page.getByLabel('Move First task'))
+  await page.getByLabel('Move First task to Done').click()
+
+  await expect(page.locator('.kanban-column[data-column-value="Done"]')).not.toHaveClass(
+    /kanban-column--collapsed/,
+  )
+  await expect(page.getByLabel('Cards in Done')).toContainText('First task')
+  await expect(page.locator('.kanban-card[data-card-name="TASK-1"]')).toBeVisible()
+})
+
+test('drag drop expands a collapsed destination column and reveals the card', async ({ page }) => {
+  await waitUntilMoveReady(page)
+  await page.evaluate(() => {
+    window.__quickKanbanStore.commit('SET_COLUMN_COLLAPSED', {
+      columnKey: 'Done',
+      collapsed: true,
+    })
+  })
+  await expect(page.locator('.kanban-column[data-column-value="Done"]')).toHaveClass(
+    /kanban-column--collapsed/,
+  )
+
+  const source = await page.getByLabel('Drag First task').boundingBox()
+  const target = await page.locator('.kanban-column[data-column-value="Done"]').boundingBox()
+  if (!source || !target) throw new Error('Drag coordinates are unavailable')
+
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(source.x + source.width / 2 + 8, source.y + source.height / 2 + 8, {
+    steps: 4,
+  })
+  // Dwell so Sortable can target the collapsed strip; post-drop expand still required.
+  await page.waitForTimeout(450)
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, {
+    steps: 20,
+  })
+  await page.mouse.up()
+
+  await expect(page.locator('.kanban-column[data-column-value="Done"]')).not.toHaveClass(
+    /kanban-column--collapsed/,
+  )
+  await expect(page.getByLabel('Cards in Done')).toContainText('First task')
+  await expect(page.locator('.kanban-card[data-card-name="TASK-1"]')).toBeVisible()
+})
+
+test('swimlane menu move expands a collapsed destination column and reveals the card', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__quickKanbanPermissiveMoves = true
+    const store = window.__quickKanbanStore
+    const makeCards = (prefix, status, count) => Array.from({ length: count }, (_, index) => ({
+      name: `${prefix}-${index + 1}`,
+      subject: `${prefix} ${index + 1}`,
+      status,
+      project: 'Alpha',
+      modified: '2026-07-10 10:00:00',
+    }))
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Swim Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject', 'status', 'project'],
+      title_field: 'subject',
+      title_field_meta: {
+        fieldname: 'subject',
+        label: 'Subject',
+        fieldtype: 'Data',
+        parent: 'Task',
+      },
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        display_name: 'Open',
+        indicator: 'blue',
+        custom_column_width: 720,
+        cards: [],
+      },
+      {
+        name: 'done',
+        column_name: 'Done',
+        display_name: 'Done',
+        indicator: 'green',
+        custom_column_width: 720,
+        cards: [],
+      },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'alpha',
+        label: 'Alpha',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: makeCards('OPEN-A', 'Open', 2) },
+          { name: 'done', column_name: 'Done', cards: makeCards('DONE-A', 'Done', 1) },
+        ],
+      },
+    ])
+    store.commit('SET_CELL_TOTALS', {
+      alpha: { Open: 2, Done: 1 },
+    })
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alpha'])
+    store.commit('SET_COLUMN_COLLAPSED', {
+      columnKey: 'Done',
+      collapsed: true,
+    })
+    store.commit('SET_LOADING', false)
+    store.commit('SET_ERROR', '')
+  })
+
+  await expect(page.locator('.kanban--swimlanes')).toBeVisible()
+  await expect(
+    page.locator('.swimlane-header-row .kanban-column[data-column-value="Done"]'),
+  ).toHaveClass(/kanban-column--collapsed/)
+
+  const moveTrigger = page.getByLabel('Move OPEN-A 1')
+  await expect(moveTrigger).toBeEnabled({ timeout: 10000 })
+  await openWithoutAutoScroll(moveTrigger)
+  await page.getByLabel('Move OPEN-A 1 to Done').click()
+
+  await expect(
+    page.locator('.swimlane-header-row .kanban-column[data-column-value="Done"]'),
+  ).not.toHaveClass(/kanban-column--collapsed/)
+  await expect(
+    page.locator(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-group[data-column-value="Done"] .kanban-card[data-card-name="OPEN-A-1"]',
+    ),
+  ).toBeVisible()
 })
 
 test('restores a card after a rejected move', async ({ page }) => {
@@ -1218,6 +1362,36 @@ test('persists column order when the board is reordered with write access', asyn
   expect(lastCall.order).toBe(JSON.stringify(['Done', 'Open']))
 })
 
+test('classic columns keep cards inside the column scrollport', async ({ page }) => {
+  await expect(page.locator('.kanban:not(.kanban--swimlanes)')).toBeVisible()
+  const bounds = await page.evaluate(() => {
+    const board = document.querySelector('.kanban:not(.kanban--swimlanes)')
+    const column = board?.querySelector('.kanban-column:not(.kanban-column--collapsed)')
+    const list = column?.querySelector('.kanban-card-list')
+    const cards = [...(column?.querySelectorAll('.kanban-card') || [])]
+    if (!board || !column || !list || !cards.length) {
+      return null
+    }
+    const columnRect = column.getBoundingClientRect()
+    const boardRect = board.getBoundingClientRect()
+    const cardBottoms = cards.map((card) => Math.round(card.getBoundingClientRect().bottom))
+    return {
+      listOverflowY: getComputedStyle(list).overflowY,
+      columnOverflow: getComputedStyle(column).overflow,
+      boardOverflowY: getComputedStyle(board).overflowY,
+      maxCardBottom: Math.max(...cardBottoms),
+      columnBottom: Math.round(columnRect.bottom),
+      boardBottom: Math.round(boardRect.bottom),
+    }
+  })
+  expect(bounds).not.toBeNull()
+  expect(bounds.listOverflowY).toBe('auto')
+  expect(bounds.columnOverflow).toBe('hidden')
+  expect(bounds.boardOverflowY).toBe('hidden')
+  expect(bounds.maxCardBottom).toBeLessThanOrEqual(bounds.columnBottom + 1)
+  expect(bounds.maxCardBottom).toBeLessThanOrEqual(bounds.boardBottom + 1)
+})
+
 test('opens inline editor after with_doc and saves through set_value', async ({ page }) => {
   const card = page.getByRole('listitem').filter({ hasText: 'First task' })
   const title = card.locator('.kanban-inline-field--title')
@@ -1372,4 +1546,573 @@ test('double-click on card chrome opens the card form', async ({ page }) => {
   await expect.poll(() =>
     page.evaluate(() => window.__lastFormRoute),
   ).toEqual(['Form', 'Task', 'TASK-1'])
+})
+
+test('swimlane rows share height and horizontal scroll across columns', async ({ page }) => {
+  await page.evaluate(() => {
+    const store = window.__quickKanbanStore
+    const makeCards = (prefix, status, count) => Array.from({ length: count }, (_, index) => ({
+      name: `${prefix}-${index + 1}`,
+      subject: `${prefix} ${index + 1}`,
+      status,
+    }))
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Swim Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject', 'status', 'project'],
+      title_field: 'subject',
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        display_name: 'Open',
+        indicator: 'blue',
+        custom_column_width: 720,
+        cards: [],
+      },
+      {
+        name: 'done',
+        column_name: 'Done',
+        display_name: 'Done',
+        indicator: 'green',
+        custom_column_width: 720,
+        cards: [],
+      },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'alpha',
+        label: 'Alpha',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: makeCards('OPEN-A', 'Open', 5) },
+          { name: 'done', column_name: 'Done', cards: makeCards('DONE-A', 'Done', 2) },
+        ],
+      },
+      {
+        key: 'beta',
+        label: 'Beta',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: makeCards('OPEN-B', 'Open', 1) },
+          { name: 'done', column_name: 'Done', cards: makeCards('DONE-B', 'Done', 1) },
+        ],
+      },
+    ])
+    store.commit('SET_CELL_TOTALS', {
+      alpha: { Open: 5, Done: 2 },
+      beta: { Open: 1, Done: 1 },
+    })
+    store.commit('SET_CELL_PAGINATION', {
+      'alpha::Open': { offset: 5, hasMore: true, loading: false },
+      'alpha::Done': { offset: 2, hasMore: false, loading: false },
+      'beta::Open': { offset: 1, hasMore: false, loading: false },
+      'beta::Done': { offset: 1, hasMore: false, loading: false },
+    })
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alpha'])
+    store.commit('SET_LOADING', false)
+    store.commit('SET_ERROR', '')
+  })
+
+  await expect(page.locator('.kanban--swimlanes')).toBeVisible()
+  await expect(page.locator('.swimlane-lane[data-lane-key="alpha"]')).toBeVisible()
+  await expect(page.getByText('OPEN-A 1')).toBeVisible()
+
+  const laneChrome = await page.evaluate(() => {
+    const alpha = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    const toggles = [...document.querySelectorAll('.swimlane-lane-toggle')]
+    const titles = [...document.querySelectorAll('.swimlane-lane-title')].map((n) => n.textContent.trim())
+    const counts = Object.fromEntries(
+      [...document.querySelectorAll('.swimlane-lane')].map((lane) => [
+        lane.getAttribute('data-lane-key'),
+        lane.querySelector('.swimlane-lane-count')?.textContent?.trim() || '',
+      ]),
+    )
+    const sticky = alpha?.querySelector('.swimlane-lane-sticky')
+    const laneHeader = alpha?.querySelector('.swimlane-lane-header')
+    const toggle = alpha?.querySelector('.swimlane-lane-toggle')
+    const board = document.querySelector('.kanban--swimlanes')
+    const stickyBg = sticky ? getComputedStyle(sticky).backgroundColor : ''
+    const alphaMatch = stickyBg.match(/rgba?\(([^)]+)\)/)
+    let chromeAlpha = 1
+    if (alphaMatch) {
+      const parts = alphaMatch[1].split(',').map((part) => part.trim())
+      chromeAlpha = parts.length === 4 ? Number(parts[3]) : 1
+    }
+    return {
+      toggleCount: toggles.length,
+      titles,
+      counts,
+      groupHeaders: document.querySelectorAll('.swimlane-group-header').length,
+      chromeRows: document.querySelectorAll('.swimlane-chrome-row').length,
+      stickyPosition: sticky ? getComputedStyle(sticky).position : null,
+      headerPosition: laneHeader ? getComputedStyle(laneHeader).position : null,
+      headerTransparent: laneHeader
+        ? ['transparent', 'rgba(0, 0, 0, 0)'].includes(getComputedStyle(laneHeader).backgroundColor)
+        : false,
+      toggleSticky: toggle ? getComputedStyle(toggle).position : null,
+      stickyTopVar: board?.style.getPropertyValue('--swimlane-sticky-lanes-top') || '',
+      labelInsetVar: board?.style.getPropertyValue('--swimlane-label-inset') || '',
+      chromeAlpha,
+    }
+  })
+  expect(laneChrome.toggleCount).toBe(2)
+  expect(laneChrome.titles).toEqual(['Alpha', 'Beta'])
+  expect(laneChrome.counts).toEqual({ alpha: '7', beta: '2' })
+  expect(laneChrome.groupHeaders).toBe(0)
+  expect(laneChrome.chromeRows).toBe(2)
+  expect(laneChrome.stickyPosition).toBe('sticky')
+  expect(laneChrome.headerPosition).toBe('relative')
+  expect(laneChrome.headerTransparent).toBe(true)
+  expect(laneChrome.toggleSticky).toBe('sticky')
+  expect(laneChrome.stickyTopVar).toMatch(/\d+px/)
+  expect(laneChrome.labelInsetVar).toBe('0px')
+  expect(laneChrome.chromeAlpha).toBeGreaterThan(0.08)
+  expect(laneChrome.chromeAlpha).toBeLessThan(0.35)
+
+  const initial = await page.evaluate(() => {
+    const lane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    const row = lane.querySelector('.swimlane-row')
+    const groups = [...row.querySelectorAll('.swimlane-group')]
+    const rects = groups.map((group) => group.getBoundingClientRect())
+    const lists = [...row.querySelectorAll('.kanban-card-list')]
+    return {
+      tops: rects.map((rect) => Math.round(rect.top)),
+      bottoms: rects.map((rect) => Math.round(rect.bottom)),
+      height: Math.round(rects[0]?.height || 0),
+      nestedOverflowY: lists.map((list) => getComputedStyle(list).overflowY),
+      nestedOverflowX: [
+        ...document.querySelectorAll('.swimlane-row, .swimlane-header-row, .swimlane-group-body'),
+      ].map((node) => getComputedStyle(node).overflowX),
+    }
+  })
+  expect(new Set(initial.tops).size).toBe(1)
+  expect(new Set(initial.bottoms).size).toBe(1)
+  expect(initial.nestedOverflowY.every((value) => !['auto', 'scroll'].includes(value))).toBe(true)
+  expect(initial.nestedOverflowX.every((value) => !['auto', 'scroll'].includes(value))).toBe(true)
+
+  await expect.poll(async () => page.evaluate(() => {
+    const board = document.querySelector('.kanban--swimlanes')
+    return board.scrollWidth > board.clientWidth + 40
+  })).toBe(true)
+  await page.evaluate(() => {
+    document.querySelector('.kanban--swimlanes').scrollLeft = 120
+  })
+  const scrolled = await page.evaluate(() => {
+    const board = document.querySelector('.kanban--swimlanes')
+    const header = document.querySelector('.swimlane-header-row')
+    const lane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    const row = lane.querySelector('.swimlane-row')
+    const toggle = lane.querySelector('.swimlane-lane-toggle')
+    const groups = [...row.querySelectorAll('.swimlane-group')]
+    const boardLeft = Math.round(board.getBoundingClientRect().left)
+    return {
+      scrollLeft: board.scrollLeft,
+      headerLeft: Math.round(header.getBoundingClientRect().left),
+      rowLeft: Math.round(row.getBoundingClientRect().left),
+      toggleLeft: Math.round(toggle.getBoundingClientRect().left),
+      boardLeft,
+      tops: groups.map((group) => Math.round(group.getBoundingClientRect().top)),
+    }
+  })
+  expect(scrolled.scrollLeft).toBeGreaterThanOrEqual(120)
+  expect(scrolled.headerLeft).toBe(scrolled.rowLeft)
+  expect(Math.abs(scrolled.toggleLeft - scrolled.boardLeft)).toBeLessThanOrEqual(2)
+  expect(new Set(scrolled.tops).size).toBe(1)
+
+  await page.evaluate(() => {
+    document.querySelector('.kanban--swimlanes').scrollLeft = 0
+    document.querySelector('.kanban--swimlanes').scrollTop = 80
+  })
+  const scrolledY = await page.evaluate(() => {
+    const board = document.querySelector('.kanban--swimlanes')
+    const colHeader = document.querySelector('.swimlane-header-row')
+    const sticky = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-lane-sticky',
+    )
+    const title = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-lane-title',
+    )
+    if (!board || !colHeader || !sticky || !title) {
+      return null
+    }
+    const headerBg = getComputedStyle(colHeader).backgroundColor
+    return {
+      scrollTop: board.scrollTop,
+      stickyTop: Math.round(sticky.getBoundingClientRect().top),
+      colHeaderBottom: Math.round(colHeader.getBoundingClientRect().bottom),
+      titleVisible: title.getBoundingClientRect().width > 0
+        && getComputedStyle(title).visibility !== 'hidden',
+      headerBg,
+      headerBgTransparent: headerBg === 'rgba(0, 0, 0, 0)' || headerBg === 'transparent',
+    }
+  })
+  expect(scrolledY).not.toBeNull()
+  expect(scrolledY.scrollTop).toBeGreaterThanOrEqual(80)
+  expect(Math.abs(scrolledY.stickyTop - scrolledY.colHeaderBottom)).toBeLessThanOrEqual(2)
+  expect(scrolledY.titleVisible).toBe(true)
+  expect(scrolledY.headerBgTransparent).toBe(false)
+
+  await page.evaluate(() => {
+    const store = window.__quickKanbanStore
+    const lane = store.state.lanes[0]
+    const extra = Array.from({ length: 4 }, (_, index) => ({
+      name: `OPEN-A-EXTRA-${index + 1}`,
+      subject: `OPEN-A EXTRA ${index + 1}`,
+      status: 'Open',
+    }))
+    store.commit('SET_COLUMN_CARDS', {
+      laneIndex: 0,
+      columnIndex: 0,
+      cards: [...lane.columns[0].cards, ...extra],
+    })
+    store.commit('BUMP_DRAG_SYNC')
+  })
+  await expect(page.getByText('OPEN-A EXTRA 1')).toBeVisible()
+  await expect.poll(async () => page.evaluate(() => {
+    const row = document.querySelector('.swimlane-lane[data-lane-key="alpha"] .swimlane-row')
+    const groups = [...row.querySelectorAll('.swimlane-group')]
+    const rects = groups.map((group) => group.getBoundingClientRect())
+    return {
+      height: Math.round(rects[0]?.height || 0),
+      sameBottom: Math.round(rects[0].bottom) === Math.round(rects[1].bottom),
+    }
+  })).toMatchObject({
+    sameBottom: true,
+  })
+  const grown = await page.evaluate(() => {
+    const row = document.querySelector('.swimlane-lane[data-lane-key="alpha"] .swimlane-row')
+    const groups = [...row.querySelectorAll('.swimlane-group')]
+    const rects = groups.map((group) => group.getBoundingClientRect())
+    return {
+      height: Math.round(row.getBoundingClientRect().height),
+      sameBottom: Math.round(rects[0].bottom) === Math.round(rects[1].bottom),
+      cardCount: row.querySelectorAll('.kanban-card').length,
+    }
+  })
+  // Row may already fill the viewport (no growth), but cells must stay aligned.
+  expect(grown.height).toBeGreaterThanOrEqual(initial.height)
+  expect(grown.sameBottom).toBe(true)
+  expect(grown.cardCount).toBeGreaterThan(5)
+
+  const containment = await page.evaluate(() => {
+    const group = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-group[data-column-value="Open"]',
+    )
+    const cell = group?.querySelector('.kanban-column--cell')
+    const list = group?.querySelector('.kanban-card-list')
+    const cards = [...(group?.querySelectorAll('.kanban-card') || [])]
+    const last = cards[cards.length - 1]
+    const board = document.querySelector('.kanban--swimlanes')
+    if (!group || !cell || !list || !last || !board) {
+      return null
+    }
+    return {
+      groupBottom: Math.round(group.getBoundingClientRect().bottom),
+      lastCardBottom: Math.round(last.getBoundingClientRect().bottom),
+      listOverflowY: getComputedStyle(list).overflowY,
+      cellMaxHeight: getComputedStyle(cell).maxHeight,
+      boardCanScroll: board.scrollHeight >= board.clientHeight,
+    }
+  })
+  expect(containment).not.toBeNull()
+  expect(containment.lastCardBottom).toBeLessThanOrEqual(containment.groupBottom + 1)
+  expect(['auto', 'scroll'].includes(containment.listOverflowY)).toBe(false)
+  expect(containment.cellMaxHeight).toBe('none')
+
+  const colorMatch = await page.evaluate(() => {
+    const header = [...document.querySelectorAll('.swimlane-header-row .kanban-column')]
+      .find((node) => node.querySelector('.column-title')?.textContent === 'Open')
+    const group = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-group[data-column-value="Open"]',
+    )
+    if (!header || !group) {
+      return null
+    }
+    return {
+      headerBg: getComputedStyle(header).backgroundColor,
+      groupBg: getComputedStyle(group).backgroundColor,
+    }
+  })
+  expect(colorMatch).not.toBeNull()
+  expect(colorMatch.groupBg).toBe(colorMatch.headerBg)
+  expect(colorMatch.groupBg).not.toBe('rgba(0, 0, 0, 0)')
+
+  const laneTint = await page.evaluate(() => {
+    const board = document.querySelector('.kanban--swimlanes')
+    const group = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-group[data-column-value="Open"]',
+    )
+    const lane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    if (!board || !group || !lane) {
+      return null
+    }
+    return {
+      tintVar: getComputedStyle(board).getPropertyValue('--swimlane-lane-tint').trim(),
+      groupShadow: getComputedStyle(group).boxShadow,
+      laneBg: getComputedStyle(lane).backgroundColor,
+    }
+  })
+  expect(laneTint).not.toBeNull()
+  expect(laneTint.tintVar.length).toBeGreaterThan(0)
+  expect(laneTint.groupShadow).toContain('inset')
+  expect(laneTint.laneBg).not.toBe('rgba(0, 0, 0, 0)')
+
+  await expect(page.locator('.swimlane-header-row .column-title--draggable')).toHaveCount(2)
+
+  const continuousTrack = await page.evaluate(() => {
+    const header = document.querySelector('.swimlane-header-row')
+    const alphaLane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    const betaLane = document.querySelector('.swimlane-lane[data-lane-key="beta"]')
+    const alphaGroup = alphaLane?.querySelector('.swimlane-group[data-column-value="Open"]')
+    const sticky = alphaLane?.querySelector('.swimlane-lane-sticky')
+    const chromeCell = alphaLane?.querySelector(
+      '.swimlane-chrome-cell[data-column-value="Open"]',
+    )
+    if (!header || !alphaLane || !betaLane || !alphaGroup || !sticky || !chromeCell) {
+      return null
+    }
+    const headerBottom = Math.round(header.getBoundingClientRect().bottom)
+    const alphaLaneTop = Math.round(alphaLane.getBoundingClientRect().top)
+    const alphaLaneBottom = Math.round(alphaLane.getBoundingClientRect().bottom)
+    const betaLaneTop = Math.round(betaLane.getBoundingClientRect().top)
+    const stickyBottom = Math.round(sticky.getBoundingClientRect().bottom)
+    const alphaGroupTop = Math.round(alphaGroup.getBoundingClientRect().top)
+    const openHeader = [...document.querySelectorAll('.swimlane-header-row .kanban-column')]
+      .find((node) => node.querySelector('.column-title')?.textContent === 'Open')
+    return {
+      headerToLaneGap: alphaLaneTop - headerBottom,
+      laneToLaneGap: betaLaneTop - alphaLaneBottom,
+      stickyToGroupGap: alphaGroupTop - stickyBottom,
+      chromeLeft: Math.round(chromeCell.getBoundingClientRect().left),
+      headerColLeft: openHeader ? Math.round(openHeader.getBoundingClientRect().left) : null,
+      lastLane: betaLane.classList.contains('swimlane-lane--last'),
+    }
+  })
+  expect(continuousTrack).not.toBeNull()
+  expect(continuousTrack.headerToLaneGap).toBeLessThanOrEqual(1)
+  expect(continuousTrack.laneToLaneGap).toBeLessThanOrEqual(1)
+  expect(continuousTrack.stickyToGroupGap).toBeLessThanOrEqual(1)
+  expect(Math.abs(continuousTrack.chromeLeft - continuousTrack.headerColLeft))
+    .toBeLessThanOrEqual(2)
+  expect(continuousTrack.lastLane).toBe(true)
+
+  const collapsedLaneTracks = await page.evaluate(() => {
+    const openHeader = [...document.querySelectorAll('.swimlane-header-row .kanban-column')]
+      .find((node) => node.querySelector('.column-title')?.textContent === 'Open')
+    const betaLane = document.querySelector('.swimlane-lane[data-lane-key="beta"]')
+    const chromeCell = betaLane?.querySelector(
+      '.swimlane-chrome-cell[data-column-value="Open"]',
+    )
+    const betaSticky = betaLane?.querySelector('.swimlane-lane-sticky')
+    const alphaLane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    if (!openHeader || !betaLane || !chromeCell || !betaSticky || !alphaLane) {
+      return null
+    }
+    const headerRect = openHeader.getBoundingClientRect()
+    const chromeRect = chromeCell.getBoundingClientRect()
+    const stickyBg = getComputedStyle(betaSticky).backgroundColor
+    const alphaMatch = stickyBg.match(/rgba?\(([^)]+)\)/)
+    let stickyAlpha = 1
+    if (alphaMatch) {
+      const parts = alphaMatch[1].split(',').map((part) => part.trim())
+      stickyAlpha = parts.length === 4 ? Number(parts[3]) : 1
+    }
+    return {
+      collapsed: betaLane.classList.contains('swimlane-lane--collapsed'),
+      chromeWidth: Math.round(chromeRect.width),
+      headerColWidth: Math.round(headerRect.width),
+      chromeLeft: Math.round(chromeRect.left),
+      headerColLeft: Math.round(headerRect.left),
+      laneWidth: Math.round(betaLane.getBoundingClientRect().width),
+      alphaLaneWidth: Math.round(alphaLane.getBoundingClientRect().width),
+      stickyWidth: Math.round(betaSticky.getBoundingClientRect().width),
+      stickyAlpha,
+      chromeBg: getComputedStyle(chromeCell).backgroundColor,
+      headerColBg: getComputedStyle(openHeader).backgroundColor,
+    }
+  })
+  expect(collapsedLaneTracks).not.toBeNull()
+  expect(collapsedLaneTracks.collapsed).toBe(true)
+  expect(collapsedLaneTracks.chromeWidth).toBeGreaterThan(40)
+  expect(Math.abs(collapsedLaneTracks.chromeWidth - collapsedLaneTracks.headerColWidth))
+    .toBeLessThanOrEqual(2)
+  expect(Math.abs(collapsedLaneTracks.chromeLeft - collapsedLaneTracks.headerColLeft))
+    .toBeLessThanOrEqual(2)
+  expect(collapsedLaneTracks.laneWidth).toBeGreaterThan(collapsedLaneTracks.chromeWidth)
+  expect(Math.abs(collapsedLaneTracks.laneWidth - collapsedLaneTracks.alphaLaneWidth))
+    .toBeLessThanOrEqual(2)
+  expect(collapsedLaneTracks.stickyWidth).toBeGreaterThanOrEqual(collapsedLaneTracks.laneWidth - 2)
+  expect(collapsedLaneTracks.stickyAlpha).toBeGreaterThan(0.08)
+  expect(collapsedLaneTracks.stickyAlpha).toBeLessThan(0.35)
+  expect(collapsedLaneTracks.chromeBg).toBe(collapsedLaneTracks.headerColBg)
+
+  const beforeCollapse = await page.evaluate(() => {
+    const header = document.querySelector('.swimlane-header-row')
+    const firstLane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    return {
+      gap: Math.round(firstLane.getBoundingClientRect().top - header.getBoundingClientRect().bottom),
+      headerHeight: Math.round(header.getBoundingClientRect().height),
+    }
+  })
+
+  await page.evaluate(() => {
+    window.__quickKanbanStore.commit('SET_COLUMN_COLLAPSED', {
+      columnKey: 'Open',
+      collapsed: true,
+    })
+  })
+  await expect(
+    page.locator('.swimlane-lane[data-lane-key="alpha"] .swimlane-cell-spacer'),
+  ).toHaveCount(1)
+  await expect(
+    page.locator('.swimlane-lane[data-lane-key="alpha"] .swimlane-group'),
+  ).toHaveCount(1)
+
+  await expect.poll(async () => page.evaluate(() => {
+    const board = document.querySelector('.kanban--swimlanes')
+    return board?.style.getPropertyValue('--swimlane-label-inset') || ''
+  })).toBe('60px')
+
+  const labelInsetAlign = await page.evaluate(() => {
+    document.querySelector('.kanban--swimlanes').scrollLeft = 0
+    const doneHeader = [...document.querySelectorAll('.swimlane-header-row .kanban-column')]
+      .find((node) => node.querySelector('.column-title')?.textContent === 'Done')
+    const toggle = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-lane-toggle',
+    )
+    if (!doneHeader || !toggle) {
+      return null
+    }
+    return {
+      toggleLeft: Math.round(toggle.getBoundingClientRect().left),
+      firstOpenColLeft: Math.round(doneHeader.getBoundingClientRect().left),
+    }
+  })
+  expect(labelInsetAlign).not.toBeNull()
+  expect(Math.abs(labelInsetAlign.toggleLeft - labelInsetAlign.firstOpenColLeft))
+    .toBeLessThanOrEqual(4)
+
+  await expect.poll(async () => page.evaluate(() => {
+    const header = document.querySelector('.swimlane-header-row')
+    const firstLane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    const laneHeader = firstLane?.querySelector('.swimlane-lane-header')
+    const collapsed = document.querySelector(
+      '.swimlane-header-row .kanban-column--header-only.kanban-column--collapsed',
+    )
+    const expanded = [...document.querySelectorAll(
+      '.swimlane-header-row .kanban-column--header-only:not(.kanban-column--collapsed)',
+    )][0]
+    const spacer = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-cell-spacer[data-column-value="Open"]',
+    )
+    const doneGroup = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-group[data-column-value="Done"]',
+    )
+    if (!collapsed || !spacer || !expanded || !doneGroup || !laneHeader) {
+      return null
+    }
+    const count = collapsed.querySelector('.column-count')
+    const title = collapsed.querySelector('.column-title')
+    const menuBtn = collapsed.querySelector('.quick-kanban-column-menu .header-item')
+    const columnHeader = collapsed.querySelector('.kanban-column-header')
+    const headerStyle = columnHeader ? getComputedStyle(columnHeader) : null
+    const headerHeight = Math.round(header.getBoundingClientRect().height)
+    const expandedHeight = Math.round(expanded.getBoundingClientRect().height)
+    const countTop = count ? Math.round(count.getBoundingClientRect().top) : null
+    const titleTop = title ? Math.round(title.getBoundingClientRect().top) : null
+    const menuTop = menuBtn ? Math.round(menuBtn.getBoundingClientRect().top) : null
+    return {
+      gap: Math.round(firstLane.getBoundingClientRect().top - header.getBoundingClientRect().bottom),
+      collapsedHeight: Math.round(collapsed.getBoundingClientRect().height),
+      headerHeight,
+      expandedHeight,
+      stretchFill: expandedHeight === headerHeight,
+      stickyToGroupGap: Math.round(
+        doneGroup.getBoundingClientRect().top
+          - firstLane.querySelector('.swimlane-lane-sticky').getBoundingClientRect().bottom,
+      ),
+      headerBg: getComputedStyle(collapsed).backgroundColor,
+      spacerBg: getComputedStyle(spacer).backgroundColor,
+      headerPosition: headerStyle?.position || null,
+      chromeOrderOk: countTop != null && titleTop != null && menuTop != null
+        && countTop < titleTop
+        && titleTop < menuTop,
+      spacerAlignedWithDone: Math.round(spacer.getBoundingClientRect().top)
+        === Math.round(doneGroup.getBoundingClientRect().top),
+    }
+  })).toMatchObject({
+    headerPosition: 'absolute',
+    chromeOrderOk: true,
+    stretchFill: true,
+  })
+  const afterCollapse = await page.evaluate(() => {
+    const header = document.querySelector('.swimlane-header-row')
+    const firstLane = document.querySelector('.swimlane-lane[data-lane-key="alpha"]')
+    const sticky = firstLane.querySelector('.swimlane-lane-sticky')
+    const collapsed = document.querySelector(
+      '.swimlane-header-row .kanban-column--header-only.kanban-column--collapsed',
+    )
+    const expanded = [...document.querySelectorAll(
+      '.swimlane-header-row .kanban-column--header-only:not(.kanban-column--collapsed)',
+    )][0]
+    const spacer = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-cell-spacer[data-column-value="Open"]',
+    )
+    const doneGroup = document.querySelector(
+      '.swimlane-lane[data-lane-key="alpha"] .swimlane-group[data-column-value="Done"]',
+    )
+    return {
+      gap: Math.round(firstLane.getBoundingClientRect().top - header.getBoundingClientRect().bottom),
+      collapsedHeight: Math.round(collapsed.getBoundingClientRect().height),
+      headerHeight: Math.round(header.getBoundingClientRect().height),
+      expandedHeight: Math.round(expanded.getBoundingClientRect().height),
+      stickyToGroupGap: Math.round(
+        doneGroup.getBoundingClientRect().top - sticky.getBoundingClientRect().bottom,
+      ),
+      headerBg: getComputedStyle(collapsed).backgroundColor,
+      spacerBg: getComputedStyle(spacer).backgroundColor,
+      spacerAlignedWithDone: Math.round(spacer.getBoundingClientRect().top)
+        === Math.round(doneGroup.getBoundingClientRect().top),
+    }
+  })
+  expect(afterCollapse.collapsedHeight).toBeGreaterThan(0)
+  expect(afterCollapse.expandedHeight).toBe(afterCollapse.headerHeight)
+  expect(afterCollapse.stickyToGroupGap).toBeLessThanOrEqual(1)
+  expect(afterCollapse.spacerAlignedWithDone).toBe(true)
+  // Compact collapsed chrome must not inflate sticky row past expanded header height.
+  expect(afterCollapse.headerHeight).toBeLessThanOrEqual(beforeCollapse.headerHeight + 12)
+  expect(afterCollapse.gap).toBeLessThanOrEqual(beforeCollapse.gap + 2)
+  expect(afterCollapse.headerBg).toBe(afterCollapse.spacerBg)
+  expect(afterCollapse.headerBg).not.toBe('rgba(0, 0, 0, 0)')
+
+  const collapsedColumn = page.locator(
+    '.swimlane-header-row .kanban-column--header-only.kanban-column--collapsed',
+  )
+  await collapsedColumn.getByLabel('Change Open column color').click()
+  await expect(collapsedColumn.locator('.column-dropdown')).toBeVisible()
+  await expect(collapsedColumn.getByLabel('Open Open column')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(collapsedColumn.locator('.column-dropdown')).toHaveCount(0)
+
+  await collapsedColumn.getByLabel('Change Open column color').click()
+  await collapsedColumn.getByLabel('Open Open column').click()
+  await expect(
+    page.locator('.swimlane-header-row .kanban-column--header-only.kanban-column--collapsed'),
+  ).toHaveCount(0)
+  await expect(
+    page.locator('.swimlane-lane[data-lane-key="alpha"] .swimlane-cell-spacer'),
+  ).toHaveCount(0)
+
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate((value) => window.__setQuickKanbanTheme(value), theme)
+    await expect(page.locator('.swimlane-lane[data-lane-key="alpha"]')).toBeVisible()
+  }
+
+  await expect(
+    page.locator('.swimlane-lane[data-lane-key="alpha"] .drag-handle').first(),
+  ).toBeVisible()
 })

@@ -11,6 +11,62 @@ export function resolveScrollBehavior() {
   return prefersReducedMotion() ? 'auto' : 'smooth'
 }
 
+/**
+ * Resolve a component root Element from a Vue component instance / expose proxy.
+ * Script-setup + defineExpose refs often omit `$el`; prefer getRootEl when exposed.
+ */
+export function resolveComponentRootEl(component) {
+  if (!component) {
+    return null
+  }
+  if (typeof component.getRootEl === 'function') {
+    const fromGetter = component.getRootEl()
+    if (fromGetter instanceof Element) {
+      return fromGetter
+    }
+  }
+  const el = component.$el
+  if (el instanceof Element) {
+    return el
+  }
+  if (component instanceof Element) {
+    return component
+  }
+  return null
+}
+
+/**
+ * Bottom edge (viewport Y) of sticky swimlane chrome above cards.
+ * Matches KanbanColumn scroll-to-top inset logic.
+ */
+export function getLaneStickyBottom(scroller, columnEl) {
+  if (!scroller) {
+    return 0
+  }
+  const laneSticky = columnEl?.closest?.('.swimlane-lane')
+    ?.querySelector('.swimlane-lane-sticky')
+  if (laneSticky) {
+    return laneSticky.getBoundingClientRect().bottom
+  }
+  const header = scroller.querySelector?.('.swimlane-header-row')
+  if (header) {
+    return header.getBoundingClientRect().bottom
+  }
+  return scroller.getBoundingClientRect().top
+}
+
+/**
+ * Top inset (px inside scroller viewport) occupied by sticky chrome.
+ */
+export function getScrollerTopInset(scroller, columnEl) {
+  if (!scroller) {
+    return 0
+  }
+  const stickyBottom = getLaneStickyBottom(scroller, columnEl)
+  const scrollerTop = scroller.getBoundingClientRect().top
+  return Math.max(0, stickyBottom - scrollerTop)
+}
+
 export function scrollColumnIntoView(
   columnEl,
   boardEl,
@@ -32,10 +88,14 @@ export function scrollColumnIntoView(
     return false
   }
 
-  boardEl.scrollTo({
-    left: Math.max(0, targetScrollLeft),
-    behavior,
-  })
+  if (typeof boardEl.scrollTo === 'function') {
+    boardEl.scrollTo({
+      left: Math.max(0, targetScrollLeft),
+      behavior,
+    })
+  } else {
+    boardEl.scrollLeft = Math.max(0, targetScrollLeft)
+  }
   return true
 }
 
@@ -64,6 +124,62 @@ export function isCardVisibleInList(cardEl, listEl, margin = DEFAULT_MARGIN) {
   )
 }
 
+export function isCardVisibleInScroller(
+  cardEl,
+  scrollerEl,
+  {
+    margin = DEFAULT_MARGIN,
+    topInset = 0,
+    bottomInset = 0,
+  } = {},
+) {
+  if (!cardEl || !scrollerEl) {
+    return false
+  }
+  const cardRect = cardEl.getBoundingClientRect()
+  const scrollerRect = scrollerEl.getBoundingClientRect()
+  const visibleTop = scrollerRect.top + topInset + margin
+  const visibleBottom = scrollerRect.bottom - bottomInset - margin
+  return cardRect.bottom > visibleTop && cardRect.top < visibleBottom
+}
+
+export function scrollCardIntoScroller(
+  cardEl,
+  scrollerEl,
+  {
+    behavior = 'auto',
+    margin = DEFAULT_MARGIN,
+    topInset = 0,
+    bottomInset = 0,
+  } = {},
+) {
+  if (!cardEl || !scrollerEl) {
+    return false
+  }
+
+  const cardRect = cardEl.getBoundingClientRect()
+  const scrollerRect = scrollerEl.getBoundingClientRect()
+  const visibleTop = scrollerRect.top + topInset + margin
+  const visibleBottom = scrollerRect.bottom - bottomInset - margin
+  let delta = 0
+
+  if (cardRect.top < visibleTop) {
+    delta = cardRect.top - visibleTop
+  } else if (cardRect.bottom > visibleBottom) {
+    delta = cardRect.bottom - visibleBottom
+  } else {
+    return false
+  }
+
+  const nextTop = Math.max(0, scrollerEl.scrollTop + delta)
+  if (typeof scrollerEl.scrollTo === 'function') {
+    scrollerEl.scrollTo({ top: nextTop, behavior })
+  } else {
+    scrollerEl.scrollTop = nextTop
+  }
+  return true
+}
+
 export function waitForPaint() {
   return new Promise((resolve) => {
     nextTick(() => {
@@ -74,16 +190,66 @@ export function waitForPaint() {
   })
 }
 
+export function waitMs(ms) {
+  if (!(ms > 0)) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
 export async function revealCardInColumn({
   cardName,
   cardIndex,
   listEl,
+  getListEl,
+  getScrollerEl,
+  getTopInset,
+  getBottomInset,
   root = globalThis.document,
   scrollToCard,
   maxAttempts = DEFAULT_MAX_ATTEMPTS,
 }) {
+  const resolveListEl = () => (typeof getListEl === 'function' ? getListEl() : listEl)
+  const resolveScrollerEl = () => (
+    typeof getScrollerEl === 'function' ? getScrollerEl() : null
+  )
+  const resolveInsets = (scrollerEl, cardEl) => {
+    const columnEl = cardEl?.closest?.('.kanban-column') || resolveListEl()
+    const topInset = typeof getTopInset === 'function'
+      ? Number(getTopInset(scrollerEl, columnEl)) || 0
+      : (scrollerEl ? getScrollerTopInset(scrollerEl, columnEl) : 0)
+    const bottomInset = typeof getBottomInset === 'function'
+      ? Number(getBottomInset(scrollerEl, columnEl)) || 0
+      : 0
+    return { topInset, bottomInset }
+  }
+
+  const isVisible = (cardEl, currentListEl, scrollerEl) => {
+    if (scrollerEl) {
+      const { topInset, bottomInset } = resolveInsets(scrollerEl, cardEl)
+      return isCardVisibleInScroller(cardEl, scrollerEl, { topInset, bottomInset })
+    }
+    return isCardVisibleInList(cardEl, currentListEl)
+  }
+
   if (!scrollToCard) {
-    return revealMovedCard(cardName, root || listEl)
+    const scrollerEl = resolveScrollerEl()
+    if (scrollerEl) {
+      const cardEl = findCardElement(cardName, root || scrollerEl)
+      if (!cardEl) {
+        return false
+      }
+      const { topInset, bottomInset } = resolveInsets(scrollerEl, cardEl)
+      scrollCardIntoScroller(cardEl, scrollerEl, {
+        behavior: 'auto',
+        topInset,
+        bottomInset,
+      })
+      return isCardVisibleInScroller(cardEl, scrollerEl, { topInset, bottomInset })
+    }
+    return revealMovedCard(cardName, root || resolveListEl())
   }
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -91,13 +257,43 @@ export async function revealCardInColumn({
     scrollToCard(cardName, cardIndex)
     await waitForPaint()
 
-    const cardEl = findCardElement(cardName, root || listEl)
-    if (isCardVisibleInList(cardEl, listEl)) {
+    const currentListEl = resolveListEl()
+    const scrollerEl = resolveScrollerEl()
+    const cardEl = findCardElement(cardName, root || currentListEl || scrollerEl)
+    if (!cardEl) {
+      continue
+    }
+
+    if (scrollerEl && !isVisible(cardEl, currentListEl, scrollerEl)) {
+      const { topInset, bottomInset } = resolveInsets(scrollerEl, cardEl)
+      scrollCardIntoScroller(cardEl, scrollerEl, {
+        behavior: 'auto',
+        topInset,
+        bottomInset,
+      })
+      await waitForPaint()
+    }
+
+    if (isVisible(cardEl, currentListEl, scrollerEl)) {
       return true
     }
   }
 
-  revealMovedCard(cardName, root || listEl)
-  const cardEl = findCardElement(cardName, root || listEl)
-  return isCardVisibleInList(cardEl, listEl)
+  const finalListEl = resolveListEl()
+  const finalScroller = resolveScrollerEl()
+  const cardEl = findCardElement(cardName, root || finalListEl || finalScroller)
+  if (finalScroller && cardEl) {
+    const { topInset, bottomInset } = resolveInsets(finalScroller, cardEl)
+    scrollCardIntoScroller(cardEl, finalScroller, {
+      behavior: 'auto',
+      topInset,
+      bottomInset,
+    })
+    await waitForPaint()
+    return isCardVisibleInScroller(cardEl, finalScroller, { topInset, bottomInset })
+  }
+
+  revealMovedCard(cardName, root || finalListEl)
+  const revealedEl = findCardElement(cardName, root || finalListEl)
+  return isCardVisibleInList(revealedEl, finalListEl)
 }

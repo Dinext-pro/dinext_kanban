@@ -6,6 +6,7 @@ from frappe.utils import cint, get_datetime
 
 from quick_kanban.move_policy import (
 	BoardContext,
+	assert_lane_change_allowed,
 	assert_move_allowed,
 	get_create_options as build_create_options,
 	get_move_options as build_move_options,
@@ -238,3 +239,188 @@ def move_card(board_name, name, value, expected_modified=None, workflow_action=N
 		context.field_name: doc.get(context.field_name),
 		"modified": doc.modified,
 	}
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_swimlane_field_options(doctype):
+	from quick_kanban.swimlane import get_swimlane_field_options as _get_options
+
+	return _get_options(doctype)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_swimlane_field(board_name, swimlane_field=None):
+	"""Persist Kanban Board.custom_swimlane_field after validating options."""
+	from quick_kanban.swimlane import normalize_swimlane_field
+
+	board = frappe.get_doc("Kanban Board", board_name)
+	board.check_permission("write")
+	value = normalize_swimlane_field(board.reference_doctype, swimlane_field)
+	board.custom_swimlane_field = value
+	board.save()
+	return {"custom_swimlane_field": board.custom_swimlane_field or ""}
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_swimlane_lanes(doctype, swimlane_field, filters=None, or_filters=None):
+	from quick_kanban.swimlane import get_swimlane_lanes as _get_lanes
+
+	return _get_lanes(doctype, swimlane_field, filters=filters, or_filters=or_filters)
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_cell_totals(
+	doctype,
+	status_field,
+	columns,
+	swimlane_field,
+	lane_keys,
+	filters=None,
+	or_filters=None,
+):
+	from quick_kanban.swimlane import get_cell_totals as _get_cell_totals
+
+	return _get_cell_totals(
+		doctype,
+		status_field,
+		columns,
+		swimlane_field,
+		lane_keys,
+		filters=filters,
+		or_filters=or_filters,
+	)
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_swimlane_column_page(
+	doctype,
+	status_field,
+	column,
+	swimlane_field,
+	lane_key,
+	fields=None,
+	filters=None,
+	or_filters=None,
+	start=0,
+	page_length=20,
+):
+	from quick_kanban.swimlane import get_swimlane_column_page as _get_page
+
+	return _get_page(
+		doctype,
+		status_field,
+		column,
+		swimlane_field,
+		lane_key,
+		fields=fields,
+		filters=filters,
+		or_filters=or_filters,
+		start=start,
+		page_length=page_length,
+	)
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_swimlane_lane_page(
+	doctype,
+	status_field,
+	swimlane_field,
+	lane_key,
+	fields=None,
+	filters=None,
+	or_filters=None,
+	start=0,
+	page_length=100,
+):
+	from quick_kanban.swimlane import get_swimlane_lane_page as _get_page
+
+	return _get_page(
+		doctype,
+		status_field,
+		swimlane_field,
+		lane_key,
+		fields=fields,
+		filters=filters,
+		or_filters=or_filters,
+		start=start,
+		page_length=page_length,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def move_card_to_cell(
+	board_name,
+	name,
+	to_column=None,
+	from_lane=None,
+	to_lane=None,
+	expected_modified=None,
+	workflow_action=None,
+):
+	"""Move card across status column and/or swimlane membership."""
+	from quick_kanban.swimlane import apply_lane_membership, resolve_swimlane_mode
+
+	context = BoardContext(board_name)
+	board = frappe.get_doc("Kanban Board", board_name)
+	swimlane_field = (board.get("custom_swimlane_field") or "").strip()
+	doc = frappe.get_doc(context.ref_doctype, name)
+	doc.check_permission("write")
+
+	if expected_modified and get_datetime(doc.modified) != get_datetime(expected_modified):
+		frappe.throw(
+			_("This card was changed by another user. Refresh the board and try again."),
+			frappe.TimestampMismatchError,
+		)
+
+	column_changed = to_column is not None and doc.get(context.field_name) != to_column
+	lane_changed = (
+		swimlane_field
+		and from_lane is not None
+		and to_lane is not None
+		and str(from_lane or "") != str(to_lane or "")
+	)
+
+	if column_changed:
+		move_mode = assert_move_allowed(doc, context, to_column, workflow_action)
+		if move_mode == "workflow":
+			from quick_kanban.move_policy import apply_workflow_transition
+
+			selected_action = resolve_workflow_action(doc, context, to_column, workflow_action)
+			validate_mandatory_for_move(
+				doc,
+				context.field_name,
+				to_column,
+				context.workflow,
+				selected_action,
+			)
+			doc = apply_workflow_transition(doc, selected_action, context.workflow)
+		else:
+			validate_mandatory_for_move(doc, context.field_name, to_column, context.workflow)
+			doc.set(context.field_name, to_column)
+			doc.save()
+			doc = frappe.get_doc(context.ref_doctype, name)
+
+	mode = resolve_swimlane_mode(swimlane_field, doc.meta) if swimlane_field else "off"
+	if lane_changed and mode != "off":
+		assert_lane_change_allowed(doc, swimlane_field, mode)
+		apply_lane_membership(doc, swimlane_field, from_lane, to_lane)
+		if mode != "assign":
+			doc.save()
+		else:
+			doc.reload()
+
+	result = {
+		"name": doc.name,
+		context.field_name: doc.get(context.field_name),
+		"modified": doc.modified,
+	}
+	if swimlane_field and mode == "field":
+		result[swimlane_field] = doc.get(swimlane_field)
+	if mode == "assign":
+		result["_assign"] = doc.get("_assign")
+	return result
