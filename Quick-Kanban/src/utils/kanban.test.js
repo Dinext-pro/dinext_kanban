@@ -1,7 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   attachColumnDisplayNames,
+  clampColumnWidthForResize,
   collectLinkTitleTargets,
+  DEFAULT_COLUMN_WIDTH_PX,
   formatCardField,
   getAddableColumnCandidates,
   getCardFieldDisplayValue,
@@ -9,18 +11,21 @@ import {
   getCardTagsHtml,
   getColumnDisplayName,
   getColumnKey,
+  getColumnWidthBounds,
   getIndicatorClass,
   groupCardsByColumn,
   hydrateLinkTitles,
   isActiveColumn,
   isLinkLikeField,
   isNearScrollEnd,
+  ensureCardFetchFields,
   normalizeBoardConfig,
   normalizeUserTagsForEditor,
   parseCardAccentColor,
   parseSelectOptions,
   resolveCardLinkTitles,
   resolveColorField,
+  resolveColumnWidthPx,
   readMinimizeCardsPreference,
   minimizeCardsStorageKey,
   shouldTranslateFieldValue,
@@ -32,6 +37,10 @@ import {
   collapsedColumnsStorageKey,
   readCollapsedColumnsPreference,
   writeCollapsedColumnsPreference,
+  expandedLanesStorageKey,
+  expandedLaneStorageKey,
+  readExpandedLanesPreference,
+  writeExpandedLanesPreference,
 } from './kanban'
 
 const translationMap = {
@@ -164,6 +173,42 @@ describe('getAddableColumnCandidates', () => {
   })
 })
 
+describe('ensureCardFetchFields', () => {
+  test('prepends name/title/status and list std meta fields when board fields omit them', () => {
+    expect(ensureCardFetchFields(
+      ['exp_end_date', 'priority', 'project', 'type'],
+      { titleField: 'subject', statusField: 'status' },
+    )).toEqual([
+      'name',
+      'subject',
+      'exp_end_date',
+      'priority',
+      'project',
+      'type',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
+  })
+
+  test('does not duplicate identity fields already present', () => {
+    expect(ensureCardFetchFields(
+      ['name', 'subject', 'status', '_assign', '_user_tags', '_comments', '_liked_by'],
+      { titleField: 'subject', statusField: 'status' },
+    )).toEqual([
+      'name',
+      'subject',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
+  })
+})
+
 describe('normalizeBoardConfig', () => {
   test('normalizes missing optional values and includes the highlighted field', () => {
     const config = normalizeBoardConfig({
@@ -188,15 +233,60 @@ describe('normalizeBoardConfig', () => {
       ref_doctype: 'Task',
       field_name: 'status',
       title_field: 'subject',
-      fields: ['name', 'subject', 'priority'],
+      fields: [
+        'name',
+        'subject',
+        'priority',
+        'status',
+        '_assign',
+        '_user_tags',
+        '_comments',
+        '_liked_by',
+      ],
       highlighted_field: 'priority',
       highlight_table: [],
       show_labels: true,
       show_tags: false,
+      show_extra_info: false,
       title_field_meta: { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
       status_field_meta: { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
       highlighted_field_meta: { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
     })
+  })
+
+  test('always injects name and title even when board fields omit them', () => {
+    const config = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['exp_end_date', 'priority', 'project', 'type'],
+    }, {
+      title_field: 'subject',
+      fields: [
+        { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+        { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+      ],
+    })
+
+    expect(config.fields).toEqual([
+      'name',
+      'subject',
+      'exp_end_date',
+      'priority',
+      'project',
+      'type',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
+    expect(config.display_fields.map((field) => field.fieldname)).toEqual([
+      'exp_end_date',
+      'priority',
+      'project',
+      'type',
+    ])
   })
 
   test('maps custom_show_tags to show_tags', () => {
@@ -220,6 +310,27 @@ describe('normalizeBoardConfig', () => {
     expect(disabled.show_tags).toBe(false)
   })
 
+  test('maps custom_show_extra_info to show_extra_info', () => {
+    const enabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_extra_info: 1,
+    }, { title_field: 'subject', fields: [] })
+
+    const disabled = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_show_extra_info: 0,
+    }, { title_field: 'subject', fields: [] })
+
+    expect(enabled.show_extra_info).toBe(true)
+    expect(disabled.show_extra_info).toBe(false)
+  })
+
   test('falls back to useful card fields when fields JSON is invalid', () => {
     const config = normalizeBoardConfig({
       name: 'Tasks',
@@ -228,7 +339,14 @@ describe('normalizeBoardConfig', () => {
       fields: '{invalid',
     }, {})
 
-    expect(config.fields).toEqual(['name'])
+    expect(config.fields).toEqual([
+      'name',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
   })
 
   test('accepts fields already parsed by the native Frappe Kanban view', () => {
@@ -239,7 +357,15 @@ describe('normalizeBoardConfig', () => {
       fields: ['name', 'subject'],
     }, { title_field: 'subject' })
 
-    expect(config.fields).toEqual(['name', 'subject'])
+    expect(config.fields).toEqual([
+      'name',
+      'subject',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
   })
 
   test('auto-includes color field and excludes it from display_fields', () => {
@@ -257,13 +383,68 @@ describe('normalizeBoardConfig', () => {
       ],
     })
 
-    expect(config.fields).toEqual(['name', 'subject', 'color'])
+    expect(config.fields).toEqual([
+      'name',
+      'subject',
+      'color',
+      'status',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
     expect(config.color_field).toBe('color')
     expect(config.color_field_meta).toMatchObject({
       fieldname: 'color',
       fieldtype: 'Color',
     })
     expect(config.display_fields.map((field) => field.fieldname)).toEqual([])
+  })
+
+  test('resolves swimlane_link_field for Table MultiSelect swimlanes', () => {
+    frappe.get_meta.mockImplementation((doctype) => {
+      if (doctype === 'Task User') {
+        return {
+          fields: [
+            { fieldname: 'user', fieldtype: 'Link', options: 'User' },
+          ],
+        }
+      }
+      return {
+        title_field: 'subject',
+        fields: [
+          {
+            fieldname: 'users',
+            label: 'Users',
+            fieldtype: 'Table MultiSelect',
+            options: 'Task User',
+            parent: 'Task',
+          },
+        ],
+      }
+    })
+
+    const config = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'subject'],
+      custom_swimlane_field: 'users',
+    }, {
+      title_field: 'subject',
+      fields: [
+        {
+          fieldname: 'users',
+          label: 'Users',
+          fieldtype: 'Table MultiSelect',
+          options: 'Task User',
+          parent: 'Task',
+        },
+      ],
+    })
+
+    expect(config.swimlane_mode).toBe('multi')
+    expect(config.swimlane_link_field).toBe('user')
   })
 
   test('ignores color fieldname when fieldtype is not Color', () => {
@@ -714,5 +895,51 @@ describe('collapsed columns preference', () => {
     writeCollapsedColumnsPreference('Task Board', {}, storage)
     expect(readCollapsedColumnsPreference('Task Board', storage)).toEqual({})
     expect(storage.data['quick_kanban:collapsed_columns:Task Board']).toBeUndefined()
+  })
+
+  test('persists expanded lane keys as JSON and migrates legacy single key', () => {
+    const storage = {
+      data: {},
+      getItem(key) {
+        return Object.prototype.hasOwnProperty.call(this.data, key) ? this.data[key] : null
+      },
+      setItem(key, value) {
+        this.data[key] = String(value)
+      },
+      removeItem(key) {
+        delete this.data[key]
+      },
+    }
+
+    expect(expandedLanesStorageKey('Task Board')).toBe('quick_kanban:expanded_lanes:Task Board')
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual([])
+
+    storage.data[expandedLaneStorageKey('Task Board')] = 'alice'
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual(['alice'])
+
+    writeExpandedLanesPreference('Task Board', ['alice', 'bob', 'alice'], storage)
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual(['alice', 'bob'])
+    expect(storage.data[expandedLanesStorageKey('Task Board')]).toBe(
+      JSON.stringify(['alice', 'bob']),
+    )
+    expect(storage.data[expandedLaneStorageKey('Task Board')]).toBeUndefined()
+
+    writeExpandedLanesPreference('Task Board', [], storage)
+    expect(readExpandedLanesPreference('Task Board', storage)).toEqual([])
+  })
+})
+
+describe('column width helpers', () => {
+  test('resolveColumnWidthPx uses stored width or default without clamping', () => {
+    expect(resolveColumnWidthPx({ custom_column_width: 420 })).toBe(420)
+    expect(resolveColumnWidthPx({})).toBe(DEFAULT_COLUMN_WIDTH_PX)
+    expect(resolveColumnWidthPx({ custom_column_width: 40 })).toBe(40)
+  })
+
+  test('clampColumnWidthForResize clamps only against the current viewport', () => {
+    expect(getColumnWidthBounds(1000)).toEqual({ min: 150, max: 500 })
+    expect(clampColumnWidthForResize(100, 1000)).toBe(150)
+    expect(clampColumnWidthForResize(800, 1000)).toBe(500)
+    expect(clampColumnWidthForResize(320, 1000)).toBe(320)
   })
 })

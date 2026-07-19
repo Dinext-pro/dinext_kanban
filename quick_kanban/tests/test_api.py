@@ -8,7 +8,13 @@ from frappe.desk.doctype.todo.todo import ToDo
 from frappe.tests.utils import FrappeTestCase, patch_hooks
 from frappe.utils import get_datetime
 
-from quick_kanban.api import get_column_totals, move_card
+from quick_kanban.api import (
+    get_attachment_counts,
+    get_column_totals,
+    move_card,
+    set_column_widths,
+    update_column_order,
+)
 from quick_kanban.tests.test_move_policy import BOARD_NAME, ensure_todo_kanban_board
 from quick_kanban import hooks
 
@@ -370,6 +376,391 @@ class TestColumnTotals(FrappeTestCase):
             limit_page_length=0,
         )
         self.assertEqual(result, {"Open": 5, "Done": 0})
+
+
+class TestColumnWidths(FrappeTestCase):
+    def setUp(self):
+        frappe.set_user("Administrator")
+        self.board_name = ensure_todo_kanban_board()
+
+    def test_set_column_widths_persists_on_board_columns(self):
+        board = set_column_widths(self.board_name, {"Open": 320, "Closed": 280})
+        widths = {
+            column.column_name: column.custom_column_width for column in board.columns
+        }
+        self.assertEqual(widths["Open"], 320)
+        self.assertEqual(widths["Closed"], 280)
+
+        reloaded = frappe.get_doc("Kanban Board", self.board_name)
+        reloaded_widths = {
+            column.column_name: column.custom_column_width for column in reloaded.columns
+        }
+        self.assertEqual(reloaded_widths["Open"], 320)
+        self.assertEqual(reloaded_widths["Closed"], 280)
+
+    def test_set_column_widths_rejects_out_of_range_values(self):
+        with self.assertRaises(frappe.ValidationError):
+            set_column_widths(self.board_name, {"Open": 0})
+        with self.assertRaises(frappe.ValidationError):
+            set_column_widths(self.board_name, {"Open": 10001})
+
+    def test_set_column_widths_requires_board_write(self):
+        board = Mock()
+        board.columns = [SimpleNamespace(column_name="Open", custom_column_width=250)]
+        board.check_permission.side_effect = frappe.PermissionError
+
+        with patch("quick_kanban.api.frappe.get_doc", return_value=board):
+            with self.assertRaises(frappe.PermissionError):
+                set_column_widths(self.board_name, {"Open": 300})
+
+        board.check_permission.assert_called_once_with("write")
+        board.save.assert_not_called()
+
+    def test_update_column_order_preserves_custom_column_width(self):
+        set_column_widths(self.board_name, {"Open": 333, "Closed": 222})
+        board = update_column_order(
+            self.board_name,
+            frappe.as_json(["Closed", "Open"]),
+        )
+        widths = {
+            column.column_name: column.custom_column_width for column in board.columns
+        }
+        self.assertEqual(
+            [column.column_name for column in board.columns][:2],
+            ["Closed", "Open"],
+        )
+        self.assertEqual(widths["Open"], 333)
+        self.assertEqual(widths["Closed"], 222)
+
+    def test_override_whitelisted_update_column_order_is_registered(self):
+        self.assertEqual(
+            hooks.override_whitelisted_methods[
+                "frappe.desk.doctype.kanban_board.kanban_board.update_column_order"
+            ],
+            "quick_kanban.api.update_column_order",
+        )
+
+
+class TestGetAttachmentCounts(FrappeTestCase):
+    def test_empty_names_returns_empty_dict(self):
+        self.assertEqual(get_attachment_counts("ToDo", []), {})
+        self.assertEqual(get_attachment_counts("ToDo", "[]"), {})
+
+    def test_counts_files_per_document(self):
+        frappe.set_user("Administrator")
+        todo_a = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Attachment count A",
+                "status": "Open",
+            }
+        ).insert()
+        todo_b = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Attachment count B",
+                "status": "Open",
+            }
+        ).insert()
+        for index in range(2):
+            frappe.get_doc(
+                {
+                    "doctype": "File",
+                    "file_name": f"count-a-{index}.txt",
+                    "content": f"a{index}",
+                    "attached_to_doctype": "ToDo",
+                    "attached_to_name": todo_a.name,
+                    "is_private": 1,
+                }
+            ).insert()
+        frappe.get_doc(
+            {
+                "doctype": "File",
+                "file_name": "count-b-0.txt",
+                "content": "b0",
+                "attached_to_doctype": "ToDo",
+                "attached_to_name": todo_b.name,
+                "is_private": 1,
+            }
+        ).insert()
+
+        counts = get_attachment_counts("ToDo", [todo_a.name, todo_b.name, "MISSING"])
+        self.assertEqual(counts[todo_a.name], 2)
+        self.assertEqual(counts[todo_b.name], 1)
+        self.assertEqual(counts["MISSING"], 0)
+
+    def test_requires_read_permission_on_doctype(self):
+        with patch("quick_kanban.api.frappe.has_permission", return_value=False):
+            with self.assertRaises(frappe.PermissionError):
+                get_attachment_counts("ToDo", ["TASK-1"])
+
+
+class TestSwimlaneApi(FrappeTestCase):
+    def setUp(self):
+        frappe.set_user("Administrator")
+
+    def test_get_swimlane_field_options_includes_assign(self):
+        from quick_kanban.api import get_swimlane_field_options
+
+        options = get_swimlane_field_options("ToDo")
+        values = {row["value"] for row in options}
+        self.assertIn("__assign", values)
+
+    def test_set_swimlane_field_sets_and_clears(self):
+        from quick_kanban.api import set_swimlane_field
+
+        board_name = ensure_todo_kanban_board()
+        result = set_swimlane_field(board_name, "__assign")
+        self.assertEqual(result["custom_swimlane_field"], "__assign")
+        self.assertEqual(
+            frappe.db.get_value("Kanban Board", board_name, "custom_swimlane_field"),
+            "__assign",
+        )
+
+        cleared = set_swimlane_field(board_name, "")
+        self.assertEqual(cleared["custom_swimlane_field"], "")
+        self.assertIn(
+            frappe.db.get_value("Kanban Board", board_name, "custom_swimlane_field"),
+            ("", None),
+        )
+
+    def test_set_swimlane_field_rejects_invalid(self):
+        from quick_kanban.api import set_swimlane_field
+
+        board_name = ensure_todo_kanban_board()
+        with self.assertRaises(frappe.ValidationError):
+            set_swimlane_field(board_name, "not_a_real_field_xyz")
+
+    def test_set_swimlane_field_requires_write(self):
+        from quick_kanban.api import set_swimlane_field
+
+        board_name = ensure_todo_kanban_board()
+        board = frappe.get_doc("Kanban Board", board_name)
+        with patch.object(board.__class__, "check_permission", side_effect=frappe.PermissionError):
+            with patch("quick_kanban.api.frappe.get_doc", return_value=board):
+                with self.assertRaises(frappe.PermissionError):
+                    set_swimlane_field(board_name, "__assign")
+
+    def test_assign_lanes_and_pages_duplicate_membership(self):
+        from frappe.desk.form.assign_to import add as assign_add
+        from quick_kanban.api import (
+            get_cell_totals,
+            get_swimlane_column_page,
+            get_swimlane_lanes,
+        )
+
+        todo = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Swimlane multi assign",
+                "status": "Open",
+            }
+        ).insert()
+        assign_add(
+            {
+                "assign_to": ["Administrator"],
+                "doctype": "ToDo",
+                "name": todo.name,
+            }
+        )
+        # Second user if exists
+        users = frappe.get_all("User", filters={"enabled": 1}, pluck="name", limit=5)
+        second = next((user for user in users if user not in ("Administrator", "Guest")), None)
+        if second:
+            assign_add(
+                {
+                    "assign_to": [second],
+                    "doctype": "ToDo",
+                    "name": todo.name,
+                }
+            )
+
+        lanes = get_swimlane_lanes("ToDo", "__assign", filters=[])
+        keys = {lane["key"] for lane in lanes}
+        self.assertIn("Administrator", keys)
+        self.assertIn("", keys)
+
+        page = get_swimlane_column_page(
+            "ToDo",
+            "status",
+            "Open",
+            "__assign",
+            "Administrator",
+            fields=["status"],
+            filters=[],
+            start=0,
+            page_length=50,
+        )
+        self.assertIn("name", page["keys"])
+        self.assertIn("status", page["keys"])
+        self.assertIn("_assign", page["keys"])
+        self.assertIn("_user_tags", page["keys"])
+        self.assertIn("_comments", page["keys"])
+        self.assertIn("_liked_by", page["keys"])
+        self.assertIn("user_info", page)
+        self.assertIn("Administrator", page["user_info"])
+        name_idx = page["keys"].index("name")
+        names = [row[name_idx] for row in page["values"]]
+        self.assertIn(todo.name, names)
+
+        totals = get_cell_totals(
+            "ToDo",
+            "status",
+            ["Open", "Closed"],
+            "__assign",
+            ["Administrator", ""],
+            filters=[],
+        )
+        self.assertGreaterEqual(totals["Administrator"]["Open"], 1)
+
+        from quick_kanban.api import get_swimlane_lane_page
+
+        lane_page = get_swimlane_lane_page(
+            "ToDo",
+            "status",
+            "__assign",
+            "Administrator",
+            fields=["status"],
+            filters=[],
+            start=0,
+            page_length=50,
+        )
+        self.assertIn("name", lane_page["keys"])
+        self.assertIn("status", lane_page["keys"])
+        lane_name_idx = lane_page["keys"].index("name")
+        lane_names = [row[lane_name_idx] for row in lane_page["values"]]
+        self.assertIn(todo.name, lane_names)
+
+        empty_page = get_swimlane_lane_page(
+            "ToDo",
+            "status",
+            "__assign",
+            "Administrator",
+            fields=["status"],
+            filters=[],
+            start=10_000,
+            page_length=10,
+        )
+        self.assertEqual(empty_page["values"], [])
+
+    def test_move_card_to_cell_changes_status(self):
+        from quick_kanban.api import move_card_to_cell
+
+        board_name = ensure_todo_kanban_board()
+        board = frappe.get_doc("Kanban Board", board_name)
+        board.custom_swimlane_field = "__assign"
+        board.save()
+
+        todo = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Swimlane move cell",
+                "status": "Open",
+            }
+        ).insert()
+        result = move_card_to_cell(
+            board_name,
+            todo.name,
+            to_column="Closed",
+            from_lane="",
+            to_lane="",
+            expected_modified=str(todo.modified),
+        )
+        self.assertEqual(result["status"], "Closed")
+        self.assertEqual(frappe.db.get_value("ToDo", todo.name, "status"), "Closed")
+
+    def test_link_swimlane_labels_use_title_field(self):
+        from quick_kanban.swimlane import _link_title, _link_titles, get_swimlane_lanes
+
+        if not frappe.db.exists("DocType", "Project"):
+            self.skipTest("Project DocType is not installed")
+
+        meta = frappe.get_meta("Project")
+        if not meta.show_title_field_in_link or not meta.title_field:
+            self.skipTest("Project does not show title_field in link")
+
+        title_field = meta.title_field
+        row = frappe.db.sql(
+            f"""
+            select name, `{title_field}` as title
+            from `tabProject`
+            where ifnull(`{title_field}`, '') != ''
+              and name != `{title_field}`
+            limit 1
+            """,
+            as_dict=True,
+        )
+        if not row:
+            self.skipTest("No Project with a title distinct from name")
+
+        project_id = row[0].name
+        project_title = row[0].title
+
+        titles = _link_titles("Project", [project_id])
+        self.assertEqual(titles[project_id], project_title)
+        self.assertEqual(_link_title("Project", project_id), project_title)
+
+        task_meta = frappe.get_meta("Task") if frappe.db.exists("DocType", "Task") else None
+        if not task_meta or not task_meta.get_field("project"):
+            return
+
+        task = frappe.get_doc(
+            {
+                "doctype": "Task",
+                "subject": f"Swimlane label task {frappe.generate_hash(length=6)}",
+                "project": project_id,
+                "status": "Open",
+            }
+        ).insert(ignore_permissions=True)
+        lanes = get_swimlane_lanes(
+            "Task",
+            "project",
+            filters=[["name", "=", task.name]],
+        )
+        by_key = {lane["key"]: lane["label"] for lane in lanes}
+        self.assertIn(project_id, by_key)
+        self.assertEqual(by_key[project_id], project_title)
+
+    def test_link_titles_uses_permission_aware_get_list(self):
+        from types import SimpleNamespace
+
+        from quick_kanban.swimlane import _link_titles
+
+        meta = SimpleNamespace(show_title_field_in_link=1, title_field="project_name")
+
+        with patch("quick_kanban.swimlane.frappe.get_meta", return_value=meta):
+            with patch(
+                "quick_kanban.swimlane.frappe.get_list",
+                return_value=[
+                    frappe._dict(name="PROJ-A", project_name="Title A"),
+                    frappe._dict(name="PROJ-B", project_name="Title B"),
+                ],
+            ) as get_list:
+                titles = _link_titles("Project", ["PROJ-A", "PROJ-B"])
+
+        self.assertEqual(get_list.call_count, 1)
+        kwargs = get_list.call_args.kwargs
+        self.assertEqual(kwargs.get("limit_page_length"), 0)
+        self.assertNotIn("ignore_permissions", kwargs)
+        self.assertEqual(titles["PROJ-A"], "Title A")
+        self.assertEqual(titles["PROJ-B"], "Title B")
+
+    def test_link_titles_keep_name_when_get_list_omits_docs(self):
+        from types import SimpleNamespace
+
+        from quick_kanban.swimlane import _link_titles
+
+        meta = SimpleNamespace(show_title_field_in_link=1, title_field="project_name")
+
+        with patch("quick_kanban.swimlane.frappe.get_meta", return_value=meta):
+            with patch(
+                "quick_kanban.swimlane.frappe.get_list",
+                return_value=[frappe._dict(name="PROJ-A", project_name="Title A")],
+            ):
+                titles = _link_titles("Project", ["PROJ-A", "PROJ-B"])
+
+        self.assertEqual(titles["PROJ-A"], "Title A")
+        self.assertEqual(titles["PROJ-B"], "PROJ-B")
 
 
 class TestDeskAssets(FrappeTestCase):

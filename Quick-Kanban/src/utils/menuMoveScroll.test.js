@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   isCardVisibleInList,
+  isCardVisibleInScroller,
+  resolveComponentRootEl,
   resolveScrollBehavior,
   revealCardInColumn,
   revealMovedCard,
+  scrollCardIntoScroller,
   scrollColumnIntoView,
   waitForPaint,
 } from './menuMoveScroll'
@@ -100,6 +103,15 @@ describe('menu move scroll', () => {
     expect(boardEl.scrollTo).not.toHaveBeenCalled()
   })
 
+  test('resolveComponentRootEl prefers getRootEl over missing $el', () => {
+    const root = document.createElement('section')
+    expect(resolveComponentRootEl({
+      getRootEl: () => root,
+    })).toBe(root)
+    expect(resolveComponentRootEl({ $el: root })).toBe(root)
+    expect(resolveComponentRootEl(null)).toBe(null)
+  })
+
   test('revealMovedCard scrolls the card into view when present', () => {
     const scrollIntoView = vi.fn()
     const cardEl = { scrollIntoView }
@@ -158,6 +170,130 @@ describe('menu move scroll', () => {
     expect(isCardVisibleInList(belowCard, listEl)).toBe(false)
   })
 
+  test('isCardVisibleInScroller uses the scroller viewport, not a tall list', () => {
+    const tallList = {
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 200,
+        top: 0,
+        bottom: 2000,
+      }),
+    }
+    const scrollerEl = {
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 0,
+        bottom: 400,
+      }),
+    }
+    const cardBelowViewport = {
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 900,
+        bottom: 980,
+      }),
+    }
+
+    expect(isCardVisibleInList(cardBelowViewport, tallList)).toBe(true)
+    expect(isCardVisibleInScroller(cardBelowViewport, scrollerEl)).toBe(false)
+    expect(isCardVisibleInScroller(cardBelowViewport, scrollerEl, { topInset: 40 })).toBe(false)
+  })
+
+  test('scrollCardIntoScroller adjusts scrollTop for cards below the viewport', () => {
+    const scrollerEl = {
+      scrollTop: 0,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        this.scrollTop = top
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 0,
+        bottom: 400,
+      }),
+    }
+    const cardEl = {
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 500,
+        bottom: 580,
+      }),
+    }
+
+    expect(scrollCardIntoScroller(cardEl, scrollerEl, { behavior: 'auto' })).toBe(true)
+    expect(scrollerEl.scrollTo).toHaveBeenCalledWith({
+      top: 188,
+      behavior: 'auto',
+    })
+  })
+
+  test('revealCardInColumn with getScrollerEl scrolls the board when list check would pass', async () => {
+    const scrollToCard = vi.fn()
+    const tallList = {
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 200,
+        top: 0,
+        bottom: 2000,
+      }),
+    }
+    const scrollerEl = {
+      scrollTop: 0,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        this.scrollTop = top
+        cardEl.getBoundingClientRect = () => mockRect({
+          left: 10,
+          right: 190,
+          top: 120,
+          bottom: 200,
+        })
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 0,
+        bottom: 400,
+      }),
+      querySelector: vi.fn(() => null),
+    }
+    const cardEl = {
+      closest: vi.fn(() => null),
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 900,
+        bottom: 980,
+      }),
+      querySelector: vi.fn(() => null),
+    }
+    const root = {
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return cardEl
+        }
+        return null
+      }),
+    }
+
+    const revealed = await revealCardInColumn({
+      cardName: 'TASK-1',
+      cardIndex: 12,
+      listEl: tallList,
+      getScrollerEl: () => scrollerEl,
+      getTopInset: () => 40,
+      root,
+      scrollToCard,
+      maxAttempts: 4,
+    })
+
+    expect(revealed).toBe(true)
+    expect(scrollToCard).toHaveBeenCalled()
+    expect(scrollerEl.scrollTo).toHaveBeenCalled()
+  })
+
   test('waitForPaint resolves after animation frames', async () => {
     await waitForPaint()
   })
@@ -206,5 +342,49 @@ describe('menu move scroll', () => {
     expect(revealed).toBe(true)
     expect(scrollToCard).toHaveBeenCalled()
     expect(scrollToCard.mock.calls[0]).toEqual(['TASK-1', 15])
+  })
+
+  test('revealCardInColumn resolves listEl via getListEl each attempt', async () => {
+    const scrollToCard = vi.fn()
+    const listEl = {
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 200,
+        top: 100,
+        bottom: 400,
+      }),
+    }
+    const visibleCard = {
+      classList: { contains: () => true },
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 150,
+        bottom: 220,
+      }),
+      querySelector: vi.fn(() => null),
+      closest: vi.fn(function closest() { return this }),
+    }
+    const getListEl = vi.fn(() => listEl)
+    const root = {
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return visibleCard
+        }
+        return null
+      }),
+    }
+
+    const revealed = await revealCardInColumn({
+      cardName: 'TASK-1',
+      cardIndex: 0,
+      getListEl,
+      root,
+      scrollToCard,
+      maxAttempts: 2,
+    })
+
+    expect(revealed).toBe(true)
+    expect(getListEl).toHaveBeenCalled()
   })
 })
