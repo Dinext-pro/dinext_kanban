@@ -99,6 +99,7 @@
           v-if="config.show_extra_info"
           :card="card"
           :doctype="config.ref_doctype"
+          @files-menu-open="onFilesMenuOpen"
         />
       </div>
     </div>
@@ -207,6 +208,7 @@ const cardRoot = ref(null)
 const moveMenuButton = ref(null)
 const moveMenuPanel = ref(null)
 const moveMenuOpen = ref(false)
+const filesMenuOpen = ref(false)
 const moveMenuStyle = ref({})
 const expanded = ref(
   Boolean(
@@ -295,6 +297,20 @@ function clearDensityHold() {
 
 function isPointerOverCard() {
   return Boolean(cardRoot.value?.matches?.(':hover'))
+}
+
+function hasBlockingOverlay() {
+  return Boolean(
+    isThisCardDragging.value
+    || isThisCardTagDragSource.value
+    || isThisCardEditing.value
+    || moveMenuOpen.value
+    || filesMenuOpen.value,
+  )
+}
+
+function onFilesMenuOpen(open) {
+  filesMenuOpen.value = Boolean(open)
 }
 
 function expandIntentionally() {
@@ -543,7 +559,7 @@ function onPointerEnter(event) {
 }
 
 function scheduleCollapseForHoverLeave() {
-  if (isThisCardDragging.value || isThisCardTagDragSource.value || isThisCardEditing.value) {
+  if (hasBlockingOverlay()) {
     holdExpandedDensity()
     clearExpandTimers()
     return
@@ -551,6 +567,10 @@ function scheduleCollapseForHoverLeave() {
   clearExpandTimers()
   collapseTimer = setTimeout(() => {
     collapseTimer = null
+    if (hasBlockingOverlay()) {
+      holdExpandedDensity()
+      return
+    }
     expanded.value = false
     clearDensityHold()
   }, CARD_COLLAPSE_DELAY_MS)
@@ -597,6 +617,24 @@ watch(isThisCardEditing, (editing) => {
     scheduleCollapseForHoverLeave()
   }
 })
+
+function onOverlayMenuOpenChange(open) {
+  if (!minimizeCards.value) {
+    return
+  }
+  if (open) {
+    clearExpandTimers()
+    holdExpandedDensity()
+    return
+  }
+  // Leave-while-menu-open skipped collapse; if the pointer already left, resume it.
+  if (!isPointerOverCard()) {
+    scheduleCollapseForHoverLeave()
+  }
+}
+
+watch(moveMenuOpen, onOverlayMenuOpenChange)
+watch(filesMenuOpen, onOverlayMenuOpenChange)
 
 watch(forceCollapsed, (forced) => {
   if (!forced) {

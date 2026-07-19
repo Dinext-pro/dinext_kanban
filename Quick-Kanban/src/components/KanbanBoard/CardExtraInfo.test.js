@@ -158,6 +158,19 @@ test('shows empty-state and upload when there are no attachments', async () => {
   expect(wrapper.find('.extra-info-upload.dropdown-item').exists()).toBe(true)
 })
 
+test('emits files-menu-open when attachments menu opens and closes', async () => {
+  frappe.call.mockResolvedValue({ docinfo: { attachments: [] } })
+  const store = createStore({ _attachment_count: 0 })
+  const wrapper = mountExtra(store)
+  await wrapper.get('[aria-label="Attachments"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.emitted('files-menu-open')?.at(-1)).toEqual([true])
+
+  await wrapper.get('[aria-label="Attachments"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.emitted('files-menu-open')?.at(-1)).toEqual([false])
+})
+
 test('opens attachments menu with upload and preview fallback', async () => {
   frappe.call.mockImplementation(async ({ method }) => {
     if (method === 'frappe.desk.form.load.get_docinfo') {
