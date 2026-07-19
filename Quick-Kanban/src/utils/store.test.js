@@ -193,6 +193,42 @@ describe('board loading', () => {
     expect(frappe.update_user_info).toHaveBeenCalledWith({})
   })
 
+  test('loadColumnPage appends cards without bumping dragSyncGeneration', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue({ title_field: 'subject' })
+    await store.dispatch('hydrateFromList', {
+      board: boardDocument,
+      cards: [
+        { name: 'TASK-1', subject: 'First', status: 'Open' },
+      ],
+      args: { page_length: 1 },
+    })
+    store.commit('SET_COLUMN_TOTALS', { Open: 3, Done: 0 })
+    const before = store.state.dragSyncGeneration
+    frappe.call.mockResolvedValue({
+      message: {
+        keys: ['name', 'subject', 'status'],
+        values: [
+          ['TASK-2', 'Second', 'Open'],
+          ['TASK-3', 'Third', 'Open'],
+        ],
+        user_info: {},
+      },
+    })
+
+    await store.dispatch('loadColumnPage', {
+      columnIndex: 0,
+      args: { doctype: 'Task' },
+    })
+
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual([
+      'TASK-1',
+      'TASK-2',
+      'TASK-3',
+    ])
+    expect(store.state.dragSyncGeneration).toBe(before)
+  })
+
   test('loads permission-aware totals for every filtered column', async () => {
     const store = createStore()
     frappe.get_meta.mockReturnValue({ title_field: 'subject' })
@@ -3574,5 +3610,61 @@ describe('swimlane expand state', () => {
       'TASK-2',
     ])
     expect(store.state.dragSyncGeneration).toBe(before + 1)
+  })
+
+  test('loadCellPage append does not bump dragSyncGeneration', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status', 'subject'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'PL-APPEND-TEST',
+        label: 'PL-APPEND-TEST',
+        columns: [{
+          name: 'open',
+          column_name: 'Open',
+          cards: [{ name: 'TASK-1', status: 'Open', subject: 'One' }],
+        }],
+      },
+    ])
+    store.commit('SET_CELL_PAGINATION', {
+      'PL-APPEND-TEST::Open': { offset: 1, hasMore: true, loading: false },
+    })
+    store.commit('SET_CELL_TOTALS', {
+      'PL-APPEND-TEST': { Open: 3 },
+    })
+    const before = store.state.dragSyncGeneration
+    frappe.call.mockResolvedValueOnce({
+      message: {
+        keys: ['name', 'status', 'subject'],
+        values: [
+          ['TASK-2', 'Open', 'Two'],
+          ['TASK-3', 'Open', 'Three'],
+        ],
+      },
+    })
+
+    await store.dispatch('loadCellPage', {
+      laneIndex: 0,
+      columnIndex: 0,
+      pageSize: 30,
+    })
+
+    expect(store.state.lanes[0].columns[0].cards.map((card) => card.name)).toEqual([
+      'TASK-1',
+      'TASK-2',
+      'TASK-3',
+    ])
+    expect(store.state.dragSyncGeneration).toBe(before)
   })
 })
