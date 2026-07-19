@@ -1,5 +1,12 @@
 import { expect, test, vi, beforeEach } from 'vitest'
-import { createColumnSortable, destroyColumnSortable } from './columnSortable'
+import {
+  COLUMN_SORTABLE_CHOSEN_CLASS,
+  COLUMN_SORTABLE_DRAG_CLASS,
+  COLUMN_SORTABLE_GHOST_CLASS,
+  clearColumnSortableArtifacts,
+  createColumnSortable,
+  destroyColumnSortable,
+} from './columnSortable'
 
 const swimlaneSync = {
   start: vi.fn(),
@@ -42,11 +49,13 @@ test('creates Sortable with the column drag handle and reports reorder', () => {
     draggable: '.kanban-column',
     filter: '.add-column-control',
     dataIdAttr: 'data-column-value',
-    ghostClass: 'sortable-column-ghost',
+    ghostClass: COLUMN_SORTABLE_GHOST_CLASS,
+    dragClass: COLUMN_SORTABLE_DRAG_CLASS,
+    chosenClass: COLUMN_SORTABLE_CHOSEN_CLASS,
   }))
   expect(createSwimlaneColumnDragSync).not.toHaveBeenCalled()
 
-  sortable.options.onEnd({ oldIndex: 0, newIndex: 1 })
+  sortable.options.onEnd({ oldIndex: 0, newIndex: 1, item: null })
   expect(onReorder).toHaveBeenCalledWith(['Done', 'Open'])
 })
 
@@ -55,8 +64,54 @@ test('ignores unchanged column drag ends', () => {
   const onReorder = vi.fn()
   const sortable = createColumnSortable(container, { onReorder })
 
-  sortable.options.onEnd({ oldIndex: 1, newIndex: 1 })
+  sortable.options.onEnd({ oldIndex: 1, newIndex: 1, item: null })
   expect(onReorder).not.toHaveBeenCalled()
+})
+
+test('clears leftover Sortable classes and draggable on column drag end', () => {
+  const container = document.createElement('div')
+  const column = document.createElement('section')
+  column.className = 'kanban-column'
+  column.classList.add(
+    'sortable-drag',
+    'sortable-chosen',
+    COLUMN_SORTABLE_DRAG_CLASS,
+    COLUMN_SORTABLE_CHOSEN_CLASS,
+    COLUMN_SORTABLE_GHOST_CLASS,
+  )
+  column.draggable = true
+  container.appendChild(column)
+
+  const sortable = createColumnSortable(container, { onReorder: vi.fn() })
+  sortable.options.onEnd({ oldIndex: 0, newIndex: 1, item: column })
+
+  expect(column.classList.contains('sortable-drag')).toBe(false)
+  expect(column.classList.contains('sortable-chosen')).toBe(false)
+  expect(column.classList.contains(COLUMN_SORTABLE_DRAG_CLASS)).toBe(false)
+  expect(column.classList.contains(COLUMN_SORTABLE_CHOSEN_CLASS)).toBe(false)
+  expect(column.classList.contains(COLUMN_SORTABLE_GHOST_CLASS)).toBe(false)
+  expect(column.draggable).toBe(false)
+})
+
+test('clearColumnSortableArtifacts scrubs all columns in the container', () => {
+  const container = document.createElement('div')
+  const a = document.createElement('section')
+  const b = document.createElement('section')
+  a.className = 'kanban-column'
+  b.className = 'kanban-column'
+  a.classList.add(COLUMN_SORTABLE_DRAG_CLASS, 'sortable-drag')
+  b.classList.add(COLUMN_SORTABLE_CHOSEN_CLASS)
+  a.draggable = true
+  b.draggable = true
+  container.append(a, b)
+
+  clearColumnSortableArtifacts(container, a)
+
+  expect(a.classList.contains(COLUMN_SORTABLE_DRAG_CLASS)).toBe(false)
+  expect(a.classList.contains('sortable-drag')).toBe(false)
+  expect(b.classList.contains(COLUMN_SORTABLE_CHOSEN_CLASS)).toBe(false)
+  expect(a.draggable).toBe(false)
+  expect(b.draggable).toBe(false)
 })
 
 test('wires swimlane drag sync when boardRoot is provided', () => {
@@ -83,7 +138,7 @@ test('wires swimlane drag sync when boardRoot is provided', () => {
   sortable.options.onChange()
   expect(swimlaneSync.sync).toHaveBeenCalledTimes(1)
 
-  sortable.options.onEnd({ oldIndex: 0, newIndex: 2 })
+  sortable.options.onEnd({ oldIndex: 0, newIndex: 2, item: null })
   expect(swimlaneSync.finish).toHaveBeenCalledWith({ cancelled: false })
   expect(onDragEnd).toHaveBeenCalledWith({ cancelled: false })
   expect(onReorder).toHaveBeenCalledWith(['Done', 'Open'])
@@ -102,7 +157,7 @@ test('cancels swimlane sync when column drag ends unchanged', () => {
 
   sortable.options.onStart()
   sortable.options.onChange()
-  sortable.options.onEnd({ oldIndex: 1, newIndex: 1 })
+  sortable.options.onEnd({ oldIndex: 1, newIndex: 1, item: null })
 
   expect(swimlaneSync.finish).toHaveBeenCalledWith({ cancelled: true })
   expect(onReorder).not.toHaveBeenCalled()
