@@ -1155,6 +1155,11 @@ body.kanban-column-resize-active * {
   color: var(--text-muted);
   cursor: grab;
   touch-action: none;
+  transition: color 0.15s ease;
+}
+
+#kanbanapp .drag-handle.drag:hover {
+  color: var(--text-color);
 }
 
 #kanbanapp .drag-handle:active {
@@ -1338,6 +1343,7 @@ body.kanban-column-resize-active * {
   height: 28px;
   padding: 0 4px;
   color: var(--text-muted);
+  --icon-stroke: currentColor;
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -1354,8 +1360,10 @@ body.kanban-column-resize-active * {
   cursor: not-allowed;
 }
 
-#kanbanapp .extra-info-action.liked {
+#kanbanapp .extra-info-action.liked,
+#kanbanapp .extra-info-action.liked:hover:not(:disabled) {
   color: var(--red-500, #e24c4c);
+  --icon-stroke: var(--red-500, #e24c4c);
 }
 
 #kanbanapp .extra-info-action--count {
@@ -1637,6 +1645,39 @@ html.kanban-tag-drag-move * {
   padding: 3px 6px;
   border-radius: 4px;
   text-align: center;
+}
+
+#kanbanapp .kanban-child-count {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 8px;
+  margin: 0;
+  color: var(--text-muted);
+  --icon-stroke: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-child-count:hover {
+  color: var(--text-color);
+  --icon-stroke: color-mix(in srgb, var(--text-muted) 85%, transparent);
+  background: var(--control-bg);
+}
+
+#kanbanapp .kanban-child-count .icon {
+  opacity: 0.85;
+}
+
+#kanbanapp .kanban-child-count__value {
+  font-size: var(--text-sm, 12px);
+  font-variant-numeric: tabular-nums;
 }
 
 #kanbanapp .kanban-inline-field {

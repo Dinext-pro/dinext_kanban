@@ -118,6 +118,22 @@
         :style="highlightStyle"
       />
 
+      <button
+        v-if="showChildCount"
+        type="button"
+        class="kanban-child-count"
+        :aria-label="childCountLabel"
+        :title="childCountLabel"
+        @click.stop="onChildCountClick"
+        @pointerdown.stop
+        @dblclick.stop
+      >
+        <svg class="icon icon-sm" aria-hidden="true">
+          <use href="#es-line-bullet-list"></use>
+        </svg>
+        <span class="kanban-child-count__value">{{ childCountDisplay }}</span>
+      </button>
+
       <div class="kanban-card-actions" @dblclick.stop>
         <div
           class="compact-move-menu"
@@ -193,6 +209,9 @@ import { flashMovedCard } from '../../utils/cardMoveFlash'
 import { applyUserTagFilter } from '../../utils/listNavigation'
 import { navigateToForm } from '../../utils/inlineEditing'
 import { canDropTag, canWriteCardTags } from '../../utils/tagDragDrop'
+import { formatActivityCount } from '../../utils/cardExtraInfo'
+
+const CHILD_COUNT_CONTEXT = 'QuickKanban.ChildCount'
 
 const props = defineProps({
   card: { type: Object, required: true },
@@ -372,6 +391,17 @@ const tagFilterHint = computed(() =>
   __('Double-click to filter by tag', null, 'QuickKanban.Tags'),
 )
 const hasHighlightField = computed(() => Boolean(props.config.highlighted_field))
+const childCount = computed(() => Math.max(0, Number(props.card._child_count) || 0))
+const showChildCount = computed(() => childCount.value > 0)
+const childCountDisplay = computed(() => formatActivityCount(childCount.value))
+const childCountLabel = computed(() =>
+  __('Child records', null, CHILD_COUNT_CONTEXT),
+)
+
+function onChildCountClick() {
+  // Expand panel for child cards will be added later.
+}
+
 const highlightFieldMeta = computed(() => props.config.highlighted_field_meta || {
   fieldname: props.config.highlighted_field,
   fieldtype: 'Data',
