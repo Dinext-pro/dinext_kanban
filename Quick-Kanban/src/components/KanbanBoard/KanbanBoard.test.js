@@ -853,3 +853,59 @@ test('swimlane column collapse animates grid tracks before settling', async () =
   dispatch.mockRestore()
   rafSpy.mockRestore()
 })
+
+test('toggles column collapse on double-click of a swimlane column rail', async () => {
+  const store = createKanbanStore()
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    board_name: 'Swim Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    fields: ['name', 'status', 'project'],
+    swimlane_field: 'project',
+    swimlane_mode: 'field',
+  })
+  store.commit('SET_COLUMNS', [
+    { name: 'open', column_name: 'Open', indicator: 'blue', cards: [] },
+    { name: 'done', column_name: 'Done', indicator: 'green', cards: [] },
+  ])
+  store.commit('SET_LANES', [
+    {
+      key: 'alpha',
+      label: 'Alpha',
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [] },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+    },
+  ])
+  store.commit('SET_EXPANDED_LANE_KEYS', ['alpha'])
+  store.commit('SET_BOARD_PERMS', { write: true })
+
+  const wrapper = mount(KanbanBoard, {
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['scroller'],
+          template: '<div class="virtual-list-stub"><slot name="footer" /></div>',
+        },
+      },
+    },
+  })
+
+  await vi.waitFor(() =>
+    expect(wrapper.find('.swimlane-column-rail[data-column-value="Open"]').exists()).toBe(true),
+  )
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  await wrapper.get('.swimlane-column-rail[data-column-value="Open"]').trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(true)
+  await wrapper.get('.swimlane-column-rail[data-column-value="Open"]').trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+
+  wrapper.unmount()
+  dispatch.mockRestore()
+})

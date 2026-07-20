@@ -27,6 +27,7 @@
             class="swimlane-column-rail"
             :data-column-value="column.column_name"
             :style="columnRailStyle(column)"
+            @dblclick.stop="onColumnRailDblclick(column)"
           />
         </div>
         <div class="swimlane-board-foreground">
@@ -297,6 +298,17 @@ function columnRailStyle(column) {
   return {
     backgroundColor: `var(--kanban-column-${indicator})`,
   }
+}
+
+function onColumnRailDblclick(column) {
+  const columnKey = getColumnKey(column)
+  if (!columnKey) {
+    return
+  }
+  store.commit('SET_COLUMN_COLLAPSED', {
+    columnKey,
+    collapsed: !store.getters.isColumnCollapsed(columnKey),
+  })
 }
 
 const kanbanBoard = ref(null);
