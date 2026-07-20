@@ -126,6 +126,16 @@ test('renders a semantic card with labels and a dedicated drag handle', () => {
   expect(wrapper.text()).toContain('formatted:2026-07-10')
   expect(wrapper.get('.kanban-card-fields a').text()).toBe('TEST-PROJECT')
   expect(wrapper.text()).not.toContain('<a href=')
+
+  const fields = wrapper.findAll('.kanban-card-field')
+  expect(fields).toHaveLength(2)
+  expect(fields[0].find('dt').text()).toBe('Due date')
+  expect(fields[0].find('dd').exists()).toBe(true)
+  expect(fields[0].element.children[0].tagName).toBe('DT')
+  expect(fields[0].element.children[1].tagName).toBe('DD')
+  expect(fields[1].find('dt').text()).toBe('Project')
+  expect(fields[1].element.children[0].tagName).toBe('DT')
+  expect(fields[1].element.children[1].tagName).toBe('DD')
 })
 
 test('hides field labels when show_labels is disabled', () => {
@@ -152,6 +162,11 @@ test('hides field labels when show_labels is disabled', () => {
   expect(wrapper.text()).not.toContain('Project')
   expect(wrapper.text()).toContain('formatted:2026-07-10')
   expect(wrapper.get('.kanban-card-fields a').text()).toBe('TEST-PROJECT')
+  expect(wrapper.findAll('.kanban-card-fields dt')).toHaveLength(0)
+  const fields = wrapper.findAll('.kanban-card-field')
+  expect(fields).toHaveLength(2)
+  expect(fields[0].element.children[0].tagName).toBe('DD')
+  expect(fields[1].element.children[0].tagName).toBe('DD')
 })
 
 test('renders Percent display fields as a progress bar', () => {

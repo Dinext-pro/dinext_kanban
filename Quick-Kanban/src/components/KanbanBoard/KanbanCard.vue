@@ -59,14 +59,14 @@
         <dl
           v-if="displayFields.length"
           class="kanban-card-fields"
-          :class="{ 'values-only': !config.show_labels }"
         >
-          <template v-for="field in displayFields" :key="field.fieldname">
+          <div
+            v-for="field in displayFields"
+            :key="field.fieldname"
+            class="kanban-card-field"
+          >
             <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
-            <dd
-              :class="{ 'field-without-label': !config.show_labels }"
-              :data-fieldtype="field.fieldtype"
-            >
+            <dd :data-fieldtype="field.fieldtype">
               <InlineCardField
                 field-role="display"
                 display-mode="html"
@@ -78,7 +78,7 @@
                 :disabled="inlineDisabled"
               />
             </dd>
-          </template>
+          </div>
         </dl>
 
         <CardTags
