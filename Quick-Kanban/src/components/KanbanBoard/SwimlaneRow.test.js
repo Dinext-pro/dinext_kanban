@@ -308,3 +308,17 @@ test('does not auto-expand a collapsed column spacer without an active card drag
   vi.useRealTimers()
   wrapper.unmount()
 })
+
+test('expands a collapsed column on double-click of the cell spacer', async () => {
+  const { wrapper, store } = mountRow({
+    expanded: true,
+    collapsedColumns: ['Open'],
+  })
+  await nextTick()
+
+  await wrapper.get('.swimlane-cell-spacer[data-column-value="Open"]').trigger('dblclick')
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
+  wrapper.unmount()
+})

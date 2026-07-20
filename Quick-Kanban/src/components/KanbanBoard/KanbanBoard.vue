@@ -958,6 +958,7 @@ const bindClickDrag = () => {
       ".kanban-card-wrapper",
       ".kanban-column-resize-handle",
       ".swimlane-lane-sticky",
+      ".swimlane-cell-spacer",
     ];
     if (ignoreEl.some((el) => e.target.closest(el))) return;
 
