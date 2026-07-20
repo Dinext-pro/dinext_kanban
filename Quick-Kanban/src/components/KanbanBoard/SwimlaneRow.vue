@@ -78,6 +78,7 @@
           :data-column-value="column.column_name"
           :style="columnTrackStyle(column)"
           aria-hidden="true"
+          @dblclick="onCollapsedColumnDblclick(column)"
           @pointerenter="onCollapsedColumnPointerEnter(column)"
           @pointerleave="onCollapsedColumnPointerLeave"
           @dragenter="onCollapsedColumnDragEnter(column, $event)"
@@ -493,6 +494,14 @@ function isLeavingSpacer(event) {
     return true
   }
   return !root.contains(related)
+}
+
+function onCollapsedColumnDblclick(column) {
+  const columnKey = getColumnKey(column)
+  if (!columnKey || !store.getters.isColumnCollapsed(columnKey)) {
+    return
+  }
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey, collapsed: false })
 }
 
 function onCollapsedColumnPointerEnter(column) {

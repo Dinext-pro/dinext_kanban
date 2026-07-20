@@ -837,6 +837,94 @@ test('header-only mode keeps the header and hides the card list', () => {
   wrapper.unmount()
 })
 
+test('header-only collapsed column expands on title double-click', async () => {
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+  })
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards: [{ name: 'T1' }],
+  }
+  store.commit('SET_COLUMNS', [column])
+  store.commit('SET_COLUMN_TOTALS', { Open: 1 })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      headerOnly: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          template: '<div class="virtual-list-stub" />',
+        },
+      },
+    },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-column--collapsed')
+  await wrapper.get('h2.column-title').trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  wrapper.unmount()
+})
+
+test('header-only collapsed column expands on count double-click without opening the list', async () => {
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+  })
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards: [{ name: 'T1' }],
+  }
+  store.commit('SET_COLUMNS', [column])
+  store.commit('SET_COLUMN_TOTALS', { Open: 1 })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      headerOnly: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          template: '<div class="virtual-list-stub" />',
+        },
+      },
+    },
+  })
+  frappe.set_route.mockClear()
+
+  await wrapper.get('.column-count').trigger('dblclick')
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  expect(frappe.set_route).not.toHaveBeenCalled()
+  wrapper.unmount()
+})
+
 test('passes externalScroller to VirtualList and marks external scroll mode', () => {
   const store = createKanbanStore()
   store.commit('SET_KANBAN_CONFIG', {
