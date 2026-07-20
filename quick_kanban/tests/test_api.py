@@ -10,6 +10,7 @@ from frappe.utils import get_datetime
 
 from quick_kanban.api import (
     get_attachment_counts,
+    get_child_counts,
     get_column_totals,
     move_card,
     set_column_widths,
@@ -493,6 +494,51 @@ class TestGetAttachmentCounts(FrappeTestCase):
         with patch("quick_kanban.api.frappe.has_permission", return_value=False):
             with self.assertRaises(frappe.PermissionError):
                 get_attachment_counts("ToDo", ["TASK-1"])
+
+
+class TestGetChildCounts(FrappeTestCase):
+    def test_empty_names_returns_empty_dict(self):
+        self.assertEqual(get_child_counts("ToDo", []), {})
+        self.assertEqual(get_child_counts("ToDo", "[]"), {})
+
+    def test_non_tree_doctype_returns_empty_dict(self):
+        meta = SimpleNamespace(is_tree=0, nsm_parent_field=None)
+        with patch("quick_kanban.api.frappe.get_meta", return_value=meta):
+            self.assertEqual(get_child_counts("ToDo", ["DOC-1"]), {})
+
+    def test_counts_direct_children_for_tree_doctype(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        rows = [
+            {"parent_task": "PARENT-A"},
+            {"parent_task": "PARENT-A"},
+            {"parent_task": "PARENT-B"},
+        ]
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=True),
+            patch("quick_kanban.api.frappe.get_list", return_value=rows) as get_list,
+        ):
+            counts = get_child_counts("Task", ["PARENT-A", "PARENT-B", "PARENT-C"])
+
+        self.assertEqual(counts["PARENT-A"], 2)
+        self.assertEqual(counts["PARENT-B"], 1)
+        self.assertEqual(counts["PARENT-C"], 0)
+        get_list.assert_called_once_with(
+            "Task",
+            filters={"parent_task": ("in", ["PARENT-A", "PARENT-B", "PARENT-C"])},
+            fields=["parent_task"],
+            limit_page_length=0,
+            ignore_permissions=False,
+        )
+
+    def test_requires_read_permission_on_tree_doctype(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=False),
+        ):
+            with self.assertRaises(frappe.PermissionError):
+                get_child_counts("Task", ["TASK-1"])
 
 
 class TestSwimlaneApi(FrappeTestCase):

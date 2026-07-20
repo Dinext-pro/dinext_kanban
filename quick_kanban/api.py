@@ -193,6 +193,52 @@ def get_attachment_counts(doctype, names):
 	return counts
 
 
+@frappe.whitelist()
+@frappe.read_only()
+def get_child_counts(doctype, names):
+	"""Return direct child counts for tree DocTypes, keyed by parent name."""
+	names = frappe.parse_json(names) if isinstance(names, str) else names
+	if not names:
+		return {}
+	if not isinstance(names, (list, tuple)):
+		frappe.throw(_("Document names must be a list."))
+
+	unique_names = []
+	seen = set()
+	for name in names:
+		key = str(name or "").strip()
+		if not key or key in seen:
+			continue
+		seen.add(key)
+		unique_names.append(key)
+
+	if not unique_names:
+		return {}
+
+	meta = frappe.get_meta(doctype)
+	parent_field = meta.nsm_parent_field if meta.is_tree else None
+	if not parent_field:
+		return {}
+
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("You cannot read this document type."), frappe.PermissionError)
+
+	counts = {name: 0 for name in unique_names}
+	# Permission-aware; limit_page_length=0 avoids get_list default of 20.
+	rows = frappe.get_list(
+		doctype,
+		filters={parent_field: ("in", unique_names)},
+		fields=[parent_field],
+		limit_page_length=0,
+		ignore_permissions=False,
+	)
+	for row in rows:
+		parent_name = row.get(parent_field)
+		if parent_name in counts:
+			counts[parent_name] += 1
+	return counts
+
+
 @frappe.whitelist(methods=["POST"])
 def get_move_options(board_name, names):
 	return build_move_options(board_name, names)

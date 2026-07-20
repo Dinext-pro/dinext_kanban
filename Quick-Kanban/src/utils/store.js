@@ -956,6 +956,24 @@ export function createKanbanStore() {
         }
         apply(state.columns)
       },
+      APPLY_CHILD_COUNTS(state, counts = {}) {
+        const apply = (columns) => {
+          for (const column of columns || []) {
+            for (const card of column.cards || []) {
+              if (card?.name && Object.prototype.hasOwnProperty.call(counts, card.name)) {
+                card._child_count = Number(counts[card.name]) || 0
+              }
+            }
+          }
+        }
+        if (state.lanes?.length) {
+          for (const lane of state.lanes) {
+            apply(lane.columns)
+          }
+          return
+        }
+        apply(state.columns)
+      },
       SET_DATA_REQUEST_ID(state, requestId) {
         state.dataRequestId = requestId
       },
@@ -1276,6 +1294,10 @@ export function createKanbanStore() {
           cards: flattenCardsFromColumns(columns),
           boardGeneration: state.boardGeneration,
         })
+        dispatch('hydrateChildCounts', {
+          cards: flattenCardsFromColumns(columns),
+          boardGeneration: state.boardGeneration,
+        })
       },
       async hydrateAttachmentCounts(
         { commit, state },
@@ -1320,6 +1342,55 @@ export function createKanbanStore() {
             return false
           }
           commit('APPLY_ATTACHMENT_COUNTS', counts)
+          return true
+        } catch {
+          return false
+        }
+      },
+      async hydrateChildCounts(
+        { commit, state },
+        {
+          cards,
+          boardGeneration = state.boardGeneration,
+          dataRequestId = null,
+          columnRequestGeneration = null,
+        } = {},
+      ) {
+        const doctype = state.config.ref_doctype
+        const meta = doctype && globalThis.frappe?.get_meta?.(doctype)
+        if (!meta?.is_tree || !meta?.nsm_parent_field) {
+          return false
+        }
+        const names = [...new Set(
+          (cards || [])
+            .map((card) => card?.name)
+            .filter(Boolean)
+            .map((name) => String(name)),
+        )]
+        if (!doctype || !names.length) {
+          return false
+        }
+
+        try {
+          const counts = {}
+          for (const chunk of chunkList(names, 100)) {
+            const response = await frappe.call({
+              method: 'quick_kanban.api.get_child_counts',
+              args: { doctype, names: chunk },
+            })
+            Object.assign(counts, response.message || {})
+          }
+          if (
+            state.boardGeneration !== boardGeneration
+            || (dataRequestId != null && state.dataRequestId !== dataRequestId)
+            || (
+              columnRequestGeneration != null
+              && state.columnRequestGeneration !== columnRequestGeneration
+            )
+          ) {
+            return false
+          }
+          commit('APPLY_CHILD_COUNTS', counts)
           return true
         } catch {
           return false
@@ -1474,6 +1545,11 @@ export function createKanbanStore() {
             dataRequestId: requestId,
           })
           dispatch('hydrateAttachmentCounts', {
+            cards: flattenCardsFromColumns(columns),
+            boardGeneration,
+            dataRequestId: requestId,
+          })
+          dispatch('hydrateChildCounts', {
             cards: flattenCardsFromColumns(columns),
             boardGeneration,
             dataRequestId: requestId,
@@ -1697,6 +1773,11 @@ export function createKanbanStore() {
           boardGeneration,
           columnRequestGeneration,
         })
+        dispatch('hydrateChildCounts', {
+          cards: flatCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
         return true
       },
       async topUpInitialLaneCells({ dispatch, state }, { laneKey, args } = {}) {
@@ -1880,6 +1961,11 @@ export function createKanbanStore() {
             columnRequestGeneration,
           })
           dispatch('hydrateAttachmentCounts', {
+            cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateChildCounts', {
             cards,
             boardGeneration,
             columnRequestGeneration,
@@ -2193,6 +2279,11 @@ export function createKanbanStore() {
             columnRequestGeneration,
           })
           dispatch('hydrateAttachmentCounts', {
+            cards: pageColumn.cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateChildCounts', {
             cards: pageColumn.cards,
             boardGeneration,
             columnRequestGeneration,

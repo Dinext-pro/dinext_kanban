@@ -267,6 +267,73 @@ test('renders extra info row after tags when show_extra_info is enabled', () => 
   expect(extra.find('[aria-label="Copy link"]').exists()).toBe(true)
 })
 
+test('renders child count badge after highlight when _child_count > 0', () => {
+  const store = createStore()
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _child_count: 3,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  const highlight = wrapper.get('.kanban-highlight')
+  const childCount = wrapper.get('.kanban-child-count')
+  const actions = wrapper.get('.kanban-card-actions')
+  expect(highlight.element.nextElementSibling).toBe(childCount.element)
+  expect(childCount.element.nextElementSibling).toBe(actions.element)
+  expect(childCount.text()).toContain('3')
+  expect(childCount.attributes('aria-label')).toBe('Child records')
+  expect(childCount.find('use[href="#es-line-bullet-list"]').exists()).toBe(true)
+  expect(childCount.find('.kanban-child-count__chevron').exists()).toBe(false)
+})
+
+test('hides child count badge when _child_count is zero or missing', () => {
+  const store = createStore()
+  const withoutCount = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  expect(withoutCount.find('.kanban-child-count').exists()).toBe(false)
+
+  const zeroCount = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-2',
+        subject: 'Second task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 0,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  expect(zeroCount.find('.kanban-child-count').exists()).toBe(false)
+})
+
 test('shows details slot when only show_extra_info is enabled', () => {
   const store = createStore()
   const config = {
