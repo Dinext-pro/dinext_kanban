@@ -1342,7 +1342,7 @@ body.kanban-column-resize-active * {
   min-width: 28px;
   height: 28px;
   padding: 0 4px;
-  color: var(--text-muted);
+  color: color-mix(in srgb, var(--text-muted) 55%, transparent);
   --icon-stroke: currentColor;
   background: transparent;
   border: 0;
@@ -1352,7 +1352,13 @@ body.kanban-column-resize-active * {
 
 #kanbanapp .extra-info-action:hover:not(:disabled) {
   background: var(--control-bg);
-  color: var(--text-color);
+  color: color-mix(in srgb, var(--text-muted) 85%, transparent);
+}
+
+#kanbanapp .extra-info-action--danger:hover:not(:disabled) {
+  background: var(--bg-red, var(--control-bg));
+  color: color-mix(in srgb, var(--red-500, #e24c4c) 75%, transparent);
+  --icon-stroke: currentColor;
 }
 
 #kanbanapp .extra-info-action:disabled {
@@ -1362,8 +1368,8 @@ body.kanban-column-resize-active * {
 
 #kanbanapp .extra-info-action.liked,
 #kanbanapp .extra-info-action.liked:hover:not(:disabled) {
-  color: var(--red-500, #e24c4c);
-  --icon-stroke: var(--red-500, #e24c4c);
+  color: color-mix(in srgb, var(--red-500, #e24c4c) 70%, transparent);
+  --icon-stroke: currentColor;
 }
 
 #kanbanapp .extra-info-action--count {

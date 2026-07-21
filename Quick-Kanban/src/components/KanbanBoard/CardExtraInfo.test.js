@@ -294,3 +294,68 @@ test('does not delete attachment when confirm is cancelled', async () => {
   expect(store.state.columns[0].cards[0]._attachment_count).toBe(1)
   expect(wrapper.find('.extra-info-files-menu').exists()).toBe(true)
 })
+
+test('hides card delete when user cannot delete', () => {
+  frappe.model.can_delete.mockReturnValue(false)
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  expect(wrapper.find('[aria-label="Delete"]').exists()).toBe(false)
+})
+
+test('hides card delete for submitted documents', () => {
+  frappe.model.can_delete.mockReturnValue(true)
+  const store = createStore({ docstatus: 1 })
+  const wrapper = mountExtra(store)
+  expect(wrapper.find('[aria-label="Delete"]').exists()).toBe(false)
+})
+
+test('shows card delete for draft when user can delete', () => {
+  frappe.model.can_delete.mockReturnValue(true)
+  const store = createStore({ docstatus: 0 })
+  const wrapper = mountExtra(store)
+  expect(wrapper.find('[aria-label="Delete"]').exists()).toBe(true)
+})
+
+test('confirms before deleting card and removes it from the board', async () => {
+  frappe.model.can_delete.mockReturnValue(true)
+  frappe.call.mockImplementation(async ({ method }) => {
+    if (method === 'quick_kanban.api.delete_card') {
+      return { message: { name: 'TASK-1' } }
+    }
+    if (method === 'quick_kanban.api.get_column_totals') {
+      return { message: { Open: 0 } }
+    }
+    return { message: {} }
+  })
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  await wrapper.get('[aria-label="Delete"]').trigger('click')
+  await flushPromises()
+  expect(frappe.confirm).toHaveBeenCalledWith(
+    'Are you sure you want to delete First task?',
+    expect.any(Function),
+    expect.any(Function),
+  )
+  expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+    method: 'quick_kanban.api.delete_card',
+    args: expect.objectContaining({
+      board_name: 'Task Board',
+      name: 'TASK-1',
+    }),
+  }))
+  expect(store.state.columns[0].cards.find(({ name }) => name === 'TASK-1')).toBeUndefined()
+})
+
+test('does not delete card when confirm is cancelled', async () => {
+  frappe.model.can_delete.mockReturnValue(true)
+  frappe.confirm.mockImplementation((_message, _onYes, onNo) => onNo?.())
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  await wrapper.get('[aria-label="Delete"]').trigger('click')
+  await flushPromises()
+  expect(frappe.confirm).toHaveBeenCalled()
+  expect(frappe.call).not.toHaveBeenCalledWith(expect.objectContaining({
+    method: 'quick_kanban.api.delete_card',
+  }))
+  expect(store.state.columns[0].cards[0].name).toBe('TASK-1')
+})

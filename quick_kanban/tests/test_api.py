@@ -9,6 +9,7 @@ from frappe.tests.utils import FrappeTestCase, patch_hooks
 from frappe.utils import get_datetime
 
 from quick_kanban.api import (
+    delete_card,
     get_attachment_counts,
     get_board_document_names,
     get_child_counts,
@@ -125,6 +126,67 @@ class TestMoveCard(FrappeTestCase):
 
         with self.assertRaises(frappe.PermissionError):
             move_card(BOARD_NAME, "TASK-1", "Done")
+
+
+class TestDeleteCard(FrappeTestCase):
+    def test_delete_card_allows_only_post_requests(self):
+        self.assertEqual(
+            frappe.allowed_http_methods_for_whitelisted_func[delete_card],
+            ["POST"],
+        )
+
+    def make_doc(self):
+        doc = Mock()
+        doc.name = "TASK-1"
+        doc.modified = datetime(2026, 7, 10, 10, 0, 0)
+        return doc
+
+    def test_delete_real_document(self):
+        frappe.set_user("Administrator")
+        board_name = ensure_todo_kanban_board()
+        todo = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Quick Kanban delete test",
+                "status": "Open",
+            }
+        ).insert()
+        name = todo.name
+
+        result = delete_card(board_name, name, str(todo.modified))
+
+        self.assertEqual(result["name"], name)
+        self.assertFalse(frappe.db.exists("ToDo", name))
+
+    @patch("quick_kanban.api.BoardContext")
+    @patch("quick_kanban.api.frappe.get_doc")
+    def test_delete_card_checks_permission_and_deletes(self, get_doc, board_context):
+        doc = self.make_doc()
+        get_doc.return_value = doc
+        board_context.return_value = SimpleNamespace(ref_doctype="Task")
+
+        result = delete_card(
+            BOARD_NAME,
+            "TASK-1",
+            "2026-07-10 10:00:00",
+        )
+
+        doc.check_permission.assert_called_once_with("delete")
+        doc.delete.assert_called_once()
+        self.assertEqual(result["name"], "TASK-1")
+
+    @patch("quick_kanban.api.BoardContext")
+    @patch("quick_kanban.api.frappe.get_doc")
+    def test_delete_card_rejects_stale_documents(self, get_doc, board_context):
+        get_doc.return_value = self.make_doc()
+        board_context.return_value = SimpleNamespace(ref_doctype="Task")
+
+        with self.assertRaises(frappe.TimestampMismatchError):
+            delete_card(
+                BOARD_NAME,
+                "TASK-1",
+                "2026-07-10 11:00:00",
+            )
 
 
 class TestMoveCardLifecycle(FrappeTestCase):
