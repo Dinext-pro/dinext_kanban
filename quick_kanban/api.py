@@ -110,7 +110,14 @@ def get_column_totals(
 	columns,
 	filters=None,
 	or_filters=None,
+	hide_board_children=None,
 ):
+	from quick_kanban.board_children import (
+		coerce_bool,
+		exclude_on_board_children,
+		tree_parent_field,
+	)
+
 	columns = frappe.parse_json(columns) if isinstance(columns, str) else columns
 	filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or [])
 	or_filters = (
@@ -134,6 +141,32 @@ def get_column_totals(
 		)
 		if fieldname not in permitted_fields:
 			frappe.throw(_("You cannot read the Kanban status field."), frappe.PermissionError)
+
+	hide_children = coerce_bool(hide_board_children)
+	parent_field = tree_parent_field(doctype) if hide_children else None
+	if hide_children and parent_field:
+		board_names = get_board_document_names(
+			doctype,
+			filters=filters,
+			field_name=fieldname,
+			column_values=columns,
+			or_filters=or_filters,
+		)
+		board_name_set = {str(name) for name in board_names}
+		rows = frappe.get_list(
+			doctype,
+			fields=[fieldname, parent_field, "name"],
+			filters=filters,
+			or_filters=or_filters,
+			limit_page_length=0,
+		)
+		visible = exclude_on_board_children(rows, parent_field, board_name_set)
+		totals = {column: 0 for column in columns}
+		for row in visible:
+			value = row.get(fieldname)
+			if value in totals:
+				totals[value] += 1
+		return totals
 
 	rows = frappe.get_list(
 		doctype,
@@ -239,6 +272,87 @@ def get_child_counts(doctype, names):
 	return counts
 
 
+@frappe.whitelist()
+@frappe.read_only()
+def get_board_document_names(
+	doctype,
+	filters=None,
+	field_name=None,
+	column_values=None,
+	or_filters=None,
+):
+	"""Return document names that belong on the board (filters + active columns)."""
+	filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or [])
+	or_filters = (
+		frappe.parse_json(or_filters) if isinstance(or_filters, str) else (or_filters or [])
+	)
+	column_values = (
+		frappe.parse_json(column_values) if isinstance(column_values, str) else (column_values or [])
+	)
+	field_name = (field_name or "").strip()
+	if not field_name:
+		frappe.throw(_("Kanban status field is required."))
+	if not isinstance(column_values, (list, tuple)):
+		frappe.throw(_("Kanban columns must be a list."))
+
+	unique_columns = []
+	seen_columns = set()
+	for value in column_values:
+		key = str(value) if value is not None else ""
+		if not key or key in seen_columns:
+			continue
+		seen_columns.add(key)
+		unique_columns.append(value if value is not None else key)
+
+	if not unique_columns:
+		return []
+
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("You cannot read this document type."), frappe.PermissionError)
+
+	meta = frappe.get_meta(doctype)
+	field = meta.get_field(field_name)
+	if not field:
+		frappe.throw(_("Invalid Kanban status field."))
+
+	list_filters = list(filters) if isinstance(filters, list) else filters
+	if isinstance(list_filters, list):
+		list_filters = [*list_filters, [field_name, "in", unique_columns]]
+	else:
+		list_filters = {**(list_filters or {}), field_name: ("in", unique_columns)}
+
+	rows = frappe.get_list(
+		doctype,
+		filters=list_filters,
+		or_filters=or_filters or [],
+		fields=["name"],
+		limit_page_length=0,
+		ignore_permissions=False,
+	)
+	return [str(row.get("name")) for row in rows if row.get("name")]
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_hidden_board_child_names(
+	doctype,
+	filters=None,
+	field_name=None,
+	column_values=None,
+	or_filters=None,
+):
+	"""Return on-board child names hidden when Show child tasks is off."""
+	from quick_kanban.board_children import get_hidden_board_child_names as _get_hidden
+
+	return _get_hidden(
+		doctype,
+		filters=filters,
+		field_name=field_name,
+		column_values=column_values,
+		or_filters=or_filters,
+	)
+
+
 @frappe.whitelist(methods=["POST"])
 def get_move_options(board_name, names):
 	return build_move_options(board_name, names)
@@ -326,6 +440,7 @@ def get_cell_totals(
 	lane_keys,
 	filters=None,
 	or_filters=None,
+	hide_board_children=None,
 ):
 	from quick_kanban.swimlane import get_cell_totals as _get_cell_totals
 
@@ -337,6 +452,7 @@ def get_cell_totals(
 		lane_keys,
 		filters=filters,
 		or_filters=or_filters,
+		hide_board_children=hide_board_children,
 	)
 
 
@@ -353,6 +469,8 @@ def get_swimlane_column_page(
 	or_filters=None,
 	start=0,
 	page_length=20,
+	hide_board_children=None,
+	column_values=None,
 ):
 	from quick_kanban.swimlane import get_swimlane_column_page as _get_page
 
@@ -367,6 +485,8 @@ def get_swimlane_column_page(
 		or_filters=or_filters,
 		start=start,
 		page_length=page_length,
+		hide_board_children=hide_board_children,
+		column_values=column_values,
 	)
 
 
@@ -382,6 +502,8 @@ def get_swimlane_lane_page(
 	or_filters=None,
 	start=0,
 	page_length=100,
+	hide_board_children=None,
+	column_values=None,
 ):
 	from quick_kanban.swimlane import get_swimlane_lane_page as _get_page
 
@@ -395,7 +517,91 @@ def get_swimlane_lane_page(
 		or_filters=or_filters,
 		start=start,
 		page_length=page_length,
+		hide_board_children=hide_board_children,
+		column_values=column_values,
 	)
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_column_page(
+	doctype,
+	status_field,
+	column,
+	fields=None,
+	filters=None,
+	or_filters=None,
+	start=0,
+	page_length=20,
+	hide_board_children=None,
+	column_values=None,
+):
+	"""Return reportview-like page for one flat kanban column."""
+	from frappe.utils import cint
+	from quick_kanban.board_children import (
+		coerce_bool,
+		filter_names_excluding_on_board_children,
+		board_name_set_for_hide,
+	)
+	from quick_kanban.swimlane import (
+		_ensure_card_fetch_fields,
+		_empty_page,
+		_matching_parent_names,
+		_page_rows_as_keys_values,
+		_parse_filters,
+		_parse_or_filters,
+	)
+
+	filters = _parse_filters(filters)
+	or_filters = _parse_or_filters(or_filters)
+	fields = frappe.parse_json(fields) if isinstance(fields, str) else (fields or ["name"])
+	fields = _ensure_card_fetch_fields(fields, doctype=doctype, status_field=status_field)
+	column_values = (
+		frappe.parse_json(column_values) if isinstance(column_values, str) else column_values
+	)
+	start = cint(start)
+	page_length = cint(page_length) or 20
+
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("You cannot read this document type."), frappe.PermissionError)
+
+	list_filters = list(filters or [])
+	list_filters.append([doctype, status_field, "=", column])
+	names = _matching_parent_names(doctype, list_filters, or_filters)
+
+	if coerce_bool(hide_board_children) and names:
+		active_columns = (
+			column_values
+			if isinstance(column_values, (list, tuple)) and column_values
+			else [column]
+		)
+		parent_field, board_set = board_name_set_for_hide(
+			doctype,
+			filters=filters,
+			field_name=status_field,
+			column_values=active_columns,
+			or_filters=or_filters,
+		)
+		if parent_field and board_set is not None:
+			names = filter_names_excluding_on_board_children(
+				doctype,
+				names,
+				parent_field,
+				board_set,
+			)
+
+	if not names:
+		return _empty_page(fields)
+
+	paged = frappe.get_list(
+		doctype,
+		fields=fields,
+		filters={"name": ("in", names)},
+		order_by="modified desc",
+		start=start,
+		page_length=page_length,
+	)
+	return _page_rows_as_keys_values(paged, fields)
 
 
 @frappe.whitelist(methods=["POST"])

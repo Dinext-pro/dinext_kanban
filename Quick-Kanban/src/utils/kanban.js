@@ -5,6 +5,7 @@ const DEFAULT_FIELDS = ['name']
 const CARD_COLOR_FIELDNAME = 'color'
 const CARD_ACCENT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?([0-9A-Fa-f]{2})?$/
 const MINIMIZE_CARDS_STORAGE_PREFIX = 'quick_kanban:minimize_cards:'
+const SHOW_CHILD_TASKS_STORAGE_PREFIX = 'quick_kanban:show_child_tasks:'
 const COLLAPSED_COLUMNS_STORAGE_PREFIX = 'quick_kanban:collapsed_columns:'
 const EXPANDED_LANE_STORAGE_PREFIX = 'quick_kanban:expanded_lane:'
 const EXPANDED_LANES_STORAGE_PREFIX = 'quick_kanban:expanded_lanes:'
@@ -68,6 +69,31 @@ export function readMinimizeCardsPreference(boardName, storage = globalThis.loca
 export function writeMinimizeCardsPreference(boardName, value, storage = globalThis.localStorage) {
   try {
     const key = minimizeCardsStorageKey(boardName)
+    if (value) {
+      storage?.setItem?.(key, '1')
+    } else {
+      storage?.removeItem?.(key)
+    }
+  } catch {
+    // Ignore quota / private-mode storage failures.
+  }
+}
+
+export function showChildTasksStorageKey(boardName) {
+  return `${SHOW_CHILD_TASKS_STORAGE_PREFIX}${boardName || ''}`
+}
+
+export function readShowChildTasksPreference(boardName, storage = globalThis.localStorage) {
+  try {
+    return storage?.getItem?.(showChildTasksStorageKey(boardName)) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeShowChildTasksPreference(boardName, value, storage = globalThis.localStorage) {
+  try {
+    const key = showChildTasksStorageKey(boardName)
     if (value) {
       storage?.setItem?.(key, '1')
     } else {
@@ -564,9 +590,42 @@ export function attachColumnDisplayNames(
  * tags + comments + likes (ListView std_fields parity for swimlane API).
  * Board.fields often stores only display extras (no name/subject).
  */
+/**
+ * Ensure reportview / list args request the tree parent field.
+ * ListView get_args() only includes board.fields — parent must be injected.
+ */
+export function ensureArgsIncludeParentField(args = {}, {
+  parentField = null,
+  doctype = null,
+} = {}) {
+  if (!parentField) {
+    return args
+  }
+  const fields = [...(args.fields || [])]
+  const hasParent = fields.some((field) => {
+    const value = String(field || '')
+    const normalized = value.replaceAll('`', '')
+    return (
+      value === parentField
+      || normalized === parentField
+      || normalized.endsWith(`.${parentField}`)
+    )
+  })
+  if (hasParent) {
+    return args
+  }
+  const sample = fields[0] != null ? String(fields[0]) : ''
+  if (sample.includes('`.`') && doctype && globalThis.frappe?.model?.get_full_column_name) {
+    fields.push(frappe.model.get_full_column_name(parentField, doctype))
+  } else {
+    fields.push(parentField)
+  }
+  return { ...args, fields }
+}
+
 export function ensureCardFetchFields(
   fields = [],
-  { titleField = 'name', statusField = null } = {},
+  { titleField = 'name', statusField = null, parentField = null } = {},
 ) {
   const result = []
   const seen = new Set()
@@ -581,11 +640,49 @@ export function ensureCardFetchFields(
     push(field)
   }
   push(statusField)
+  push(parentField)
   push('_assign')
   push('_user_tags')
   push('_comments')
   push('_liked_by')
   return result
+}
+
+/**
+ * Hide cards whose direct parent is also on this board (same filters + active columns).
+ * When showChildTasks is true, returns cards unchanged.
+ */
+export function filterBoardChildCards(
+  cards = [],
+  { showChildTasks = false, parentField = null, boardNames = null } = {},
+) {
+  if (showChildTasks || !parentField) {
+    return Array.isArray(cards) ? cards : []
+  }
+  const names = boardNames instanceof Set
+    ? boardNames
+    : new Set((boardNames || []).map((name) => String(name)))
+  return (cards || []).filter((card) => {
+    const parent = card?.[parentField]
+    if (parent == null || parent === '') {
+      return true
+    }
+    return !names.has(String(parent))
+  })
+}
+
+export function filterColumnsChildCards(
+  columns = [],
+  { showChildTasks = false, parentField = null, boardNames = null } = {},
+) {
+  return (columns || []).map((column) => ({
+    ...column,
+    cards: filterBoardChildCards(column.cards, {
+      showChildTasks,
+      parentField,
+      boardNames,
+    }),
+  }))
 }
 
 export function normalizeBoardConfig(board, meta = {}) {
@@ -638,9 +735,11 @@ export function normalizeBoardConfig(board, meta = {}) {
   }
   const swimlaneMode = resolveSwimlaneMode(swimlaneField, swimlaneFieldMeta)
   const titleField = meta.title_field || 'name'
+  const parentField = meta.is_tree ? (meta.nsm_parent_field || '') : ''
   fields = ensureCardFetchFields(fields, {
     titleField,
     statusField: board.field_name,
+    parentField,
   })
   const statusFieldMeta = metaByField[board.field_name] || {
     fieldname: board.field_name,
@@ -656,6 +755,7 @@ export function normalizeBoardConfig(board, meta = {}) {
       field !== colorField &&
       field !== swimlaneField &&
       field !== board.field_name &&
+      field !== parentField &&
       field !== '_assign' &&
       field !== '_user_tags' &&
       field !== '_comments' &&
@@ -668,6 +768,7 @@ export function normalizeBoardConfig(board, meta = {}) {
     board_name: board.name,
     ref_doctype: board.reference_doctype,
     field_name: board.field_name,
+    parent_field: parentField,
     title_field: titleField,
     title_field_meta: titleFieldMeta,
     status_field_meta: statusFieldMeta,

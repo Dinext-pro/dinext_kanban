@@ -131,6 +131,8 @@
 "Could not open field editor.","Не удалось открыть редактор поля","QuickKanban.Inline"
 "Editing {0}","Редактирование {0}","QuickKanban.Inline"
 "Minimize","Минимизировать","QuickKanban.Board"
+"Show child tasks","Показать дочерние задачи","QuickKanban.Board"
+"The list may include child tasks that are hidden on the board","В списке могут быть дочерние задачи, скрытые на доске","QuickKanban.Board"
 "Group By","Группировать","QuickKanban.Board"
 "No Grouping","Без группировки","QuickKanban.Board"
 "Kanban Board is not configured correctly.","Канбан-доска настроена некорректно.",""

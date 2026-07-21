@@ -230,6 +230,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         (this.board.fields || []).forEach((field) => this._add_field(field));
         this._add_field(this.board.custom_highlighted_field);
         this._addCardColorField();
+        this._addTreeParentField();
     }
 
     _addCardColorField() {
@@ -239,6 +240,13 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         );
         if (colorField) {
             this._add_field("color");
+        }
+    }
+
+    _addTreeParentField() {
+        const meta = frappe.get_meta(this.board.reference_doctype);
+        if (meta?.is_tree && meta?.nsm_parent_field) {
+            this._add_field(meta.nsm_parent_field);
         }
     }
 
@@ -256,6 +264,21 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         } catch {
             return false;
         }
+    }
+
+    getShowChildTasksPreference() {
+        const boardName = this.board_name || this.board?.name || "";
+        try {
+            return localStorage.getItem(`quick_kanban:show_child_tasks:${boardName}`) === "1";
+        } catch {
+            return false;
+        }
+    }
+
+    isTreeBoardDoctype() {
+        const doctype = this.board?.reference_doctype || this.doctype;
+        const meta = doctype && frappe.get_meta?.(doctype);
+        return Boolean(meta?.is_tree && meta?.nsm_parent_field);
     }
 
     resolveFilterSelector() {
@@ -362,6 +385,65 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             || document.querySelector(".quick-kanban-minimize-control");
         control?.remove?.();
         this.$minimize_cards_control = null;
+    }
+
+    setup_show_child_tasks_control() {
+        if (!this.isTreeBoardDoctype()) {
+            this.remove_show_child_tasks_control();
+            return;
+        }
+
+        const placement = this.resolveCustomActionsHost();
+        if (!placement) {
+            return;
+        }
+        const { host, insertBeforeNode } = placement;
+
+        let control = host.querySelector(".quick-kanban-show-child-tasks-control");
+
+        if (!control) {
+            const labelText = __("Show child tasks", null, "QuickKanban.Board");
+            control = document.createElement("label");
+            control.className = "quick-kanban-show-child-tasks-control";
+            control.setAttribute("title", labelText);
+            control.setAttribute("aria-label", labelText);
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            const labelSpan = document.createElement("span");
+            labelSpan.className = "quick-kanban-show-child-tasks-label";
+            labelSpan.setAttribute("aria-hidden", "true");
+            // Same glyph as card child-count badge (#es-line-bullet-list).
+            labelSpan.innerHTML =
+                '<svg class="icon icon-sm" aria-hidden="true"><use href="#es-line-bullet-list"></use></svg>';
+            control.append(checkbox, labelSpan);
+
+            checkbox.addEventListener("change", () => {
+                window.setQuickKanbanShowChildTasks?.(checkbox.checked);
+            });
+
+            host.insertBefore(control, insertBeforeNode);
+        }
+
+        const checkbox = control.querySelector('input[type="checkbox"]');
+        if (checkbox) {
+            const preferred = window.__quickKanbanStore
+                ? Boolean(window.__quickKanbanStore.state.show_child_tasks)
+                : this.getShowChildTasksPreference();
+            checkbox.checked = preferred;
+            if (!window.__quickKanbanStore) {
+                window.setQuickKanbanShowChildTasks?.(preferred, { persist: false });
+            }
+        }
+
+        this.$show_child_tasks_control = control;
+    }
+
+    remove_show_child_tasks_control() {
+        const control = this.$show_child_tasks_control
+            || document.querySelector(".quick-kanban-show-child-tasks-control");
+        control?.remove?.();
+        this.$show_child_tasks_control = null;
     }
 
     getSwimlaneFieldValue() {
@@ -577,6 +659,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
                     return this.renderBeta();
                 }
                 this.remove_minimize_cards_control();
+                this.remove_show_child_tasks_control();
                 this.remove_groupby_control();
                 this.renderOld();
             })
@@ -587,6 +670,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
                     indicator: "orange",
                 });
                 this.remove_minimize_cards_control();
+                this.remove_show_child_tasks_control();
                 this.remove_groupby_control();
                 this.renderOld();
             });
@@ -594,6 +678,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
 
     setup_page_head_controls() {
         this.setup_minimize_cards_control();
+        this.setup_show_child_tasks_control();
         this.setup_groupby_control();
     }
 
@@ -623,6 +708,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             } catch {
                 delete window.quickKanbanInitialData;
                 this.remove_minimize_cards_control();
+                this.remove_show_child_tasks_control();
                 this.remove_groupby_control();
                 frappe.show_alert({
                     message: __("Quick Kanban failed to load. Using the standard Kanban view."),
@@ -643,6 +729,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
         } catch {
             delete window.quickKanbanInitialData;
             this.remove_minimize_cards_control();
+            this.remove_show_child_tasks_control();
             this.remove_groupby_control();
             frappe.show_alert({
                 message: __("Quick Kanban failed to load. Using the standard Kanban view."),
@@ -654,6 +741,7 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
 
     renderOld() {
         this.remove_minimize_cards_control();
+        this.remove_show_child_tasks_control();
         this.remove_groupby_control();
         const hadBetaMount = this.$result.find("#kanbanapp").length;
         window.unmountQuickKanban?.();

@@ -570,6 +570,11 @@ watch(
 watch(
   hydrationStatus,
   (status) => {
+    // After CLEAR_LANE_HYDRATION (board refresh), an already-visible expanded lane
+    // must request cards again — intersection may not change.
+    if (status == null || status === 'idle') {
+      maybeHydrateLane()
+    }
     if (!expanded.value || !animationReady.value || !awaitingExpandAnim) {
       return
     }

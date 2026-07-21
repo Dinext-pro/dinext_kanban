@@ -280,6 +280,44 @@ test('adds color field when DocType defines color with fieldtype Color', async (
   expect(view.fields).toContain('color')
 })
 
+test('adds tree parent field for tree DocTypes so child filtering can work', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: vi.fn(),
+    assets: {
+      bundled_asset: vi.fn(),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({
+      fields: [],
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+    })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+          this._add_field('_assign')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+
+  await view.setup_defaults()
+  await view.set_fields()
+
+  expect(view.fields).toContain('parent_task')
+})
+
 test('mounts beta assets when bootstrap lacks stylesheet helpers', async () => {
   window.quickKanbanBootstrap = {
     loadConfig: vi.fn().mockResolvedValue({
@@ -797,6 +835,7 @@ test('removes Minimize checkbox when falling back to native Kanban', async () =>
   view.render()
   await vi.waitFor(() => expect(NativeBoard).toHaveBeenCalledTimes(1))
   expect(document.querySelector('.quick-kanban-minimize-control')).toBeNull()
+  expect(document.querySelector('.quick-kanban-show-child-tasks-control')).toBeNull()
   expect(document.querySelector('.quick-kanban-groupby-control')).toBeNull()
 })
 
@@ -812,6 +851,117 @@ function mockFrappeCall(handlers = {}) {
     return Promise.resolve({ message })
   })
 }
+
+test('inserts Show child tasks between Minimize and Group By for tree doctypes', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: mockFrappeCall({
+      'quick_kanban.api.get_swimlane_field_options': () => ([
+        { value: '__assign', label: 'Assigned To' },
+        { value: 'priority', label: 'Priority' },
+      ]),
+    }),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({
+      fields: [],
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+    })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.board_perms = { write: true }
+  view.board.reference_doctype = 'Task'
+  view.board.custom_swimlane_field = ''
+  view.$filter_section = createFilterSection()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(window.mountQuickKanban).toHaveBeenCalledTimes(1)
+  })
+
+  const minimize = document.querySelector('.quick-kanban-minimize-control')
+  const showChildren = document.querySelector('.quick-kanban-show-child-tasks-control')
+  const groupby = document.querySelector('.quick-kanban-groupby-control')
+  const filterSection = document.querySelector('.filter-section')
+  expect(minimize).toBeTruthy()
+  expect(showChildren).toBeTruthy()
+  expect(groupby).toBeTruthy()
+  expect(minimize.nextElementSibling).toBe(showChildren)
+  expect(showChildren.nextElementSibling).toBe(groupby)
+  expect(groupby.nextElementSibling).toBe(filterSection)
+  expect(showChildren.getAttribute('aria-label')).toBe('Show child tasks')
+  expect(showChildren.querySelector('use[href="#es-line-bullet-list"]')).toBeTruthy()
+  expect(showChildren.textContent).not.toContain('Show child tasks')
+  expect(showChildren.querySelector('input[type="checkbox"]').checked).toBe(false)
+})
+
+test('hides Show child tasks control for non-tree doctypes', async () => {
+  const frappeApi = {
+    provide: vi.fn(),
+    call: mockFrappeCall({
+      'quick_kanban.api.get_swimlane_field_options': () => ([]),
+    }),
+    assets: {
+      bundled_asset: vi.fn((asset) => (
+        asset.includes('css')
+          ? '/assets/quick_kanban/dist/css/quick_kanban.bundle.HASH.css'
+          : '/assets/quick_kanban/dist/js/quick_kanban.bundle.HASH.js'
+      )),
+    },
+    session: { user: 'user@example.com' },
+    show_alert: vi.fn(),
+    get_meta: vi.fn(() => ({ fields: [], is_tree: 0 })),
+    views: {
+      KanbanView: NativeKanbanView,
+      KanbanBoard: vi.fn(),
+      ListView: class {
+        async set_fields() {
+          this._add_field('name')
+        }
+      },
+    },
+  }
+  new Function('window', 'frappe', '__', bridgeSource)(
+    window,
+    frappeApi,
+    globalThis.__,
+  )
+  const view = new frappeApi.views.KanbanView()
+  view.board_perms = { write: true }
+  view.$filter_section = createFilterSection()
+
+  view.render()
+  await vi.waitFor(() => {
+    expect(window.mountQuickKanban).toHaveBeenCalledTimes(1)
+  })
+
+  expect(document.querySelector('.quick-kanban-show-child-tasks-control')).toBeNull()
+  const minimize = document.querySelector('.quick-kanban-minimize-control')
+  const groupby = document.querySelector('.quick-kanban-groupby-control')
+  expect(minimize.nextElementSibling).toBe(groupby)
+})
 
 test('inserts Group By between Minimize and Filter when board write is allowed', async () => {
   const frappeApi = {

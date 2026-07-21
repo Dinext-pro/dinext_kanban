@@ -316,8 +316,16 @@ def get_cell_totals(
 	lane_keys,
 	filters=None,
 	or_filters=None,
+	hide_board_children=None,
 ):
 	"""Return {laneKey: {columnName: count}} with multi-value membership."""
+	from quick_kanban.board_children import (
+		coerce_bool,
+		filter_names_excluding_on_board_children,
+		tree_parent_field,
+	)
+	from quick_kanban.api import get_board_document_names
+
 	filters = _parse_filters(filters)
 	or_filters = _parse_or_filters(or_filters)
 	columns = frappe.parse_json(columns) if isinstance(columns, str) else columns
@@ -335,6 +343,19 @@ def get_cell_totals(
 	if mode == "off":
 		return result
 
+	hide_children = coerce_bool(hide_board_children)
+	parent_field = tree_parent_field(doctype) if hide_children else None
+	board_name_set = None
+	if hide_children and parent_field:
+		board_names = get_board_document_names(
+			doctype,
+			filters=filters,
+			field_name=status_field,
+			column_values=columns,
+			or_filters=or_filters,
+		)
+		board_name_set = {str(name) for name in board_names}
+
 	for lane_key in lane_keys:
 		lane_key = "" if lane_key in (None, "") else str(lane_key)
 		for column in columns:
@@ -349,6 +370,13 @@ def get_cell_totals(
 				filters=filters,
 				or_filters=or_filters,
 			)
+			if board_name_set is not None:
+				names = filter_names_excluding_on_board_children(
+					doctype,
+					names,
+					parent_field,
+					board_name_set,
+				)
 			result[lane_key][column] = len(names)
 
 	return result
@@ -391,14 +419,20 @@ def _cell_doc_names(
 
 
 def _ensure_card_fetch_fields(fields, doctype=None, status_field=None):
-	"""Always include name, title, status, _assign, _user_tags, _comments, _liked_by."""
+	"""Always include name, title, status, tree parent, _assign, tags, comments, liked."""
 	fields = list(fields or [])
 	title_field = "name"
+	parent_field = None
 	if doctype:
-		title_field = frappe.get_meta(doctype).title_field or "name"
+		meta = frappe.get_meta(doctype)
+		title_field = meta.title_field or "name"
+		if meta.is_tree and meta.nsm_parent_field:
+			parent_field = meta.nsm_parent_field
 	required = ["name", title_field]
 	if status_field:
 		required.append(status_field)
+	if parent_field:
+		required.append(parent_field)
 	required.append("_assign")
 	required.append("_user_tags")
 	required.append("_comments")
@@ -536,12 +570,23 @@ def get_swimlane_column_page(
 	or_filters=None,
 	start=0,
 	page_length=20,
+	hide_board_children=None,
+	column_values=None,
 ):
 	"""Return reportview-like {keys, values} for one swimlane cell."""
+	from quick_kanban.board_children import (
+		coerce_bool,
+		filter_names_excluding_on_board_children,
+		board_name_set_for_hide,
+	)
+
 	filters = _parse_filters(filters)
 	or_filters = _parse_or_filters(or_filters)
 	fields = frappe.parse_json(fields) if isinstance(fields, str) else (fields or ["name"])
 	fields = _ensure_card_fetch_fields(fields, doctype=doctype, status_field=status_field)
+	column_values = (
+		frappe.parse_json(column_values) if isinstance(column_values, str) else column_values
+	)
 	start = cint(start)
 	page_length = cint(page_length) or 20
 	lane_key = "" if lane_key in (None, "") else str(lane_key)
@@ -562,6 +607,22 @@ def get_swimlane_column_page(
 		filters=filters,
 		or_filters=or_filters,
 	)
+	if coerce_bool(hide_board_children) and names:
+		active_columns = column_values if isinstance(column_values, (list, tuple)) and column_values else [column]
+		parent_field, board_set = board_name_set_for_hide(
+			doctype,
+			filters=filters,
+			field_name=status_field,
+			column_values=active_columns,
+			or_filters=or_filters,
+		)
+		if parent_field and board_set is not None:
+			names = filter_names_excluding_on_board_children(
+				doctype,
+				names,
+				parent_field,
+				board_set,
+			)
 	# Stable order by modified desc to match typical kanban
 	if not names:
 		return _empty_page(fields)
@@ -588,15 +649,27 @@ def get_swimlane_lane_page(
 	or_filters=None,
 	start=0,
 	page_length=100,
+	hide_board_children=None,
+	column_values=None,
 ):
 	"""Return reportview-like {keys, values} for one swimlane across all columns."""
+	from quick_kanban.board_children import (
+		coerce_bool,
+		filter_names_excluding_on_board_children,
+		board_name_set_for_hide,
+	)
+
 	filters = _parse_filters(filters)
 	or_filters = _parse_or_filters(or_filters)
 	fields = frappe.parse_json(fields) if isinstance(fields, str) else (fields or ["name"])
 	fields = _ensure_card_fetch_fields(fields, doctype=doctype, status_field=status_field)
+	column_values = (
+		frappe.parse_json(column_values) if isinstance(column_values, str) else column_values
+	)
 	start = cint(start)
 	page_length = cint(page_length) or 100
 	lane_key = "" if lane_key in (None, "") else str(lane_key)
+	hide_children = coerce_bool(hide_board_children)
 
 	if not frappe.has_permission(doctype, "read"):
 		frappe.throw(_("You cannot read this document type."), frappe.PermissionError)
@@ -606,8 +679,21 @@ def get_swimlane_lane_page(
 	if mode == "off":
 		return _empty_page(fields)
 
-	# Field mode: page directly with lane filters (avoids loading all names).
-	if mode == "field":
+	parent_field = None
+	board_set = None
+	if hide_children:
+		active_columns = column_values if isinstance(column_values, (list, tuple)) else []
+		parent_field, board_set = board_name_set_for_hide(
+			doctype,
+			filters=filters,
+			field_name=status_field,
+			column_values=active_columns,
+			or_filters=or_filters,
+		)
+
+	# Field mode without hide: page directly with lane filters.
+	# With hide: resolve names first so exclude happens before slice.
+	if mode == "field" and not (hide_children and parent_field):
 		list_filters = list(filters or [])
 		if lane_key == UNASSIGNED_KEY:
 			list_filters.append([doctype, swimlane_field, "is", "not set"])
@@ -624,15 +710,32 @@ def get_swimlane_lane_page(
 		)
 		return _page_rows_as_keys_values(paged, fields)
 
-	names = _lane_doc_names(
-		doctype=doctype,
-		meta=meta,
-		mode=mode,
-		swimlane_field=swimlane_field,
-		lane_key=lane_key,
-		filters=filters,
-		or_filters=or_filters,
-	)
+	if mode == "field":
+		list_filters = list(filters or [])
+		if lane_key == UNASSIGNED_KEY:
+			list_filters.append([doctype, swimlane_field, "is", "not set"])
+		else:
+			list_filters.append([doctype, swimlane_field, "=", lane_key])
+		names = _matching_parent_names(doctype, list_filters, or_filters)
+	else:
+		names = _lane_doc_names(
+			doctype=doctype,
+			meta=meta,
+			mode=mode,
+			swimlane_field=swimlane_field,
+			lane_key=lane_key,
+			filters=filters,
+			or_filters=or_filters,
+		)
+
+	if hide_children and parent_field and board_set is not None and names:
+		names = filter_names_excluding_on_board_children(
+			doctype,
+			names,
+			parent_field,
+			board_set,
+		)
+
 	if not names:
 		return _empty_page(fields)
 

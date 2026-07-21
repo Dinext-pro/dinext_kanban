@@ -2,6 +2,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import {
   applyUserTagFilter,
   buildColumnListRouteOptions,
+  LIST_HIDDEN_CHILD_NAME_LIMIT,
   openColumnListView,
 } from './listNavigation'
 
@@ -17,11 +18,13 @@ const column = {
 beforeEach(() => {
   frappe.route_options = {}
   frappe.set_route.mockClear()
+  frappe.show_alert.mockClear()
 })
 
 test('buildColumnListRouteOptions returns only the column filter without cur_list', () => {
   expect(buildColumnListRouteOptions(config, column, null)).toEqual({
-    status: 'Open',
+    routeOptions: { status: 'Open' },
+    hiddenCapExceeded: false,
   })
 })
 
@@ -31,8 +34,11 @@ test('buildColumnListRouteOptions merges cur_list search params with the column 
   }
 
   expect(buildColumnListRouteOptions(config, column, list)).toEqual({
-    priority: 'High',
-    status: 'Open',
+    routeOptions: {
+      priority: 'High',
+      status: 'Open',
+    },
+    hiddenCapExceeded: false,
   })
 })
 
@@ -40,6 +46,54 @@ test('openColumnListView sets route_options and navigates to List view', () => {
   openColumnListView(config, column)
 
   expect(frappe.route_options).toEqual({ status: 'Open' })
+  expect(frappe.set_route).toHaveBeenCalledWith('List', 'Task', 'List')
+})
+
+test('buildColumnListRouteOptions adds name not-in for hidden board children', () => {
+  expect(buildColumnListRouteOptions(config, column, null, {
+    hiddenChildNames: ['CHILD-1', 'CHILD-2'],
+  })).toEqual({
+    routeOptions: {
+      status: 'Open',
+      name: ['not in', ['CHILD-1', 'CHILD-2']],
+    },
+    hiddenCapExceeded: false,
+  })
+})
+
+test('buildColumnListRouteOptions omits name filter when hidden list is empty', () => {
+  expect(buildColumnListRouteOptions(config, column, null, {
+    hiddenChildNames: [],
+  })).toEqual({
+    routeOptions: { status: 'Open' },
+    hiddenCapExceeded: false,
+  })
+})
+
+test('buildColumnListRouteOptions skips giant name not-in and flags cap', () => {
+  const hiddenChildNames = Array.from(
+    { length: LIST_HIDDEN_CHILD_NAME_LIMIT + 1 },
+    (_, index) => `CHILD-${index}`,
+  )
+  expect(buildColumnListRouteOptions(config, column, null, {
+    hiddenChildNames,
+  })).toEqual({
+    routeOptions: { status: 'Open' },
+    hiddenCapExceeded: true,
+  })
+})
+
+test('openColumnListView alerts when hidden child names exceed the limit', () => {
+  const hiddenChildNames = Array.from(
+    { length: LIST_HIDDEN_CHILD_NAME_LIMIT + 1 },
+    (_, index) => `CHILD-${index}`,
+  )
+  openColumnListView(config, column, null, { hiddenChildNames })
+
+  expect(frappe.route_options).toEqual({ status: 'Open' })
+  expect(frappe.show_alert).toHaveBeenCalledWith(expect.objectContaining({
+    indicator: 'orange',
+  }))
   expect(frappe.set_route).toHaveBeenCalledWith('List', 'Task', 'List')
 })
 
