@@ -10,6 +10,7 @@ from frappe.utils import get_datetime
 
 from quick_kanban.api import (
     get_attachment_counts,
+    get_board_document_names,
     get_child_counts,
     get_column_totals,
     move_card,
@@ -378,6 +379,87 @@ class TestColumnTotals(FrappeTestCase):
         )
         self.assertEqual(result, {"Open": 5, "Done": 0})
 
+    @patch("quick_kanban.api.get_board_document_names", return_value=["PARENT-1", "CHILD-1", "ORPHAN-1"])
+    @patch("quick_kanban.api.frappe.get_list")
+    @patch("quick_kanban.api.frappe.get_meta")
+    @patch("quick_kanban.api.frappe.has_permission", return_value=True)
+    def test_hide_board_children_excludes_on_board_children(
+        self,
+        _has_permission,
+        get_meta,
+        get_list,
+        get_board_names,
+    ):
+        meta = Mock()
+        meta.is_tree = 1
+        meta.nsm_parent_field = "parent_task"
+        meta.get_field.return_value = SimpleNamespace(fieldname="status", permlevel=0)
+        get_meta.return_value = meta
+        get_list.return_value = [
+            {"name": "PARENT-1", "status": "Open", "parent_task": ""},
+            {"name": "CHILD-1", "status": "Open", "parent_task": "PARENT-1"},
+            {"name": "ORPHAN-1", "status": "Open", "parent_task": "OFF-BOARD"},
+            {"name": "DONE-1", "status": "Done", "parent_task": ""},
+        ]
+
+        result = get_column_totals(
+            "Task",
+            "status",
+            ["Open", "Done"],
+            filters=[],
+            hide_board_children=True,
+        )
+
+        get_board_names.assert_called_once()
+        get_list.assert_called_once_with(
+            "Task",
+            fields=["status", "parent_task", "name"],
+            filters=[],
+            or_filters=[],
+            limit_page_length=0,
+        )
+        self.assertEqual(result, {"Open": 2, "Done": 1})
+
+
+class TestHiddenBoardChildNames(FrappeTestCase):
+    @patch("quick_kanban.board_children.frappe.get_list")
+    @patch("quick_kanban.api.get_board_document_names", return_value=["PARENT-1", "CHILD-1", "ORPHAN-1"])
+    @patch("quick_kanban.board_children.tree_parent_field", return_value="parent_task")
+    def test_returns_only_children_whose_parent_is_on_board(
+        self,
+        _tree_parent,
+        _board_names,
+        get_list,
+    ):
+        from quick_kanban.api import get_hidden_board_child_names
+
+        get_list.return_value = [
+            {"name": "PARENT-1", "parent_task": ""},
+            {"name": "CHILD-1", "parent_task": "PARENT-1"},
+            {"name": "ORPHAN-1", "parent_task": "OFF-BOARD"},
+        ]
+        names = get_hidden_board_child_names(
+            "Task",
+            filters=[],
+            field_name="status",
+            column_values=["Open"],
+        )
+        self.assertEqual(names, ["CHILD-1"])
+
+    @patch("quick_kanban.board_children.tree_parent_field", return_value=None)
+    def test_non_tree_returns_empty(self, _tree_parent):
+        from quick_kanban.api import get_hidden_board_child_names
+
+        self.assertEqual(
+            get_hidden_board_child_names(
+                "ToDo",
+                filters=[],
+                field_name="status",
+                column_values=["Open"],
+            ),
+            [],
+        )
+
 
 class TestColumnWidths(FrappeTestCase):
     def setUp(self):
@@ -539,6 +621,172 @@ class TestGetChildCounts(FrappeTestCase):
         ):
             with self.assertRaises(frappe.PermissionError):
                 get_child_counts("Task", ["TASK-1"])
+
+
+class TestGetBoardDocumentNames(FrappeTestCase):
+    def test_empty_columns_returns_empty_list(self):
+        with patch("quick_kanban.api.frappe.has_permission", return_value=True):
+            self.assertEqual(
+                get_board_document_names("Task", filters=[], field_name="status", column_values=[]),
+                [],
+            )
+
+    def test_returns_names_for_active_columns(self):
+        meta = SimpleNamespace(get_field=Mock(return_value=SimpleNamespace(fieldname="status")))
+        rows = [{"name": "TASK-1"}, {"name": "TASK-2"}]
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=True),
+            patch("quick_kanban.api.frappe.get_list", return_value=rows) as get_list,
+        ):
+            names = get_board_document_names(
+                "Task",
+                filters=[["project", "=", "PROJ"]],
+                field_name="status",
+                column_values=["Open", "Working"],
+            )
+
+        self.assertEqual(names, ["TASK-1", "TASK-2"])
+        get_list.assert_called_once_with(
+            "Task",
+            filters=[["project", "=", "PROJ"], ["status", "in", ["Open", "Working"]]],
+            or_filters=[],
+            fields=["name"],
+            limit_page_length=0,
+            ignore_permissions=False,
+        )
+
+    def test_requires_read_permission(self):
+        with patch("quick_kanban.api.frappe.has_permission", return_value=False):
+            with self.assertRaises(frappe.PermissionError):
+                get_board_document_names(
+                    "Task",
+                    filters=[],
+                    field_name="status",
+                    column_values=["Open"],
+                )
+
+    def test_passes_or_filters_to_get_list(self):
+        meta = SimpleNamespace(get_field=Mock(return_value=SimpleNamespace(fieldname="status")))
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=True),
+            patch("quick_kanban.api.frappe.get_list", return_value=[]) as get_list,
+        ):
+            get_board_document_names(
+                "Task",
+                filters=[["project", "=", "PROJ"]],
+                field_name="status",
+                column_values=["Open"],
+                or_filters=[["subject", "like", "%x%"]],
+            )
+
+        get_list.assert_called_once_with(
+            "Task",
+            filters=[["project", "=", "PROJ"], ["status", "in", ["Open"]]],
+            or_filters=[["subject", "like", "%x%"]],
+            fields=["name"],
+            limit_page_length=0,
+            ignore_permissions=False,
+        )
+
+
+class TestGetColumnPage(FrappeTestCase):
+    @patch("quick_kanban.api.frappe.has_permission", return_value=True)
+    @patch("quick_kanban.swimlane.frappe.get_meta")
+    @patch("quick_kanban.swimlane._matching_parent_names")
+    @patch("quick_kanban.api.frappe.get_list")
+    def test_slices_after_server_side_child_exclude(
+        self,
+        get_list,
+        matching_names,
+        get_meta,
+        _has_permission,
+    ):
+        from quick_kanban.api import get_column_page
+
+        meta = Mock()
+        meta.is_tree = 1
+        meta.nsm_parent_field = "parent_task"
+        meta.title_field = "subject"
+        get_meta.return_value = meta
+        matching_names.return_value = ["PARENT-1", "CHILD-1", "ORPHAN-1"]
+        get_list.side_effect = [
+            [
+                {"name": "PARENT-1", "parent_task": ""},
+                {"name": "CHILD-1", "parent_task": "PARENT-1"},
+                {"name": "ORPHAN-1", "parent_task": "OFF-BOARD"},
+            ],
+            [
+                {
+                    "name": "PARENT-1",
+                    "subject": "Parent",
+                    "status": "Open",
+                    "parent_task": "",
+                    "_assign": None,
+                    "_user_tags": None,
+                    "_comments": None,
+                    "_liked_by": None,
+                },
+                {
+                    "name": "ORPHAN-1",
+                    "subject": "Orphan",
+                    "status": "Open",
+                    "parent_task": "OFF-BOARD",
+                    "_assign": None,
+                    "_user_tags": None,
+                    "_comments": None,
+                    "_liked_by": None,
+                },
+            ],
+        ]
+
+        with patch(
+            "quick_kanban.board_children.board_name_set_for_hide",
+            return_value=("parent_task", {"PARENT-1", "CHILD-1", "ORPHAN-1"}),
+        ):
+            page = get_column_page(
+                "Task",
+                "status",
+                "Open",
+                fields=["name", "subject", "status"],
+                filters=[],
+                start=0,
+                page_length=10,
+                hide_board_children=True,
+                column_values=["Open", "Done"],
+            )
+
+        name_idx = page["keys"].index("name")
+        names = [row[name_idx] for row in page["values"]]
+        self.assertEqual(names, ["PARENT-1", "ORPHAN-1"])
+        self.assertIn("parent_task", page["keys"])
+        paged_call = get_list.call_args_list[-1]
+        self.assertEqual(
+            set(paged_call.kwargs["filters"]["name"][1]),
+            {"PARENT-1", "ORPHAN-1"},
+        )
+        self.assertEqual(paged_call.kwargs["start"], 0)
+        self.assertEqual(paged_call.kwargs["page_length"], 10)
+
+    @patch("quick_kanban.api.frappe.has_permission", return_value=True)
+    @patch("quick_kanban.swimlane.frappe.get_meta")
+    def test_ensure_fields_include_tree_parent(self, get_meta, _has_permission):
+        from quick_kanban.swimlane import _ensure_card_fetch_fields
+
+        meta = Mock()
+        meta.is_tree = 1
+        meta.nsm_parent_field = "parent_task"
+        meta.title_field = "subject"
+        get_meta.return_value = meta
+
+        fields = _ensure_card_fetch_fields(
+            ["name", "subject"],
+            doctype="Task",
+            status_field="status",
+        )
+        self.assertIn("parent_task", fields)
+        self.assertIn("status", fields)
 
 
 class TestSwimlaneApi(FrappeTestCase):

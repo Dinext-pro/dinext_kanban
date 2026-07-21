@@ -150,6 +150,27 @@ test('dispatches ensureLaneHydrated when expanded lane becomes visible', async (
   expect(disconnect).toHaveBeenCalled()
 })
 
+test('rehydrates expanded visible lane after CLEAR_LANE_HYDRATION', async () => {
+  const { dispatch, wrapper, store } = mountRow({ expanded: true })
+  await nextTick()
+  await nextTick()
+  observerCallback([{ isIntersecting: true }])
+  await nextTick()
+  dispatch.mockClear()
+
+  store.commit('SET_LANE_HYDRATION', { laneKey: 'proj-a', status: 'ready' })
+  await nextTick()
+  dispatch.mockClear()
+
+  store.commit('CLEAR_LANE_HYDRATION')
+  await nextTick()
+
+  expect(dispatch).toHaveBeenCalledWith('ensureLaneHydrated', {
+    laneKey: 'proj-a',
+  })
+  wrapper.unmount()
+})
+
 test('hydrates immediately when a visible lane is expanded', async () => {
   const { dispatch, wrapper, store } = mountRow({ expanded: false })
   await nextTick()

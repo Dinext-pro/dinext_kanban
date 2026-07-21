@@ -106,6 +106,24 @@ test('opens the filtered list view when the column count is double-clicked', asy
   expect(frappe.set_route).toHaveBeenCalledWith('List', 'Task', 'List')
 })
 
+test('double-click adds name not-in for hidden board children when children are hidden', async () => {
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  store.commit('SET_SHOW_CHILD_TASKS', false)
+  store.commit('SET_HIDDEN_BOARD_CHILD_NAMES', ['CHILD-1', 'CHILD-2'])
+
+  await wrapper.get('.column-count').trigger('dblclick')
+
+  expect(frappe.route_options).toEqual({
+    status: 'Open',
+    name: ['not in', ['CHILD-1', 'CHILD-2']],
+  })
+  expect(frappe.set_route).toHaveBeenCalledWith('List', 'Task', 'List')
+})
+
 test('marks the column title draggable when board write access is granted', () => {
   const { wrapper } = mountColumn(undefined, { boardPerms: { write: true } })
 

@@ -881,7 +881,10 @@ watch(
 )
 
 function openListForColumn() {
-  openColumnListView(props.config, props.column)
+  const hideChildren = !store.state.show_child_tasks && store.state.config?.parent_field
+  openColumnListView(props.config, props.column, globalThis.cur_list, {
+    hiddenChildNames: hideChildren ? store.state.hiddenBoardChildNames : [],
+  })
 }
 
 function getColumnStyle(columnIndicator) {

@@ -19,6 +19,9 @@ import {
   isLinkLikeField,
   isNearScrollEnd,
   ensureCardFetchFields,
+  ensureArgsIncludeParentField,
+  filterBoardChildCards,
+  filterColumnsChildCards,
   normalizeBoardConfig,
   normalizeUserTagsForEditor,
   parseCardAccentColor,
@@ -27,12 +30,15 @@ import {
   resolveColorField,
   resolveColumnWidthPx,
   readMinimizeCardsPreference,
+  readShowChildTasksPreference,
   minimizeCardsStorageKey,
+  showChildTasksStorageKey,
   shouldTranslateFieldValue,
   toListUserTags,
   translateFieldLabel,
   translateFieldValue,
   writeMinimizeCardsPreference,
+  writeShowChildTasksPreference,
   CARD_DENSITY_ANIMATION_MS,
   collapsedColumnsStorageKey,
   readCollapsedColumnsPreference,
@@ -173,6 +179,34 @@ describe('getAddableColumnCandidates', () => {
   })
 })
 
+describe('ensureArgsIncludeParentField', () => {
+  test('appends bare parent field when missing', () => {
+    expect(ensureArgsIncludeParentField(
+      { fields: ['name', 'subject', 'status'], filters: [] },
+      { parentField: 'parent_task', doctype: 'Task' },
+    )).toEqual({
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      filters: [],
+    })
+  })
+
+  test('does not duplicate parent field already present', () => {
+    expect(ensureArgsIncludeParentField(
+      { fields: ['name', 'parent_task'] },
+      { parentField: 'parent_task' },
+    )).toEqual({ fields: ['name', 'parent_task'] })
+  })
+
+  test('detects full column name form of parent field', () => {
+    expect(ensureArgsIncludeParentField(
+      { fields: ['`tabTask`.`name`', '`tabTask`.`parent_task`'] },
+      { parentField: 'parent_task', doctype: 'Task' },
+    )).toEqual({
+      fields: ['`tabTask`.`name`', '`tabTask`.`parent_task`'],
+    })
+  })
+})
+
 describe('ensureCardFetchFields', () => {
   test('prepends name/title/status and list std meta fields when board fields omit them', () => {
     expect(ensureCardFetchFields(
@@ -207,9 +241,105 @@ describe('ensureCardFetchFields', () => {
       '_liked_by',
     ])
   })
+
+  test('includes tree parent field when provided', () => {
+    expect(ensureCardFetchFields(
+      ['priority'],
+      { titleField: 'subject', statusField: 'status', parentField: 'parent_task' },
+    )).toEqual([
+      'name',
+      'subject',
+      'priority',
+      'status',
+      'parent_task',
+      '_assign',
+      '_user_tags',
+      '_comments',
+      '_liked_by',
+    ])
+  })
+})
+
+describe('filterBoardChildCards', () => {
+  const cards = [
+    { name: 'ROOT', parent_task: '' },
+    { name: 'CHILD', parent_task: 'ROOT' },
+    { name: 'ORPHAN', parent_task: 'OFF-BOARD' },
+  ]
+
+  test('returns all cards when showChildTasks is true', () => {
+    expect(filterBoardChildCards(cards, {
+      showChildTasks: true,
+      parentField: 'parent_task',
+      boardNames: ['ROOT'],
+    })).toEqual(cards)
+  })
+
+  test('hides cards whose parent is on the board', () => {
+    expect(filterBoardChildCards(cards, {
+      showChildTasks: false,
+      parentField: 'parent_task',
+      boardNames: ['ROOT'],
+    })).toEqual([
+      { name: 'ROOT', parent_task: '' },
+      { name: 'ORPHAN', parent_task: 'OFF-BOARD' },
+    ])
+  })
+
+  test('filterColumnsChildCards maps each column', () => {
+    const columns = filterColumnsChildCards(
+      [{ column_name: 'Open', cards }],
+      {
+        showChildTasks: false,
+        parentField: 'parent_task',
+        boardNames: new Set(['ROOT']),
+      },
+    )
+    expect(columns[0].cards.map((card) => card.name)).toEqual(['ROOT', 'ORPHAN'])
+  })
+})
+
+describe('showChildTasks preference helpers', () => {
+  test('reads and writes per-board preference', () => {
+    const storage = {
+      data: {},
+      getItem(key) { return this.data[key] ?? null },
+      setItem(key, value) { this.data[key] = String(value) },
+      removeItem(key) { delete this.data[key] },
+    }
+    expect(showChildTasksStorageKey('Board A')).toBe('quick_kanban:show_child_tasks:Board A')
+    expect(readShowChildTasksPreference('Board A', storage)).toBe(false)
+    writeShowChildTasksPreference('Board A', true, storage)
+    expect(readShowChildTasksPreference('Board A', storage)).toBe(true)
+    writeShowChildTasksPreference('Board A', false, storage)
+    expect(readShowChildTasksPreference('Board A', storage)).toBe(false)
+  })
 })
 
 describe('normalizeBoardConfig', () => {
+  test('adds parent_field for tree doctypes and keeps it out of display_fields', () => {
+    const config = normalizeBoardConfig({
+      name: 'Tasks',
+      reference_doctype: 'Task',
+      field_name: 'status',
+      fields: '["subject", "priority"]',
+    }, {
+      title_field: 'subject',
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [
+        { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', parent: 'Task' },
+        { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', parent: 'Task' },
+        { fieldname: 'status', label: 'Status', fieldtype: 'Select', parent: 'Task' },
+        { fieldname: 'parent_task', label: 'Parent Task', fieldtype: 'Link', parent: 'Task' },
+      ],
+    })
+
+    expect(config.parent_field).toBe('parent_task')
+    expect(config.fields).toContain('parent_task')
+    expect(config.display_fields.map((field) => field.fieldname)).not.toContain('parent_task')
+  })
+
   test('normalizes missing optional values and includes the highlighted field', () => {
     const config = normalizeBoardConfig({
       name: 'Tasks',

@@ -19,8 +19,9 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Оптимистичное обновление с откатом при недостаточных правах, ошибке валидации или конкурентном изменении документа; краткая подсветка успешного перемещения и анимация отката (с учётом `prefers-reduced-motion`).
 - После успешного Move/DnD или создания карточки — раскрытие сжатой колонки/дорожки при необходимости и прокрутка к карточке; недавно созданные записи удерживаются сверху колонки до следующего обновления списка.
 - Проверка прав чтения и записи на уровне DocType и поля.
-- Подсчёт общего количества карточек в каждой колонке с учётом текущих фильтров.
-- Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски.
+- Подсчёт общего количества карточек в каждой колонке с учётом текущих фильтров (и режима скрытия дочерних задач, см. ниже).
+- Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски; при скрытых дочерних — с `name not in` (с порогом на больших досках).
+- Чекбокс **Show child tasks** / **Показывать дочерние задачи** для tree DocType (например Task с `parent_task`): по умолчанию скрывает карточки, чей прямой родитель тоже на доске; состояние — в `localStorage` на доску.
 - Настройка цвета колонок и выделение значений выбранного поля.
 - Сжатие колонок по ширине (меню **Сжать** / **Открыть**, двойной клик, auto-expand при задержке курсора во время DnD карточки); состояние хранится локально на доску.
 - Изменение ширины колонок перетаскиванием за правый край (для пользователей с правом записи на `Kanban Board`); с зажатым Shift — та же ширина применяется ко всем колонкам; значение сохраняется в `Kanban Board Column.custom_column_width`.
@@ -195,8 +196,9 @@ cd ../frappe && yarn run production --apps quick_kanban
 7. Чтобы показывать ряд ссылка / like / комментарии / файлы, включите **Extra Info** / **Доп. информация** на форме Kanban Board.
 8. Чтобы сгруппировать карточки по дорожкам (swimlane), задайте **Swimlane Field** / **Поле swimlane** на форме Kanban Board или выберите группировку в выпадающем списке **Group By** / **Группировать** на панели инструментов Kanban (при праве записи на `Kanban Board`).
 9. Откройте Kanban-представление списка.
+10. Для tree DocType при необходимости включите **Show child tasks** / **Показывать дочерние задачи** на панели инструментов (рядом с **Минимизировать**), чтобы снова показывать дочерние записи, скрытые по умолчанию.
 
-Двойной клик по badge с количеством записей в заголовке колонки открывает ListView того же DocType с фильтром по значению колонки (например, `status = Open`) и текущими фильтрами доски из filter bar. Одиночный клик по счётчику ничего не делает.
+Двойной клик по badge с количеством записей в заголовке колонки открывает ListView того же DocType с фильтром по значению колонки (например, `status = Open`) и текущими фильтрами доски из filter bar. Одиночный клик по счётчику ничего не делает. Если дочерние на доске скрыты, List дополнительно исключает их через `name not in` (см. [Show child tasks](#show-child-tasks--дочерние-задачи)).
 
 Одинарный клик по значению поля на карточке (заголовок, поля из `Fields`, Highlighted Field) загружает полный документ через `frappe.model.with_doc`, проверяет права/workflow и при возможности редактирования открывает штатный UI-контрол Frappe того же визуального размера, что и read-отображение. Сохранение выполняется через `frappe.db.set_value` (полный `doc.save()` на сервере). Для редактируемых Link одинарный клик не ведёт в форму (ссылка нейтрализуется). Двойной клик по поверхности карточки (поля, highlight, chrome) открывает форму документа карточки; двойной клик по Link — форму связанной записи; теги, кнопка Move и назначения форму карточки не открывают.
 
@@ -225,6 +227,33 @@ cd ../frappe && yarn run production --apps quick_kanban
 В режиме **Swimlane** при создании дополнительно подставляются значения дорожки (`swimlaneCreate.buildSwimlaneCreateDefaults`): поле `Select` / `Link` / `User`, child-строки `Table MultiSelect`, либо после сохранения — `assign_to.add` для дорожки **Assigned To**.
 
 После успешного сохранения карточка появляется в колонке (или ячейке swimlane), **удерживается сверху** списка недавно созданных и прокручивается в зону видимости (scroll-reveal).
+
+### Show child tasks / дочерние задачи
+
+Для DocType с `is_tree` и `nsm_parent_field` (у Task — `parent_task`) на панели инструментов Desk появляется чекбокс **Show child tasks** / **Показывать дочерние задачи** (между **Минимизировать** и **Group By**). Состояние хранится в `localStorage` (`quick_kanban:show_child_tasks:{board_name}`), по умолчанию выключено.
+
+#### Семантика
+
+Когда чекбокс **выключен**, с доски скрываются карточки, у которых **прямой** родитель (значение `nsm_parent_field`) тоже входит в membership доски: текущие фильтры + активные колонки (+ `or_filters`). Корневые записи и «сироты» (родитель вне доски) остаются видимыми. Вложенность глубже одного уровня не раскрывается отдельным expand — только прямое отношение parent → child.
+
+Переключение чекбокса вызывает `setQuickKanbanShowChildTasks` → `refreshBoard`. После create/move membership и счётчики пересчитываются (`hydrateBoardDocumentNames`, `fetchColumnTotals` / cell totals).
+
+#### Загрузка и счётчики
+
+Клиент **не** передаёт длинные списки имён в постраничные запросы. Exclude выполняется на сервере:
+
+| Путь | API | Поведение |
+|------|-----|-----------|
+| Плоская доска | `quick_kanban.api.get_column_page` | candidate names по колонке → exclude on-board children → `start` / `page_length` |
+| Swimlane | `get_swimlane_column_page` / `get_swimlane_lane_page` | то же с флагом `hide_board_children` |
+| Счётчики | `get_column_totals` / `get_cell_totals` | `hide_board_children=True` при скрытии детей |
+| Membership | `get_board_document_names` / `get_hidden_board_child_names` | с теми же `filters` / `or_filters` / колонками |
+
+Первая страница из Frappe ListView может дополнительно фильтроваться на клиенте (`filterBoardChildCards`); дальнейшая пагинация и top-up идут только через hide-aware page API, поэтому `offset` / `hasMore` согласованы с отфильтрованными totals (без «недогруза» колонки).
+
+#### ListView по двойному клику на счётчик
+
+При скрытых детях в `route_options` добавляется `name: ['not in', hiddenBoardChildNames]`, если число скрытых имён ≤ `LIST_HIDDEN_CHILD_NAME_LIMIT` (500). Если имён больше, гигантский `NOT IN` **не** передаётся: открывается List только с фильтром колонки и search params доски, показывается предупреждение (`frappe.show_alert`), что список может включать дочерние задачи, скрытые на канбане. Пагинация самой доски при этом остаётся точной за счёт серверного exclude.
 
 ### Swimlane (Group By)
 
@@ -262,8 +291,8 @@ Swimlane разбивает доску на горизонтальные дор�
 В отличие от классической доски, swimlane не грузит все колонки целиком:
 
 1. `get_swimlane_lanes` — список дорожек;
-2. `get_cell_totals` — счётчики `{lane → {column → count}}` с учётом фильтров;
-3. карточки ячеек подгружаются лениво (`get_swimlane_lane_page` / `get_swimlane_column_page`) при раскрытии и видимости дорожки, с дозагрузкой при прокрутке ячейки.
+2. `get_cell_totals` — счётчики `{lane → {column → count}}` с учётом фильтров и опционально `hide_board_children`;
+3. карточки ячеек подгружаются лениво (`get_swimlane_lane_page` / `get_swimlane_column_page`, с тем же флагом) при раскрытии и видимости дорожки, с дозагрузкой при прокрутке ячейки.
 
 Высоты ячеек в строке выравниваются (stick-room / `padding-bottom` на корне Sortable), чтобы пустая область соседней колонки после кнопки **Добавить** оставалась drop-target при разном числе карточек.
 
@@ -280,7 +309,7 @@ Drag-and-drop и меню **Move to** работают между колонка
 
 ### Режим «Минимизировать»
 
-В панели инструментов Desk (слева от кнопки **Фильтр**) доступен чекбокс **Минимизировать**. Состояние запоминается отдельно для каждой Kanban Board (`localStorage`).
+В панели инструментов Desk (слева от кнопки **Фильтр**) доступен чекбокс **Минимизировать**. Состояние запоминается отдельно для каждой Kanban Board (`localStorage`). Для tree DocType рядом появляется **Show child tasks** (см. [выше](#show-child-tasks--дочерние-задачи)).
 
 Когда режим включён:
 
@@ -486,11 +515,12 @@ bench --site <site-name> clear-cache
 - [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
 - [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
 - [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_totals`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), ширина колонок (`set_column_widths`, override `update_column_order`).
+- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), ширина колонок (`set_column_widths`, override `update_column_order`).
+- [`quick_kanban/board_children.py`](quick_kanban/board_children.py) — скрытие on-board children (membership, exclude до page slice, hidden names).
 - [`quick_kanban/move_policy.py`](quick_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
-- [`quick_kanban/swimlane.py`](quick_kanban/swimlane.py) — режимы группировки, построение дорожек, постраничная загрузка ячеек и изменение membership при DnD.
+- [`quick_kanban/swimlane.py`](quick_kanban/swimlane.py) — режимы группировки, построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
 - [`quick_kanban/get_beta_users.py`](quick_kanban/get_beta_users.py) — `get_kanban_config` (feature flags `kanban_beta` / `kanban_beta_users`).
-- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `swimlaneBoard`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation.applyUserTagFilter`, `tagDragDrop`, density state и resize колонок в Vuex).
+- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `swimlaneBoard`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density state, show-child-tasks и resize колонок в Vuex).
 - [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info** и **Swimlane Field** на Kanban Board.
 - [`quick_kanban/quick_kanban/custom/kanban_board_column.json`](quick_kanban/quick_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
 
@@ -517,9 +547,9 @@ dinext_kanban/
 │   ├── src/
 │   │   ├── components/         # Vue-компоненты доски, колонок, карточек, меток и swimlane
 │   │   ├── test/               # Общая настройка Vitest и тесты интеграционных scripts
-│   │   ├── utils/              # Store, createValidation, swimlaneCreate, DnD меток, swimlaneBoard, меню
+│   │   ├── utils/              # Store, listNavigation, createValidation, swimlaneCreate, DnD меток, swimlaneBoard, меню
 │   │   ├── App.vue             # Корневой Vue-компонент
-│   │   ├── main.js             # Mount/unmount Vue-приложения
+│   │   ├── main.js             # Mount/unmount Vue-приложения (в т.ч. setQuickKanbanShowChildTasks)
 │   │   └── style.css           # Стили нового Kanban
 │   ├── package.json            # Frontend-зависимости и команды (build = vite + copy + bench build)
 │   ├── playwright.config.js    # Конфигурация browser-тестов
@@ -531,7 +561,8 @@ dinext_kanban/
 │   ├── quick_kanban/custom/    # Custom Fields: Show Tags / Extra Info / Swimlane Field (Board), Column Width (Column)
 │   ├── tests/                  # Backend-тесты Frappe
 │   ├── translations/           # CSV-переводы (ru)
-│   ├── api.py                  # Permission-aware API доски
+│   ├── api.py                  # Permission-aware API доски (в т.ч. get_column_page)
+│   ├── board_children.py       # Hide on-board child docs для tree DocType
 │   ├── move_policy.py          # Политики move / create и Workflow
 │   ├── validation.py           # Mandatory rules при перемещении
 │   ├── swimlane.py             # Группировка по дорожкам и lane membership
@@ -555,13 +586,17 @@ flowchart LR
     Decision -->|Да| Bundle[Загрузка Vue bundle]
     Bundle --> Store[Vuex store]
     Store --> Board[Vue-компоненты доски]
-    Store --> ListAPI[frappe.desk.reportview.get]
+    Store --> ColumnPage[get_column_page]
+    Store --> BoardNames[get_board_document_names / get_hidden_board_child_names]
     Store --> Totals[get_column_totals]
     Store --> CreateOpts[get_create_options]
     Store --> SwimLanes[get_swimlane_lanes / get_cell_totals]
     SwimLanes --> CellPage[get_swimlane_lane_page / get_swimlane_column_page]
+    ColumnPage --> BoardChildren[board_children exclude]
+    CellPage --> BoardChildren
+    Totals --> BoardChildren
     User --> ListNav[Двойной клик по счётчику колонки]
-    ListNav --> ListView[ListView с фильтром колонки]
+    ListNav --> ListView[ListView колонка + опционально name not in]
     User --> TagFilter[Двойной клик по метке]
     TagFilter --> FilterArea[filter_area _user_tags like]
     FilterArea --> Refresh[ListView.refresh и перезагрузка доски]

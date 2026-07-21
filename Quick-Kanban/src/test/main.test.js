@@ -8,6 +8,7 @@ beforeEach(() => {
   delete window.refreshKanbanBoard
   delete window.hydrateQuickKanban
   delete window.setQuickKanbanMinimizeCards
+  delete window.setQuickKanbanShowChildTasks
   delete window.setQuickKanbanColumnCollapsed
   vi.resetModules()
 })
@@ -94,6 +95,43 @@ test('setQuickKanbanMinimizeCards updates store, storage, and checkbox', async (
   window.setQuickKanbanMinimizeCards(false)
   expect(window.__quickKanbanStore.state.minimize_cards).toBe(false)
   expect(localStorage.getItem('quick_kanban:minimize_cards:Task Board')).toBeNull()
+  expect(checkbox.checked).toBe(false)
+})
+
+test('setQuickKanbanShowChildTasks updates store, storage, checkbox, and refreshes', async () => {
+  localStorage.clear()
+  await import('../main.js')
+  const refreshBoard = vi.fn()
+  window.__quickKanbanStore.dispatch = refreshBoard
+  window.__quickKanbanStore.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'subject',
+    fields: ['name'],
+    parent_field: 'parent_task',
+    highlight_table: [],
+  })
+
+  const label = document.createElement('label')
+  label.className = 'quick-kanban-show-child-tasks-control'
+  const checkbox = document.createElement('input')
+  checkbox.type = 'checkbox'
+  label.append(checkbox)
+  document.body.appendChild(label)
+
+  await expect(window.setQuickKanbanShowChildTasks(true)).resolves.toBe(true)
+
+  expect(window.__quickKanbanStore.state.show_child_tasks).toBe(true)
+  expect(localStorage.getItem('quick_kanban:show_child_tasks:Task Board')).toBe('1')
+  expect(checkbox.checked).toBe(true)
+  // Checkbox path must call refreshBoard with no payload (payload default = {}).
+  expect(refreshBoard).toHaveBeenCalledWith('refreshBoard')
+  expect(refreshBoard.mock.calls[0]).toHaveLength(1)
+
+  await expect(window.setQuickKanbanShowChildTasks(false)).resolves.toBe(false)
+  expect(window.__quickKanbanStore.state.show_child_tasks).toBe(false)
+  expect(localStorage.getItem('quick_kanban:show_child_tasks:Task Board')).toBeNull()
   expect(checkbox.checked).toBe(false)
 })
 
