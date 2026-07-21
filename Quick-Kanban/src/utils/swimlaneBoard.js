@@ -120,6 +120,74 @@ function removeCardFromColumn(column, cardName) {
 }
 
 /**
+ * Remove every hydrated copy of a card from lanes and/or flat columns.
+ * Returns a restore snapshot, or null when the card was not found.
+ */
+export function removeAllCardInstances(lanes, columns, cardName) {
+  if (!cardName) {
+    return null
+  }
+  const placements = []
+  let cardTemplate = null
+
+  const visit = (column, placement) => {
+    const cards = column.cards || []
+    const cardIndex = cards.findIndex(({ name }) => name === cardName)
+    if (cardIndex < 0) {
+      return
+    }
+    if (!cardTemplate) {
+      cardTemplate = { ...cards[cardIndex] }
+    }
+    placements.push({ ...placement, cardIndex })
+    removeCardFromColumn(column, cardName)
+  }
+
+  for (let laneIndex = 0; laneIndex < (lanes || []).length; laneIndex += 1) {
+    const lane = lanes[laneIndex]
+    for (let columnIndex = 0; columnIndex < (lane.columns || []).length; columnIndex += 1) {
+      visit(lane.columns[columnIndex], { type: 'lane', laneIndex, columnIndex })
+    }
+  }
+  for (let columnIndex = 0; columnIndex < (columns || []).length; columnIndex += 1) {
+    visit(columns[columnIndex], { type: 'column', columnIndex })
+  }
+
+  if (!cardTemplate || !placements.length) {
+    return null
+  }
+  return { card: cardTemplate, placements }
+}
+
+/**
+ * Restore card instances from a snapshot produced by removeAllCardInstances.
+ */
+export function restoreCardInstances(lanes, columns, snapshot) {
+  if (!snapshot?.card || !snapshot.placements?.length) {
+    return false
+  }
+  for (const placement of snapshot.placements) {
+    const card = { ...snapshot.card }
+    if (placement.type === 'lane') {
+      const column = lanes?.[placement.laneIndex]?.columns?.[placement.columnIndex]
+      if (!column) continue
+      const cards = [...(column.cards || [])]
+      const index = Math.min(placement.cardIndex ?? 0, cards.length)
+      cards.splice(index, 0, card)
+      column.cards = cards
+    } else if (placement.type === 'column') {
+      const column = columns?.[placement.columnIndex]
+      if (!column) continue
+      const cards = [...(column.cards || [])]
+      const index = Math.min(placement.cardIndex ?? 0, cards.length)
+      cards.splice(index, 0, card)
+      column.cards = cards
+    }
+  }
+  return true
+}
+
+/**
  * Align every hydrated copy of a card with membership + status column.
  * Mutates lane column card arrays. Returns true when anything changed.
  *

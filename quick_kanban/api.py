@@ -401,6 +401,22 @@ def move_card(board_name, name, value, expected_modified=None, workflow_action=N
 	}
 
 
+@frappe.whitelist(methods=["POST"])
+def delete_card(board_name, name, expected_modified=None):
+	context = BoardContext(board_name)
+	doc = frappe.get_doc(context.ref_doctype, name)
+	doc.check_permission("delete")
+
+	if expected_modified and get_datetime(doc.modified) != get_datetime(expected_modified):
+		frappe.throw(
+			_("This card was changed by another user. Refresh the board and try again."),
+			frappe.TimestampMismatchError,
+		)
+
+	doc.delete()
+	return {"name": name}
+
+
 @frappe.whitelist()
 @frappe.read_only()
 def get_swimlane_field_options(doctype):

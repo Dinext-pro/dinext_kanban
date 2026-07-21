@@ -127,6 +127,20 @@
         </div>
       </Teleport>
     </div>
+
+    <button
+      v-if="showDeleteCard"
+      type="button"
+      class="extra-info-action extra-info-action--danger"
+      :aria-label="__('Delete', null, ctx)"
+      :title="__('Delete', null, ctx)"
+      :disabled="deleteBusy"
+      @click="onDeleteCard"
+    >
+      <svg class="icon icon-sm" aria-hidden="true">
+        <use href="#es-line-delete"></use>
+      </svg>
+    </button>
   </div>
 </template>
 
@@ -136,7 +150,9 @@ import { useStore } from 'vuex'
 import { useDismissibleMenu } from '../../utils/menu'
 import {
   canDeleteAttachment,
+  canDeleteCard,
   confirmDeleteAttachment,
+  confirmDeleteCard,
   copyFormLink,
   formatActivityCount,
   getAttachmentCount,
@@ -167,6 +183,16 @@ const filesMenuStyle = ref({})
 const filesLoading = ref(false)
 const attachments = ref([])
 const docstatus = ref(Number(props.card.docstatus) || 0)
+const deleteBusy = ref(false)
+
+watch(
+  () => props.card.docstatus,
+  (value) => {
+    if (value != null) {
+      docstatus.value = Number(value) || 0
+    }
+  },
+)
 
 watch(filesMenuOpen, (open) => {
   emit('files-menu-open', open)
@@ -199,6 +225,10 @@ const canDelete = computed(() => canDeleteAttachment({
   docstatus: docstatus.value,
 }))
 const canUpload = computed(() => canWrite.value)
+const showDeleteCard = computed(() => canDeleteCard({
+  canDelete: canDeleteDoc.value,
+  docstatus: docstatus.value,
+}))
 
 function closeFilesMenu({ restoreFocus = false } = {}) {
   filesMenuOpen.value = false
@@ -371,5 +401,23 @@ function onUpload() {
       positionFilesMenu()
     },
   })
+}
+
+async function onDeleteCard() {
+  if (!showDeleteCard.value || deleteBusy.value || !props.card.name) {
+    return
+  }
+  const titleField = store.state.config?.title_field
+  const label = (titleField && props.card[titleField]) || props.card.name
+  const confirmed = await confirmDeleteCard(label)
+  if (!confirmed) {
+    return
+  }
+  deleteBusy.value = true
+  try {
+    await store.dispatch('deleteCard', { cardName: props.card.name })
+  } finally {
+    deleteBusy.value = false
+  }
 }
 </script>

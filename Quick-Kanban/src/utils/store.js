@@ -26,7 +26,9 @@ import {
   laneTotalFromCells,
   normalizeExpandedLaneKeys,
   reconcileCardInstancesAcrossLanes,
+  removeAllCardInstances,
   resolveExpandedLaneKeys,
+  restoreCardInstances,
   sortLanesByOccupancy,
 } from './swimlaneBoard'
 import {
@@ -1180,6 +1182,21 @@ export function createKanbanStore() {
         forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
           card.modified = modified
         })
+      },
+      REMOVE_CARD(state, payload) {
+        const cardName = typeof payload === 'string' ? payload : payload?.cardName
+        const snapshot = removeAllCardInstances(state.lanes, state.columns, cardName)
+        if (snapshot && payload && typeof payload === 'object') {
+          payload.snapshot = snapshot
+        }
+        if (snapshot) {
+          state.dragSyncGeneration += 1
+        }
+      },
+      RESTORE_CARD(state, snapshot) {
+        if (restoreCardInstances(state.lanes, state.columns, snapshot)) {
+          state.dragSyncGeneration += 1
+        }
       },
       SET_CREATE_OPTIONS_BY_COLUMN(state, options) {
         state.createOptionsByColumn = options || {}
@@ -2722,6 +2739,81 @@ export function createKanbanStore() {
       },
       preflightMove({ commit, state }, payload) {
         return runPreflightMove(state, commit, payload)
+      },
+      async deleteCard({ commit, dispatch, state }, { cardName } = {}) {
+        if (!cardName || state.pendingMoves[cardName]) {
+          return false
+        }
+        const card = findCard(state, cardName)
+        if (!card) {
+          return false
+        }
+        const expectedModified = card.modified
+        const boardGeneration = state.boardGeneration
+        const removal = { cardName }
+        commit('SET_MOVE_PENDING', { cardName, pending: true })
+        commit('REMOVE_CARD', removal)
+        const snapshot = removal.snapshot
+        if (!snapshot) {
+          commit('SET_MOVE_PENDING', { cardName, pending: false })
+          return false
+        }
+        try {
+          await frappe.call({
+            method: 'quick_kanban.api.delete_card',
+            args: {
+              board_name: state.config.board_name,
+              name: cardName,
+              expected_modified: expectedModified || undefined,
+            },
+          })
+          if (state.boardGeneration !== boardGeneration) {
+            return true
+          }
+          commit('CLEAR_CARD_MOVE_OPTIONS', cardName)
+          commit('INVALIDATE_COUNT_RESPONSES')
+          for (const placement of snapshot.placements) {
+            if (placement.type === 'column') {
+              commit('ADJUST_COLUMN_OFFSET', {
+                columnIndex: placement.columnIndex,
+                delta: -1,
+              })
+              commit('ADJUST_COLUMN_TOTAL', {
+                columnIndex: placement.columnIndex,
+                delta: -1,
+              })
+            }
+          }
+          if (typeof frappe.show_alert === 'function') {
+            frappe.show_alert({
+              message: __('Card deleted', null, 'QuickKanban.ExtraInfo'),
+              indicator: 'green',
+            })
+          }
+          dispatch('scheduleMoveOptionsRefresh')
+          dispatch('hydrateBoardDocumentNames')
+          if (swimlanesActive(state)) {
+            dispatch('fetchCellTotals')
+          } else {
+            dispatch('fetchColumnTotals')
+          }
+          return true
+        } catch (error) {
+          if (state.boardGeneration === boardGeneration) {
+            commit('RESTORE_CARD', snapshot)
+            if (typeof frappe.show_alert === 'function') {
+              frappe.show_alert({
+                message: __('Could not delete the card.', null, 'QuickKanban.ExtraInfo'),
+                indicator: 'red',
+              })
+            }
+          }
+          return false
+        } finally {
+          if (state.boardGeneration === boardGeneration) {
+            commit('SET_MOVE_PENDING', { cardName, pending: false })
+          }
+        }
       },
       async persistMove(
         { commit, dispatch, state },
