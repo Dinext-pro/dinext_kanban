@@ -1356,7 +1356,7 @@ body.kanban-column-resize-active * {
 }
 
 #kanbanapp .extra-info-action--danger:hover:not(:disabled) {
-  background: var(--bg-red, var(--control-bg));
+  background: var(--control-bg);
   color: color-mix(in srgb, var(--red-500, #e24c4c) 75%, transparent);
   --icon-stroke: currentColor;
 }
