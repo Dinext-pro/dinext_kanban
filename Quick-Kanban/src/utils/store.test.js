@@ -4969,6 +4969,94 @@ describe('show child tasks visibility', () => {
     expect(store.getters.isChildPanelOpenFor('PARENT-B-CHILD', 1)).toBe(false)
   })
 
+  test('toggleChildPanel hydrates all columns with first page + top-up, not full drain', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    // Smaller first page so top-up to 15 needs a second request (like flat top-up).
+    store.state.columnPageSize = 10
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    const openTotal = 40
+    const pageCalls = []
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: openTotal, Done: 2 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        pageCalls.push({
+          column: args.column,
+          start: args.start,
+          page_length: args.page_length,
+        })
+        const start = Number(args.start) || 0
+        const length = Number(args.page_length) || 10
+        const total = args.column === 'Open' ? openTotal : 2
+        const count = Math.max(0, Math.min(length, total - start))
+        const values = Array.from({ length: count }, (_, index) => ([
+          `${args.parent_name}-${args.column}-${start + index + 1}`,
+          `${args.column} ${start + index + 1}`,
+          args.column,
+          args.parent_name,
+        ]))
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values,
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A', depth: 0 })
+    const scopeId = store.getters.getChildPanelScopeId('PARENT-A', 0)
+    const panel = store.state.childPanels[scopeId]
+    const openCards = panel.columns[0].cards
+    const doneCards = panel.columns[1].cards
+    const openPagination = panel.columnPagination.Open
+    const donePagination = panel.columnPagination.Done
+
+    expect(openCards).toHaveLength(15)
+    expect(doneCards).toHaveLength(2)
+    expect(openPagination.hasMore).toBe(true)
+    expect(openPagination.offset).toBe(15)
+    expect(donePagination.hasMore).toBe(false)
+    expect(pageCalls.filter((call) => call.column === 'Open').length).toBe(2)
+    const firstOpenIdx = pageCalls.findIndex((call) => call.column === 'Open' && call.start === 0)
+    const firstDoneIdx = pageCalls.findIndex((call) => call.column === 'Done' && call.start === 0)
+    const openTopUpIdx = pageCalls.findIndex((call) => call.column === 'Open' && call.start > 0)
+    // First pages for every column are issued together before any top-up page.
+    expect(firstOpenIdx).toBeGreaterThanOrEqual(0)
+    expect(firstDoneIdx).toBeGreaterThanOrEqual(0)
+    expect(openTopUpIdx).toBeGreaterThan(Math.max(firstOpenIdx, firstDoneIdx))
+
+    await store.dispatch('loadChildColumnPage', { scopeId, columnIndex: 0 })
+    expect(store.state.childPanels[scopeId].columns[0].cards.length).toBeGreaterThan(15)
+    expect(store.state.childPanels[scopeId].columns[0].cards.length).toBeLessThan(openTotal)
+  })
+
   test('getCardChildPanelMode: deepest panel active, ancestors semi-active, others inert', async () => {
     const store = createStore()
     store.commit('SET_KANBAN_CONFIG', {
