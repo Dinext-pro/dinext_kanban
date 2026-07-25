@@ -110,6 +110,26 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
     var(--fg, var(--text-color)) 28%,
     transparent
   );
+  --swimlane-deadline-overdue-tint: color-mix(
+    in srgb,
+    var(--red-600, var(--danger-color, #e24c4c)) 20%,
+    transparent
+  );
+  --swimlane-deadline-overdue-tint-hover: color-mix(
+    in srgb,
+    var(--red-600, var(--danger-color, #e24c4c)) 32%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint: color-mix(
+    in srgb,
+    var(--yellow-700, var(--warning-color, #b88100)) 20%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint-hover: color-mix(
+    in srgb,
+    var(--yellow-700, var(--warning-color, #b88100)) 32%,
+    transparent
+  );
   display: block;
   overflow: auto;
   flex-direction: unset;
@@ -339,6 +359,80 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
 #kanbanapp .swimlane-lane-sticky:hover .swimlane-chrome-cell,
 #kanbanapp .swimlane-lane-sticky:focus-visible .swimlane-chrome-cell {
   box-shadow: inset 0 0 0 100vmax var(--swimlane-chrome-tint-hover);
+}
+
+/* Deadline lanes: tint the full sticky chrome row (title + column tracks). */
+#kanbanapp .swimlane-lane-sticky--deadline-overdue {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-overdue-tint),
+    var(--swimlane-deadline-overdue-tint)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-attention-tint),
+    var(--swimlane-deadline-attention-tint)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-overdue-tint);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-attention-tint);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:hover,
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:focus-visible {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-overdue-tint-hover),
+    var(--swimlane-deadline-overdue-tint-hover)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention:hover,
+#kanbanapp .swimlane-lane-sticky--deadline-attention:focus-visible {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-attention-tint-hover),
+    var(--swimlane-deadline-attention-tint-hover)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:hover .swimlane-chrome-cell,
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:focus-visible .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-overdue-tint-hover);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention:hover .swimlane-chrome-cell,
+#kanbanapp .swimlane-lane-sticky--deadline-attention:focus-visible .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-attention-tint-hover);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue .swimlane-lane-count,
+#kanbanapp .swimlane-lane-sticky--deadline-attention .swimlane-lane-count {
+  color: inherit;
+  opacity: 0.72;
+}
+
+[data-theme="dark"] #kanbanapp .kanban--swimlanes {
+  --swimlane-deadline-overdue-tint: color-mix(in srgb, var(--red-400, #ff7b7b) 24%, transparent);
+  --swimlane-deadline-overdue-tint-hover: color-mix(
+    in srgb,
+    var(--red-400, #ff7b7b) 36%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint: color-mix(
+    in srgb,
+    var(--yellow-400, #f2c14e) 24%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint-hover: color-mix(
+    in srgb,
+    var(--yellow-400, #f2c14e) 36%,
+    transparent
+  );
 }
 
 /* Continuous ring above chrome/columns when sticky title is hovered or focused. */
