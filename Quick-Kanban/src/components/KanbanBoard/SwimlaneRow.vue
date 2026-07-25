@@ -13,6 +13,9 @@
   >
     <div
       class="swimlane-lane-sticky"
+      :class="{
+        [`swimlane-lane-sticky--deadline-${laneDeadlineTone}`]: laneDeadlineTone,
+      }"
       role="button"
       tabindex="0"
       :aria-expanded="String(expanded)"
