@@ -9,6 +9,7 @@ from frappe import _
 from frappe.utils import cint
 
 SWIMLANE_ASSIGN = "__assign"
+SWIMLANE_DEADLINES = "__deadlines"
 SWIMLANE_FIELD_TYPES = ("Select", "Link", "User", "Table MultiSelect")
 UNASSIGNED_KEY = ""
 # Match Frappe `_assign` (todo.py): only Open ToDos count as active assignments.
@@ -16,12 +17,14 @@ ACTIVE_ASSIGN_TODO_STATUS = ("not in", ("Cancelled", "Closed"))
 
 
 def resolve_swimlane_mode(swimlane_field, meta=None):
-	"""Return off | assign | field | multi."""
+	"""Return off | assign | deadlines | field | multi."""
 	fieldname = (swimlane_field or "").strip()
 	if not fieldname:
 		return "off"
 	if fieldname == SWIMLANE_ASSIGN:
 		return "assign"
+	if fieldname == SWIMLANE_DEADLINES:
+		return "deadlines"
 	if meta is None:
 		return "field"
 	df = meta.get_field(fieldname)
@@ -45,7 +48,10 @@ def get_swimlane_field_options(doctype):
 		frappe.throw(_("You cannot read this document type."), frappe.PermissionError)
 
 	meta = frappe.get_meta(doctype)
-	options = [{"value": SWIMLANE_ASSIGN, "label": _("Assigned To")}]
+	options = [
+		{"value": SWIMLANE_ASSIGN, "label": _("Assigned To")},
+		{"value": SWIMLANE_DEADLINES, "label": _("Deadlines")},
+	]
 	for df in meta.fields:
 		if not df.fieldname:
 			continue
@@ -176,6 +182,20 @@ def get_swimlane_lanes(doctype, swimlane_field, filters=None, or_filters=None):
 			for user in users:
 				add_lane(user, _user_label(user))
 		add_lane(UNASSIGNED_KEY, _("Unassigned"))
+		return lanes
+
+	if mode == "deadlines":
+		from quick_kanban.deadline import (
+			DEADLINE_ATTENTION,
+			DEADLINE_NONE,
+			DEADLINE_OVERDUE,
+			DEADLINE_PLANNED,
+		)
+
+		add_lane(DEADLINE_OVERDUE, _("Overdue"))
+		add_lane(DEADLINE_ATTENTION, _("Deadline Approaching"))
+		add_lane(DEADLINE_PLANNED, _("On Track"))
+		add_lane(DEADLINE_NONE, _("No Deadline"))
 		return lanes
 
 	df = meta.get_field(swimlane_field)
@@ -408,6 +428,15 @@ def _cell_doc_names(
 			filters,
 			or_filters,
 		)
+	if mode == "deadlines":
+		return _names_for_deadline_lane(
+			doctype,
+			lane_key,
+			status_field,
+			status_value,
+			filters,
+			or_filters,
+		)
 
 	list_filters = list(filters or [])
 	list_filters.append([doctype, status_field, "=", status_value])
@@ -418,11 +447,54 @@ def _cell_doc_names(
 	return _matching_parent_names(doctype, list_filters, or_filters)
 
 
-def _ensure_card_fetch_fields(fields, doctype=None, status_field=None):
+def _names_for_deadline_lane(
+	doctype,
+	lane_key,
+	status_field,
+	status_value,
+	filters,
+	or_filters,
+	deadline_field=None,
+	attention_days=3,
+	deadline_columns=None,
+):
+	from quick_kanban.deadline import get_board_deadline_settings, names_for_deadline_lane
+
+	if deadline_columns is None or not deadline_field:
+		board_name = frappe.flags.get("quick_kanban_board_name")
+		if board_name:
+			settings = get_board_deadline_settings(board_name)
+			deadline_field = deadline_field or settings.get("deadline_field") or ""
+			attention_days = settings.get("attention_days") or attention_days
+			if deadline_columns is None:
+				deadline_columns = settings.get("deadline_columns") or []
+	if not deadline_field:
+		meta = frappe.get_meta(doctype)
+		if meta.get_field("exp_end_date"):
+			deadline_field = "exp_end_date"
+		elif meta.get_field("due_date"):
+			deadline_field = "due_date"
+		else:
+			return []
+	return names_for_deadline_lane(
+		doctype,
+		deadline_field=deadline_field,
+		lane_key=lane_key,
+		attention_days=attention_days,
+		status_field=status_field,
+		status_value=status_value,
+		filters=filters,
+		or_filters=or_filters,
+		deadline_columns=deadline_columns or [],
+	)
+
+
+def _ensure_card_fetch_fields(fields, doctype=None, status_field=None, deadline_field=None):
 	"""Always include name, title, status, tree parent, _assign, tags, comments, liked."""
 	fields = list(fields or [])
 	title_field = "name"
 	parent_field = None
+	meta = None
 	if doctype:
 		meta = frappe.get_meta(doctype)
 		title_field = meta.title_field or "name"
@@ -437,6 +509,10 @@ def _ensure_card_fetch_fields(fields, doctype=None, status_field=None):
 	required.append("_user_tags")
 	required.append("_comments")
 	required.append("_liked_by")
+	if deadline_field:
+		required.append(deadline_field)
+	if meta and meta.get_field("project"):
+		required.append("project")
 	out = []
 	seen = set()
 	for field in required + fields:
@@ -514,6 +590,7 @@ def _lane_doc_names(
 	lane_key,
 	filters,
 	or_filters,
+	status_field=None,
 ):
 	"""Document names in a swimlane across all columns (no status filter)."""
 	if mode == "assign":
@@ -522,6 +599,55 @@ def _lane_doc_names(
 		return _names_for_multi_lane_all(
 			doctype, swimlane_field, lane_key, filters, or_filters
 		)
+	if mode == "deadlines":
+		from quick_kanban.deadline import (
+			classify_card_deadline,
+			get_board_deadline_settings,
+			resolve_projects_holiday_lists,
+		)
+
+		settings = {}
+		board_name = frappe.flags.get("quick_kanban_board_name")
+		if board_name:
+			settings = get_board_deadline_settings(board_name)
+		deadline_field = settings.get("deadline_field") or ""
+		attention_days = settings.get("attention_days") or 3
+		deadline_columns = settings.get("deadline_columns") or []
+		if not deadline_field:
+			if meta.get_field("exp_end_date"):
+				deadline_field = "exp_end_date"
+			elif meta.get_field("due_date"):
+				deadline_field = "due_date"
+			else:
+				return []
+		if not status_field:
+			return []
+		fields = ["name", deadline_field, status_field]
+		has_project = bool(meta.get_field("project"))
+		if has_project:
+			fields.append("project")
+		rows = frappe.get_list(
+			doctype,
+			fields=fields,
+			filters=filters or [],
+			or_filters=or_filters or [],
+			limit_page_length=0,
+		)
+		projects = [str(r.project) for r in rows if has_project and r.get("project")]
+		holiday_map = resolve_projects_holiday_lists(projects)
+		return [
+			row.name
+			for row in rows
+			if classify_card_deadline(
+				row,
+				deadline_field=deadline_field,
+				attention_days=attention_days,
+				holiday_list_by_project=holiday_map,
+				status_field=status_field,
+				deadline_columns=deadline_columns,
+			)
+			== lane_key
+		]
 
 	list_filters = list(filters or [])
 	if lane_key == UNASSIGNED_KEY:
@@ -533,6 +659,32 @@ def _lane_doc_names(
 
 def _empty_page(fields):
 	return {"keys": list(fields), "values": [], "user_info": {}}
+
+
+def _apply_deadline_bucket_to_page(paged, fields, *, doctype, status_field):
+	"""Attach `_deadline_bucket` using board settings; include it in page keys."""
+	board_name = frappe.flags.get("quick_kanban_board_name")
+	if not board_name or not paged:
+		return paged, list(fields or [])
+	from quick_kanban.deadline import enrich_rows_with_deadline_bucket, get_board_deadline_settings
+
+	settings = get_board_deadline_settings(board_name)
+	deadline_field = settings.get("deadline_field") or ""
+	if not deadline_field:
+		return paged, list(fields or [])
+	meta = frappe.get_meta(doctype)
+	enrich_rows_with_deadline_bucket(
+		paged,
+		deadline_field=deadline_field,
+		attention_days=settings.get("attention_days") or 3,
+		has_project_field=bool(meta.get_field("project")),
+		status_field=status_field,
+		deadline_columns=settings.get("deadline_columns") or [],
+	)
+	out_fields = list(fields or [])
+	if "_deadline_bucket" not in out_fields:
+		out_fields.append("_deadline_bucket")
+	return paged, out_fields
 
 
 def _page_rows_as_keys_values(paged, fields):
@@ -583,7 +735,18 @@ def get_swimlane_column_page(
 	filters = _parse_filters(filters)
 	or_filters = _parse_or_filters(or_filters)
 	fields = frappe.parse_json(fields) if isinstance(fields, str) else (fields or ["name"])
-	fields = _ensure_card_fetch_fields(fields, doctype=doctype, status_field=status_field)
+	deadline_field = None
+	board_name = frappe.flags.get("quick_kanban_board_name")
+	if board_name:
+		from quick_kanban.deadline import get_board_deadline_settings
+
+		deadline_field = get_board_deadline_settings(board_name).get("deadline_field") or None
+	fields = _ensure_card_fetch_fields(
+		fields,
+		doctype=doctype,
+		status_field=status_field,
+		deadline_field=deadline_field,
+	)
 	column_values = (
 		frappe.parse_json(column_values) if isinstance(column_values, str) else column_values
 	)
@@ -636,6 +799,9 @@ def get_swimlane_column_page(
 		start=start,
 		page_length=page_length,
 	)
+	paged, fields = _apply_deadline_bucket_to_page(
+		paged, fields, doctype=doctype, status_field=status_field
+	)
 	return _page_rows_as_keys_values(paged, fields)
 
 
@@ -662,7 +828,18 @@ def get_swimlane_lane_page(
 	filters = _parse_filters(filters)
 	or_filters = _parse_or_filters(or_filters)
 	fields = frappe.parse_json(fields) if isinstance(fields, str) else (fields or ["name"])
-	fields = _ensure_card_fetch_fields(fields, doctype=doctype, status_field=status_field)
+	deadline_field = None
+	board_name = frappe.flags.get("quick_kanban_board_name")
+	if board_name:
+		from quick_kanban.deadline import get_board_deadline_settings
+
+		deadline_field = get_board_deadline_settings(board_name).get("deadline_field") or None
+	fields = _ensure_card_fetch_fields(
+		fields,
+		doctype=doctype,
+		status_field=status_field,
+		deadline_field=deadline_field,
+	)
 	column_values = (
 		frappe.parse_json(column_values) if isinstance(column_values, str) else column_values
 	)
@@ -708,6 +885,9 @@ def get_swimlane_lane_page(
 			start=start,
 			page_length=page_length,
 		)
+		paged, fields = _apply_deadline_bucket_to_page(
+			paged, fields, doctype=doctype, status_field=status_field
+		)
 		return _page_rows_as_keys_values(paged, fields)
 
 	if mode == "field":
@@ -726,6 +906,7 @@ def get_swimlane_lane_page(
 			lane_key=lane_key,
 			filters=filters,
 			or_filters=or_filters,
+			status_field=status_field,
 		)
 
 	if hide_children and parent_field and board_set is not None and names:
@@ -746,6 +927,9 @@ def get_swimlane_lane_page(
 		order_by="modified desc",
 		start=start,
 		page_length=page_length,
+	)
+	paged, fields = _apply_deadline_bucket_to_page(
+		paged, fields, doctype=doctype, status_field=status_field
 	)
 	return _page_rows_as_keys_values(paged, fields)
 
@@ -831,6 +1015,9 @@ def apply_lane_membership(doc, swimlane_field, from_lane, to_lane):
 
 	if from_lane == to_lane:
 		return mode
+
+	if mode == "deadlines":
+		frappe.throw(_("Deadline swimlanes cannot be changed by dragging."))
 
 	if mode == "assign":
 		_reassign_membership(doc, from_lane, to_lane)

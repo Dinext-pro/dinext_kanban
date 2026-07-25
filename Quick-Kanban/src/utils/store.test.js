@@ -3821,6 +3821,7 @@ describe('swimlane expand state', () => {
     )
     expect(laneCalls).toHaveLength(1)
     expect(laneCalls[0][0].args.page_length).toBe(100)
+    expect(laneCalls[0][0].args.board_name).toBe('Task Board')
 
     const openCards = store.state.lanes[0].columns[0].cards
     const doneCards = store.state.lanes[0].columns[1].cards
@@ -5029,5 +5030,162 @@ describe('show child tasks visibility', () => {
     expect(store.getters.getCardChildPanelMode('SIBLING-IN-DEPTH0', 1)).toBe('inert')
     expect(store.getters.getCardChildPanelMode('BOARD-OTHER', 0)).toBe('inert')
     expect(store.getters.getCardChildPanelMode('NESTED-CHILD', 2)).toBe('active')
+  })
+})
+
+describe('live deadline highlight on field update', () => {
+  test('UPDATE_CARD_FIELD refreshes _deadline_bucket from new date', () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      deadline_field: 'exp_end_date',
+      deadline_enabled: true,
+      deadline_attention_days: 3,
+      deadline_columns: ['Open', 'Working'],
+      display_fields: [{ fieldname: 'exp_end_date', fieldtype: 'Date' }],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'TASK-D',
+          status: 'Open',
+          exp_end_date: '2026-07-27',
+          _deadline_bucket: 'attention',
+        }],
+      },
+    ])
+
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: '2026-12-31',
+    })
+
+    const card = store.state.columns[0].cards[0]
+    expect(card.exp_end_date).toBe('2026-12-31')
+    expect(card._deadline_bucket).toBe('planned')
+
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: null,
+    })
+    expect(store.state.columns[0].cards[0]._deadline_bucket).toBe('none')
+  })
+})
+
+describe('deadline swimlane relocate on date change', () => {
+  function seedDeadlineLanes(store) {
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      deadline_field: 'exp_end_date',
+      deadline_enabled: true,
+      deadline_attention_days: 3,
+      deadline_columns: ['Open', 'Working'],
+      swimlane_mode: 'deadlines',
+      swimlane_field: '__deadlines',
+      display_fields: [{ fieldname: 'exp_end_date', fieldtype: 'Date' }],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'attention',
+        label: 'Approaching',
+        columns: [
+          {
+            name: 'open',
+            column_name: 'Open',
+            cards: [{
+              name: 'TASK-D',
+              status: 'Open',
+              exp_end_date: '2026-07-27',
+              _deadline_bucket: 'attention',
+            }],
+          },
+        ],
+      },
+      {
+        key: 'planned',
+        label: 'On Track',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', ['attention'])
+    store.commit('SET_LANE_HYDRATION', { laneKey: 'attention', status: 'ready' })
+    store.commit('SET_LANE_HYDRATION', { laneKey: 'planned', status: 'idle' })
+  }
+
+  test('relocateDeadlineSwimlaneCard moves card to planned top and reveals', async () => {
+    const store = createStore()
+    seedDeadlineLanes(store)
+
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_swimlane_lane_page') {
+        return {
+          message: {
+            keys: ['name', 'status', 'exp_end_date', '_deadline_bucket'],
+            values: [],
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_cell_totals') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: '2026-12-31',
+    })
+    expect(store.state.lanes[0].columns[0].cards[0]._deadline_bucket).toBe('planned')
+
+    const moved = await store.dispatch('relocateDeadlineSwimlaneCard', {
+      cardName: 'TASK-D',
+    })
+    expect(moved).toBe(true)
+    expect(store.state.expandedLaneKeys).toContain('planned')
+    expect(store.state.lanes[0].columns[0].cards.map((c) => c.name)).not.toContain('TASK-D')
+    expect(store.state.lanes[1].columns[0].cards[0]?.name).toBe('TASK-D')
+    expect(store.state.lanes[1].columns[0].cards[0]?._deadline_bucket).toBe('planned')
+    expect(store.state.revealCreatedCard).toEqual({
+      cardName: 'TASK-D',
+      laneIndex: 1,
+      columnIndex: 0,
+      cardIndex: 0,
+      flash: true,
+    })
+  })
+
+  test('relocateDeadlineSwimlaneCard no-ops when lane unchanged', async () => {
+    const store = createStore()
+    seedDeadlineLanes(store)
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: '2026-07-26',
+    })
+    // Without holidays both stay attention if within 3 days from "today" — force bucket
+    store.state.lanes[0].columns[0].cards[0]._deadline_bucket = 'attention'
+
+    const moved = await store.dispatch('relocateDeadlineSwimlaneCard', {
+      cardName: 'TASK-D',
+    })
+    expect(moved).toBe(false)
+    expect(store.state.revealCreatedCard).toBeNull()
+    expect(store.state.lanes[0].columns[0].cards[0]?.name).toBe('TASK-D')
   })
 })

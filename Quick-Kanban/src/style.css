@@ -410,6 +410,22 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
   white-space: nowrap;
 }
 
+#kanbanapp .swimlane-lane-title--deadline-overdue {
+  color: var(--red-600, var(--danger-color, #e24c4c));
+}
+
+#kanbanapp .swimlane-lane-title--deadline-attention {
+  color: var(--yellow-700, var(--warning-color, #b88100));
+}
+
+[data-theme="dark"] #kanbanapp .swimlane-lane-title--deadline-overdue {
+  color: var(--red-400, #ff7b7b);
+}
+
+[data-theme="dark"] #kanbanapp .swimlane-lane-title--deadline-attention {
+  color: var(--yellow-400, #f2c14e);
+}
+
 #kanbanapp .swimlane-lane-count {
   flex-shrink: 0;
   margin-inline-start: auto;
@@ -1122,6 +1138,35 @@ body.kanban-column-resize-active * {
   gap: 8px;
 }
 
+#kanbanapp .kanban-title-main {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+#kanbanapp .kanban-title-area .kanban-title-deadline-icon {
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  max-width: 0;
+  margin-top: 0.15em;
+  margin-inline-end: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    max-width var(--kanban-card-density-duration) ease,
+    opacity var(--kanban-card-density-duration) ease,
+    margin-inline-end var(--kanban-card-density-duration) ease;
+}
+
+#kanbanapp .kanban-title-area .kanban-title-deadline-icon--visible {
+  max-width: 1rem;
+  margin-inline-end: 0.35rem;
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* Bound SVG icons when Desk icon styles are unavailable (e.g. e2e fixture). */
 #kanbanapp .icon {
   display: inline-block;
@@ -1284,6 +1329,55 @@ body.kanban-column-resize-active * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#kanbanapp .kanban-card-field--deadline dd {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: inherit;
+}
+
+#kanbanapp .kanban-deadline-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+#kanbanapp .kanban-card-field--deadline-overdue,
+#kanbanapp .kanban-card-field--deadline-overdue dd,
+#kanbanapp .kanban-card-field--deadline-overdue .kanban-inline-display {
+  color: var(--red-600, var(--danger-color, #e24c4c));
+}
+
+#kanbanapp .kanban-card-field--deadline-attention,
+#kanbanapp .kanban-card-field--deadline-attention dd,
+#kanbanapp .kanban-card-field--deadline-attention .kanban-inline-display {
+  color: var(--yellow-700, var(--warning-color, #b88100));
+}
+
+#kanbanapp .kanban-deadline-icon--overdue {
+  color: var(--red-600, var(--danger-color, #e24c4c));
+}
+
+#kanbanapp .kanban-deadline-icon--attention {
+  color: var(--yellow-700, var(--warning-color, #b88100));
+}
+
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-overdue,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-overdue dd,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-overdue .kanban-inline-display,
+[data-theme="dark"] #kanbanapp .kanban-deadline-icon--overdue {
+  color: var(--red-400, #ff7b7b);
+}
+
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-attention,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-attention dd,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-attention .kanban-inline-display,
+[data-theme="dark"] #kanbanapp .kanban-deadline-icon--attention {
+  color: var(--yellow-400, #f2c14e);
 }
 
 #kanbanapp .kanban-card-fields dd[data-fieldtype="Percent"] {

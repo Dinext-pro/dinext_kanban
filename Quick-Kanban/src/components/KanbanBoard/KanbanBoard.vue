@@ -1322,6 +1322,13 @@ watch(
     } catch {
       // Reveal is best-effort; create already succeeded.
     }
+    if (payload.flash) {
+      try {
+        await flashMovedCard(payload.cardName, { outcome: 'success' })
+      } catch {
+        // Flash is best-effort.
+      }
+    }
     store.commit('CLEAR_REVEAL_CREATED_CARD')
   },
 )

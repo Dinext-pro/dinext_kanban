@@ -1448,6 +1448,86 @@ test('collapses fields and tags slots while minimized; keeps header and meta', a
   vi.useRealTimers()
 })
 
+test('shows deadline icon before title only while minimized', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const config = {
+    ...store.state.config,
+    deadline_enabled: true,
+    deadline_field: 'due_date',
+    deadline_attention_days: 3,
+    deadline_columns: ['Open'],
+  }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2020-01-01',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _deadline_bucket: 'overdue',
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  const titleIcon = wrapper.find('.kanban-title-area .kanban-title-deadline-icon')
+  expect(titleIcon.exists()).toBe(true)
+  expect(titleIcon.classes()).toContain('kanban-deadline-icon--overdue')
+  expect(titleIcon.classes()).toContain('kanban-title-deadline-icon--visible')
+  expect(titleIcon.find('use').attributes('href')).toBe('#icon-solid-error')
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  const expandedIcon = wrapper.find('.kanban-title-area .kanban-title-deadline-icon')
+  expect(expandedIcon.exists()).toBe(true)
+  expect(expandedIcon.classes()).not.toContain('kanban-title-deadline-icon--visible')
+
+  vi.useRealTimers()
+})
+
+test('hides title deadline icon when minimize is off', () => {
+  const store = createStore()
+  const config = {
+    ...store.state.config,
+    deadline_enabled: true,
+    deadline_field: 'due_date',
+    deadline_attention_days: 3,
+    deadline_columns: ['Open'],
+  }
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2020-01-01',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _deadline_bucket: 'overdue',
+      },
+      config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  const titleIcon = wrapper.find('.kanban-title-area .kanban-title-deadline-icon')
+  expect(titleIcon.exists()).toBe(true)
+  expect(titleIcon.classes()).not.toContain('kanban-title-deadline-icon--visible')
+})
+
 test('animates fields-slot max-height when minimize preference toggles', async () => {
   const store = createStore()
   const wrapper = mount(KanbanCard, {

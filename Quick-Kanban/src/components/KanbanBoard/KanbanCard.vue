@@ -13,16 +13,38 @@
     @dblclick="onCardDblclick"
   >
     <header class="kanban-title-area">
-      <InlineCardField
-        class="card-title"
-        field-role="title"
-        display-mode="text"
-        :card="card"
-        :field-meta="titleFieldMeta"
-        :doctype="config.ref_doctype"
-        :display-text="title"
-        :disabled="inlineDisabled"
-      />
+      <div class="kanban-title-main">
+        <span
+          v-if="cardDeadlineTone"
+          class="kanban-deadline-icon kanban-title-deadline-icon"
+          :class="[
+            `kanban-deadline-icon--${cardDeadlineTone}`,
+            { 'kanban-title-deadline-icon--visible': isDense },
+          ]"
+          aria-hidden="true"
+        >
+          <svg
+            class="icon icon-sm"
+            aria-hidden="true"
+          >
+            <use
+              :href="cardDeadlineTone === 'overdue'
+                ? '#icon-solid-error'
+                : '#icon-solid-warning'"
+            ></use>
+          </svg>
+        </span>
+        <InlineCardField
+          class="card-title"
+          field-role="title"
+          display-mode="text"
+          :card="card"
+          :field-meta="titleFieldMeta"
+          :doctype="config.ref_doctype"
+          :display-text="title"
+          :disabled="inlineDisabled"
+        />
+      </div>
       <button
         v-if="childPanelOpen && showChildCount"
         type="button"
@@ -83,9 +105,31 @@
             v-for="field in displayFields"
             :key="field.fieldname"
             class="kanban-card-field"
+            :class="deadlineFieldClass(field)"
           >
             <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
             <dd :data-fieldtype="field.fieldtype">
+              <span
+                v-if="deadlineToneForField(field)"
+                class="kanban-deadline-icon"
+                :class="`kanban-deadline-icon--${deadlineToneForField(field)}`"
+                aria-hidden="true"
+              >
+                <svg
+                  v-if="deadlineToneForField(field) === 'overdue'"
+                  class="icon icon-sm"
+                  aria-hidden="true"
+                >
+                  <use href="#icon-solid-error"></use>
+                </svg>
+                <svg
+                  v-else
+                  class="icon icon-sm"
+                  aria-hidden="true"
+                >
+                  <use href="#icon-solid-warning"></use>
+                </svg>
+              </span>
               <InlineCardField
                 field-role="display"
                 display-mode="html"
@@ -230,6 +274,7 @@ import { applyUserTagFilter } from '../../utils/listNavigation'
 import { navigateToForm } from '../../utils/inlineEditing'
 import { canDropTag, canWriteCardTags } from '../../utils/tagDragDrop'
 import { formatActivityCount } from '../../utils/cardExtraInfo'
+import { deadlineToneForCard } from '../../utils/deadline'
 
 const CHILD_COUNT_CONTEXT = 'QuickKanban.ChildCount'
 
@@ -418,6 +463,26 @@ const moveBlockedLabel = computed(() => {
   return __('Move is not available for {0}', [title.value])
 })
 const displayFields = computed(() => props.config.display_fields || [])
+const cardDeadlineTone = computed(() => deadlineToneForCard(props.card, props.config))
+
+function deadlineToneForField(field) {
+  if (!field?.fieldname || field.fieldname !== props.config.deadline_field) {
+    return ''
+  }
+  return deadlineToneForCard(props.card, props.config)
+}
+
+function deadlineFieldClass(field) {
+  const tone = deadlineToneForField(field)
+  if (!tone) {
+    return null
+  }
+  return {
+    'kanban-card-field--deadline': true,
+    [`kanban-card-field--deadline-${tone}`]: true,
+  }
+}
+
 const canEditTags = computed(() =>
   Boolean(
     props.config.show_tags

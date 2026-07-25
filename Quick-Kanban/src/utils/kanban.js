@@ -1,5 +1,6 @@
 import { getIndicatorDefinition } from './colors'
 import DOMPurify from 'dompurify'
+import { classifyCardDeadline } from './deadline'
 
 const DEFAULT_FIELDS = ['name']
 const CARD_COLOR_FIELDNAME = 'color'
@@ -11,6 +12,7 @@ const EXPANDED_LANE_STORAGE_PREFIX = 'quick_kanban:expanded_lane:'
 const EXPANDED_LANES_STORAGE_PREFIX = 'quick_kanban:expanded_lanes:'
 
 export const SWIMLANE_ASSIGN = '__assign'
+export const SWIMLANE_DEADLINES = '__deadlines'
 export const SWIMLANE_UNASSIGNED = ''
 export const LANE_DRAG_EXPAND_DELAY_MS = 400
 
@@ -216,6 +218,9 @@ export function resolveSwimlaneMode(swimlaneField, fieldMeta = null) {
   if (fieldname === SWIMLANE_ASSIGN) {
     return 'assign'
   }
+  if (fieldname === SWIMLANE_DEADLINES) {
+    return 'deadlines'
+  }
   const fieldtype = normalizeFieldtype(fieldMeta)
   if (fieldtype === 'TableMultiSelect') {
     return 'multi'
@@ -245,6 +250,9 @@ export function laneKeysFromCard(card, config) {
       return [SWIMLANE_UNASSIGNED]
     }
     return users.map(String)
+  }
+  if (mode === 'deadlines') {
+    return [String(classifyCardDeadline(card, config))]
   }
   if (mode === 'multi') {
     const field = config.swimlane_field
@@ -716,7 +724,7 @@ export function normalizeBoardConfig(board, meta = {}) {
   const swimlaneField = (board.custom_swimlane_field || '').trim()
   let swimlaneFieldMeta = null
   let swimlaneLinkField = ''
-  if (swimlaneField && swimlaneField !== SWIMLANE_ASSIGN) {
+  if (swimlaneField && swimlaneField !== SWIMLANE_ASSIGN && swimlaneField !== SWIMLANE_DEADLINES) {
     swimlaneFieldMeta = metaByField[swimlaneField] || { fieldname: swimlaneField }
     if (normalizeFieldtype(swimlaneFieldMeta) === 'TableMultiSelect') {
       const childDoctype = swimlaneFieldMeta.options
@@ -734,6 +742,21 @@ export function normalizeBoardConfig(board, meta = {}) {
     }
   }
   const swimlaneMode = resolveSwimlaneMode(swimlaneField, swimlaneFieldMeta)
+  const deadlineField = String(board.custom_deadline_field || '').trim()
+  const deadlineAttentionDays = Number(board.custom_deadline_attention_days) > 0
+    ? Number(board.custom_deadline_attention_days)
+    : 3
+  const deadlineColumns = Array.isArray(board.custom_deadline_columns)
+    ? board.custom_deadline_columns
+      .map((row) => String(row?.column_value || '').trim())
+      .filter(Boolean)
+    : []
+  if (deadlineField && !fields.includes(deadlineField)) {
+    fields = [...fields, deadlineField]
+  }
+  if ((deadlineField || swimlaneMode === 'deadlines') && metaByField.project && !fields.includes('project')) {
+    fields = [...fields, 'project']
+  }
   const titleField = meta.title_field || 'name'
   const parentField = meta.is_tree ? (meta.nsm_parent_field || '') : ''
   fields = ensureCardFetchFields(fields, {
@@ -789,6 +812,10 @@ export function normalizeBoardConfig(board, meta = {}) {
     swimlane_mode: swimlaneMode,
     swimlane_is_multi: swimlaneMode === 'assign' || swimlaneMode === 'multi',
     swimlane_link_field: swimlaneLinkField,
+    deadline_field: deadlineField,
+    deadline_attention_days: deadlineAttentionDays,
+    deadline_columns: deadlineColumns,
+    deadline_enabled: Boolean(deadlineField),
   }
 }
 
