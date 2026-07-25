@@ -540,6 +540,78 @@ def get_swimlane_lane_page(
 
 @frappe.whitelist()
 @frappe.read_only()
+def get_child_column_totals(
+	doctype,
+	fieldname,
+	columns,
+	parent_name,
+	parent_field=None,
+	filters=None,
+	or_filters=None,
+):
+	"""Column totals for direct children of one parent (board filters applied)."""
+	from quick_kanban.board_children import append_parent_filter, resolve_tree_parent_field
+
+	resolved_parent_field = resolve_tree_parent_field(doctype, parent_field)
+	filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or [])
+	child_filters = append_parent_filter(
+		doctype,
+		filters,
+		resolved_parent_field,
+		parent_name,
+	)
+	return get_column_totals(
+		doctype,
+		fieldname,
+		columns,
+		filters=child_filters,
+		or_filters=or_filters,
+		hide_board_children=False,
+	)
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_child_column_page(
+	doctype,
+	status_field,
+	column,
+	parent_name,
+	parent_field=None,
+	fields=None,
+	filters=None,
+	or_filters=None,
+	start=0,
+	page_length=20,
+	column_values=None,
+):
+	"""Page of direct children in one status column (board filters applied)."""
+	from quick_kanban.board_children import append_parent_filter, resolve_tree_parent_field
+
+	resolved_parent_field = resolve_tree_parent_field(doctype, parent_field)
+	filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or [])
+	child_filters = append_parent_filter(
+		doctype,
+		filters,
+		resolved_parent_field,
+		parent_name,
+	)
+	return get_column_page(
+		doctype,
+		status_field,
+		column,
+		fields=fields,
+		filters=child_filters,
+		or_filters=or_filters,
+		start=start,
+		page_length=page_length,
+		hide_board_children=False,
+		column_values=column_values,
+	)
+
+
+@frappe.whitelist()
+@frappe.read_only()
 def get_column_page(
 	doctype,
 	status_field,

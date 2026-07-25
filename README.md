@@ -22,6 +22,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Подсчёт общего количества карточек в каждой колонке с учётом текущих фильтров (и режима скрытия дочерних задач, см. ниже).
 - Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски; при скрытых дочерних — с `name not in` (с порогом на больших досках).
 - Чекбокс **Show child tasks** / **Показывать дочерние задачи** для tree DocType (например Task с `parent_task`): по умолчанию скрывает карточки, чей прямой родитель тоже на доске; состояние — в `localStorage` на доску.
+- **Child panel** / область дочерних данных: badge с числом детей на карточке открывает вложенную мини-доску под родителем (вложенность, закрытие кликом по хосту или по затемнённым карточкам того же уровня).
 - Настройка цвета колонок и выделение значений выбранного поля.
 - Сжатие колонок по ширине (меню **Сжать** / **Открыть**, двойной клик, auto-expand при задержке курсора во время DnD карточки); состояние хранится локально на доску.
 - Изменение ширины колонок перетаскиванием за правый край (для пользователей с правом записи на `Kanban Board`); с зажатым Shift — та же ширина применяется ко всем колонкам; значение сохраняется в `Kanban Board Column.custom_column_width`.
@@ -234,7 +235,7 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 #### Семантика
 
-Когда чекбокс **выключен**, с доски скрываются карточки, у которых **прямой** родитель (значение `nsm_parent_field`) тоже входит в membership доски: текущие фильтры + активные колонки (+ `or_filters`). Корневые записи и «сироты» (родитель вне доски) остаются видимыми. Вложенность глубже одного уровня не раскрывается отдельным expand — только прямое отношение parent → child.
+Когда чекбокс **выключен**, с доски скрываются карточки, у которых **прямой** родитель (значение `nsm_parent_field`) тоже входит в membership доски: текущие фильтры + активные колонки (+ `or_filters`). Корневые записи и «сироты» (родитель вне доски) остаются видимыми. Скрытие на самой доске не отменяет [child panel](#child-panel--область-дочерних-данных): дочерние записи по-прежнему можно открыть с карточки родителя в отдельной области.
 
 Переключение чекбокса вызывает `setQuickKanbanShowChildTasks` → `refreshBoard`. После create/move membership и счётчики пересчитываются (`hydrateBoardDocumentNames`, `fetchColumnTotals` / cell totals).
 
@@ -254,6 +255,34 @@ cd ../frappe && yarn run production --apps quick_kanban
 #### ListView по двойному клику на счётчик
 
 При скрытых детях в `route_options` добавляется `name: ['not in', hiddenBoardChildNames]`, если число скрытых имён ≤ `LIST_HIDDEN_CHILD_NAME_LIMIT` (500). Если имён больше, гигантский `NOT IN` **не** передаётся: открывается List только с фильтром колонки и search params доски, показывается предупреждение (`frappe.show_alert`), что список может включать дочерние задачи, скрытые на канбане. Пагинация самой доски при этом остаётся точной за счёт серверного exclude.
+
+### Child panel / область дочерних данных
+
+Для tree DocType (`is_tree` + `nsm_parent_field`, в конфиге доски — `parent_field`) на карточке с ненулевым числом прямых детей показывается badge (**Child records**): иконка списка и счётчик (`_child_count` через `quick_kanban.api.get_child_counts`).
+
+#### Открытие и вложенность
+
+- Клик по badge открывает **child panel** — мини-доску с теми же колонками, что у основной, отфильтрованную по родителю (`toggleChildPanel` / `OPEN_CHILD_PANEL`).
+- Панели всех уровней хостятся в portal на корне доски (flat и swimlane); под карточкой-хостом — spacer по высоте панели.
+- Можно открыть вложенную панель с карточки внутри уже открытой (один активный хост на уровень depth); deepest panel заполняет высоту от низа хоста до низа доски (`child-panel--viewport-fill`), внешний вертикальный скролл доски блокируется.
+- Колонки панели выровнены с колонками доски; у треков — inset tint с учётом depth и swimlane.
+
+#### Хост и закрытие
+
+Пока панель открыта, карточка-хост в режиме **ancestor**:
+
+- компактная одна строка: заголовок + badge (вместо drag-handle); meta/actions скрыты;
+- badge показывает иконку collapse; нижние углы без скругления, без `margin-bottom` и нижнего border;
+- вертикальный градиент фона к цвету обводки панели (solid до ~90% высоты, fade у низа; для nested host — более плотная обводка);
+- клик по телу хоста или по badge закрывает панели с depth этой карточки и глубже.
+
+Остальные карточки того же уровня (не хосты) — **inert** (приглушены). Клик по inert-карточке закрывает панели с её `childDepth` (и глубже): board-level inert → с depth 0; sibling во внутренней панели → с depth этой панели. Карточки в deepest panel остаются **active** (обычное взаимодействие).
+
+Двойной клик по форме на ancestor/inert не открывает документ (`isPanelInteractionActive`).
+
+#### Связь с Show child tasks
+
+Child panel работает независимо от чекбокса **Show child tasks**: даже когда дети скрыты на основной доске, badge и панель позволяют просматривать/вести дочерние записи в overlay. Membership/hide API доски и загрузка колонок панели — разные пути.
 
 ### Swimlane (Group By)
 
@@ -515,12 +544,12 @@ bench --site <site-name> clear-cache
 - [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
 - [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
 - [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), ширина колонок (`set_column_widths`, override `update_column_order`).
+- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_child_counts`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), ширина колонок (`set_column_widths`, override `update_column_order`).
 - [`quick_kanban/board_children.py`](quick_kanban/board_children.py) — скрытие on-board children (membership, exclude до page slice, hidden names).
 - [`quick_kanban/move_policy.py`](quick_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
 - [`quick_kanban/swimlane.py`](quick_kanban/swimlane.py) — режимы группировки, построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
 - [`quick_kanban/get_beta_users.py`](quick_kanban/get_beta_users.py) — `get_kanban_config` (feature flags `kanban_beta` / `kanban_beta_users`).
-- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `swimlaneBoard`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density state, show-child-tasks и resize колонок в Vuex).
+- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks и resize колонок в Vuex).
 - [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info** и **Swimlane Field** на Kanban Board.
 - [`quick_kanban/quick_kanban/custom/kanban_board_column.json`](quick_kanban/quick_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
 

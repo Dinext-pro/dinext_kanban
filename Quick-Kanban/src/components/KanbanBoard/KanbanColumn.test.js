@@ -1002,6 +1002,79 @@ test('passes externalScroller to VirtualList and marks external scroll mode', ()
   wrapper.unmount()
 })
 
+test('raises VirtualList keeps when a board-hosted ChildPanel host is in the column', async () => {
+  const cards = Array.from({ length: 35 }, (_, index) => ({
+    name: `CARD-${index + 1}`,
+    subject: `Card ${index + 1}`,
+    status: 'Open',
+  }))
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards,
+  }
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    parent_field: 'parent_task',
+    fields: ['name', 'subject', 'status'],
+    swimlane_mode: 'field',
+    swimlane_field: 'project',
+  })
+  store.commit('SET_COLUMNS', [column])
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      laneIndex: 0,
+      laneKey: 'alpha',
+      listId: 1,
+      config: store.state.config,
+      childDepth: 0,
+      hideHeader: true,
+      hideResize: true,
+      externalScroller: document.createElement('div'),
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['keeps', 'scroller'],
+          inheritAttrs: false,
+          template: '<div role="list" class="kanban-card-list" />',
+        },
+        KanbanCard: true,
+      },
+    },
+  })
+
+  expect(wrapper.findComponent({ name: 'VirtualList' }).props('keeps')).toBe(30)
+
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: 'PARENT::CARD-20::0',
+    parentName: 'CARD-20',
+    depth: 0,
+    ordinal: 0,
+    columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  expect(wrapper.findComponent({ name: 'VirtualList' }).props('keeps')).toBe(40)
+
+  store.commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+  await wrapper.vm.$nextTick()
+  expect(wrapper.findComponent({ name: 'VirtualList' }).props('keeps')).toBe(30)
+  wrapper.unmount()
+})
+
 test('swimlane cell shows forbidden overlay mark while dragging into a blocked column', async () => {
   const store = createKanbanStore()
   store.commit('SET_KANBAN_CONFIG', {

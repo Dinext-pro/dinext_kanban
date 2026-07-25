@@ -2,13 +2,14 @@
   <article
     ref="cardRoot"
     class="kanban-card"
-    :class="[moveFlashClasses, cardColorClass, densityClasses, tagDropClasses]"
+    :class="[moveFlashClasses, cardColorClass, densityClasses, tagDropClasses, panelModeClasses]"
     :style="cardAccentStyle"
     role="listitem"
     :aria-busy="pending"
     :data-card-name="card.name"
     @pointerenter="onPointerEnter"
     @pointerleave="onPointerLeave"
+    @click="onPanelDismissCardClick"
     @dblclick="onCardDblclick"
   >
     <header class="kanban-title-area">
@@ -22,32 +23,50 @@
         :display-text="title"
         :disabled="inlineDisabled"
       />
-      <span
-        v-if="canDrag"
-        class="drag-handle drag"
-        :aria-label="__('Drag {0}', [title])"
-        role="img"
+      <button
+        v-if="childPanelOpen && showChildCount"
+        type="button"
+        class="kanban-child-count"
+        :aria-label="childCountLabel"
+        :title="childCountLabel"
+        :aria-expanded="String(childPanelOpen)"
+        @click.stop="onChildCountClick"
+        @pointerdown.stop
+        @dblclick.stop
       >
         <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
+          <use href="#icon-collapse"></use>
         </svg>
-        <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
-        </svg>
-      </span>
-      <span
-        v-else
-        class="drag-handle drag-handle-disabled"
-        :aria-label="moveBlockedLabel"
-        role="img"
-      >
-        <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
-        </svg>
-        <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
-        </svg>
-      </span>
+        <span class="kanban-child-count__value">{{ childCountDisplay }}</span>
+      </button>
+      <template v-else-if="!childPanelOpen">
+        <span
+          v-if="canDrag"
+          class="drag-handle drag"
+          :aria-label="__('Drag {0}', [title])"
+          role="img"
+        >
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+        </span>
+        <span
+          v-else
+          class="drag-handle drag-handle-disabled"
+          :aria-label="moveBlockedLabel"
+          role="img"
+        >
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+        </span>
+      </template>
     </header>
 
     <div
@@ -119,11 +138,12 @@
       />
 
       <button
-        v-if="showChildCount"
+        v-if="showChildCount && !childPanelOpen"
         type="button"
         class="kanban-child-count"
         :aria-label="childCountLabel"
         :title="childCountLabel"
+        :aria-expanded="String(childPanelOpen)"
         @click.stop="onChildCountClick"
         @pointerdown.stop
         @dblclick.stop
@@ -219,6 +239,7 @@ const props = defineProps({
   columnIndex: { type: Number, required: true },
   laneIndex: { type: Number, default: null },
   laneKey: { type: [String, Number], default: null },
+  childDepth: { type: Number, default: 0 },
 })
 const store = useStore()
 const scrollToMovedCard = inject('scrollToMovedCard', null)
@@ -253,15 +274,31 @@ useDismissibleMenu({
 const columns = computed(() => store.state.columns)
 const pending = computed(() => store.getters.isMovePending(props.card.name))
 const inlineBusy = computed(() => store.getters.isCardInlineBusy(props.card.name))
-const inlineDisabled = computed(() => pending.value)
 const moveOptionsLoading = computed(() => store.getters.isMoveOptionsLoading)
 const minimizeCards = computed(() => store.state.minimize_cards)
 const forceCollapsed = computed(
   () => Boolean(store.state.densityForceCollapsedCards?.[props.card.name]),
 )
-// Force-collapse from Vuex survives VirtualList remount; local expanded alone cannot.
+const childPanelOpen = computed(() =>
+  store.getters.isChildPanelOpenFor(props.card.name, props.childDepth),
+)
+const panelMode = computed(() =>
+  store.getters.getCardChildPanelMode(props.card.name, props.childDepth),
+)
+const isPanelInteractionActive = computed(() => panelMode.value === 'active')
+const panelModeClasses = computed(() => ({
+  'kanban-card--panel-inert': panelMode.value === 'inert',
+  'kanban-card--panel-ancestor': panelMode.value === 'ancestor',
+  'kanban-card--panel-host-nested': (
+    panelMode.value === 'ancestor' && Number(props.childDepth) >= 1
+  ),
+}))
+const inlineDisabled = computed(() => pending.value || !isPanelInteractionActive.value)
+// Panel host is always dense (any Minimize checkbox state). Otherwise densify
+// only follows minimize_cards + local/force collapse.
 const isDense = computed(
-  () => minimizeCards.value && (forceCollapsed.value || !expanded.value),
+  () => childPanelOpen.value
+    || (minimizeCards.value && (forceCollapsed.value || !expanded.value)),
 )
 const densityClasses = computed(() => ({
   'kanban-card--minimized': isDense.value,
@@ -304,7 +341,12 @@ function clearForceDensityCollapse() {
 }
 
 function holdExpandedDensity() {
-  if (!minimizeCards.value || !expanded.value || forceCollapsed.value) {
+  if (
+    childPanelOpen.value
+    || !minimizeCards.value
+    || !expanded.value
+    || forceCollapsed.value
+  ) {
     return
   }
   store.commit('SET_DENSITY_HOLD_EXPANDED', props.card.name)
@@ -333,6 +375,9 @@ function onFilesMenuOpen(open) {
 }
 
 function expandIntentionally() {
+  if (childPanelOpen.value || !isPanelInteractionActive.value) {
+    return
+  }
   clearForceDensityCollapse()
   expanded.value = true
 }
@@ -352,8 +397,13 @@ const title = computed(() => {
     props.card,
   ) || props.card.name
 })
-const canDrag = computed(() => store.getters.canDragCard(props.card.name))
-const canMove = computed(() => store.getters.getAllowedDestinations(props.card.name).length > 0)
+const canDrag = computed(() => (
+  isPanelInteractionActive.value && store.getters.canDragCard(props.card.name)
+))
+const canMove = computed(() => (
+  isPanelInteractionActive.value
+  && store.getters.getAllowedDestinations(props.card.name).length > 0
+))
 const allowedDestinations = computed(() =>
   store.getters.getAllowedDestinations(props.card.name)
     .filter((destination) => destination.columnIndex !== props.columnIndex),
@@ -399,7 +449,23 @@ const childCountLabel = computed(() =>
 )
 
 function onChildCountClick() {
-  // Expand panel for child cards will be added later.
+  store.dispatch('toggleChildPanel', {
+    parentName: props.card.name,
+    depth: props.childDepth,
+  })
+}
+
+function onPanelDismissCardClick() {
+  if (panelMode.value === 'ancestor') {
+    store.dispatch('toggleChildPanel', {
+      parentName: props.card.name,
+      depth: props.childDepth,
+    })
+    return
+  }
+  if (panelMode.value === 'inert') {
+    store.commit('CLOSE_CHILD_PANELS_FROM_DEPTH', props.childDepth)
+  }
 }
 
 const highlightFieldMeta = computed(() => props.config.highlighted_field_meta || {
@@ -568,7 +634,7 @@ onMounted(async () => {
 })
 
 function onPointerEnter(event) {
-  if (!minimizeCards.value) {
+  if (!minimizeCards.value || childPanelOpen.value || !isPanelInteractionActive.value) {
     return
   }
   if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
@@ -674,10 +740,29 @@ watch(forceCollapsed, (forced) => {
   expanded.value = false
 })
 
+watch(childPanelOpen, (open) => {
+  if (!open) {
+    return
+  }
+  clearExpandTimers()
+  expanded.value = false
+  clearDensityHold()
+})
+
+watch(panelMode, (mode) => {
+  if (mode === 'active') {
+    return
+  }
+  if (moveMenuOpen.value) {
+    closeMoveMenu({ restoreFocus: false })
+  }
+  clearExpandTimers()
+})
+
 watch(
   () => store.state.densityHoldExpandedCard,
   (cardName) => {
-    if (!minimizeCards.value) {
+    if (!minimizeCards.value || childPanelOpen.value) {
       return
     }
     if (cardName === props.card.name && !forceCollapsed.value) {
@@ -724,6 +809,9 @@ function formatValue(field) {
 }
 
 function onReadonlyTagDblclick(event) {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   const pill = event.target?.closest?.('.tag-pill')
   if (!pill) {
     return
@@ -736,6 +824,9 @@ function onReadonlyTagDblclick(event) {
 }
 
 function onCardDblclick() {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   navigateToForm(props.config.ref_doctype, props.card.name)
 }
 
@@ -795,7 +886,7 @@ function closeMoveMenu({ restoreFocus = true } = {}) {
 }
 
 function toggleMoveMenu() {
-  if (!canMove.value) {
+  if (!canMove.value || !isPanelInteractionActive.value) {
     return
   }
   if (moveMenuOpen.value) {
@@ -827,6 +918,9 @@ function toggleMoveMenu() {
 }
 
 function openAssignToDialog() {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   const dialog = new frappe.ui.form.AssignToDialog({
     obj: props.card,
     method: 'frappe.desk.form.assign_to.add',
@@ -838,6 +932,9 @@ function openAssignToDialog() {
 }
 
 function openAssignmentDialog() {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   new frappe.ui.form.AssignmentDialog({
     assignments: Object.keys(props.card._assign),
     frm: {
