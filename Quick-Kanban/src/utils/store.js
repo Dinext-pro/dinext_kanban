@@ -2687,7 +2687,7 @@ export function createKanbanStore() {
           throw error
         }
       },
-      async toggleChildPanel({ commit, dispatch, state }, { parentName, depth = 0 } = {}) {
+      async toggleChildPanel({ commit, dispatch, state }, { parentName, depth = 0, args } = {}) {
         const parent = String(parentName || '').trim()
         if (!parent || !state.config?.parent_field) {
           return false
@@ -2712,8 +2712,9 @@ export function createKanbanStore() {
           columnPagination: createChildColumnPagination(columns, true),
           columnTotals: {},
         })
-        await dispatch('fetchChildColumnTotals', { scopeId })
-        await dispatch('loadAllChildColumnPages', { scopeId, reset: true })
+        // Flat-style: wait for all first pages, then one sync paint (not per-column).
+        await dispatch('fetchChildPanelFirstPages', { scopeId, args })
+        await dispatch('topUpInitialChildColumns', { scopeId, args })
         return true
       },
       closeChildPanelsFromDepth({ commit }, depth = 0) {
@@ -2751,31 +2752,163 @@ export function createKanbanStore() {
         commit('SET_CHILD_COLUMN_TOTALS', { scopeId, totals })
         return true
       },
-      async loadAllChildColumnPages({ dispatch, state }, { scopeId, reset = false } = {}) {
+      /**
+       * Like fetchKanban: parallel get_child_column_page for every column, then
+       * commit all cards/pagination in one sync pass so columns paint together.
+       * Totals run in parallel so hasMore can use counts at commit time.
+       */
+      async fetchChildPanelFirstPages({ commit, dispatch, state }, { scopeId, args } = {}) {
         const panel = state.childPanels[scopeId]
-        if (!panel) {
+        if (!panel || !state.config?.parent_field) {
+          return false
+        }
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        const pageSize = state.columnPageSize
+        const boardGeneration = state.boardGeneration
+        const columnRequestGeneration = state.columnRequestGeneration
+        const filters = Array.isArray(sourceArgs.filters) ? sourceArgs.filters : []
+        const columnValues = activeColumnValues(state)
+
+        for (const column of panel.columns) {
+          commit('SET_CHILD_COLUMN_PAGE_STATE', {
+            scopeId,
+            columnName: column.column_name,
+            changes: { loading: true },
+          })
+        }
+
+        let pageResponses
+        try {
+          const [, responses] = await Promise.all([
+            dispatch('fetchChildColumnTotals', { scopeId, args: sourceArgs }),
+            Promise.all(
+              panel.columns.map((column) => frappe.call({
+                method: 'quick_kanban.api.get_child_column_page',
+                args: {
+                  doctype: state.config.ref_doctype,
+                  status_field: state.config.field_name,
+                  column: column.column_name,
+                  parent_name: panel.parentName,
+                  parent_field: state.config.parent_field,
+                  fields: state.config.fields,
+                  filters,
+                  or_filters: sourceArgs.or_filters,
+                  start: 0,
+                  page_length: pageSize,
+                  column_values: columnValues,
+                },
+              })),
+            ),
+          ])
+          pageResponses = responses
+        } catch (error) {
+          if (
+            state.boardGeneration === boardGeneration
+            && state.columnRequestGeneration === columnRequestGeneration
+            && state.childPanels[scopeId]
+          ) {
+            for (const column of panel.columns) {
+              commit('SET_CHILD_COLUMN_PAGE_STATE', {
+                scopeId,
+                columnName: column.column_name,
+                changes: { loading: false },
+              })
+            }
+          }
+          throw error
+        }
+
+        if (
+          state.boardGeneration !== boardGeneration
+          || state.columnRequestGeneration !== columnRequestGeneration
+          || !state.childPanels[scopeId]
+        ) {
+          return false
+        }
+
+        const hydrated = state.childPanels[scopeId]
+        const allCards = []
+        for (let columnIndex = 0; columnIndex < hydrated.columns.length; columnIndex += 1) {
+          const column = hydrated.columns[columnIndex]
+          const columnName = column.column_name
+          const page = pageResponses[columnIndex]?.message || {}
+          cacheUserInfo(page.user_info)
+          const cards = cardsFromPageMessage(page, page.user_info)
+          const resultCount = page.values?.length || 0
+          const total = hydrated.columnTotals?.[columnName]
+          commit('SET_COLUMN_CARDS', {
+            childScopeId: scopeId,
+            columnIndex,
+            cards,
+          })
+          commit('SET_CHILD_COLUMN_PAGE_STATE', {
+            scopeId,
+            columnName,
+            changes: {
+              offset: resultCount,
+              loading: false,
+              hasMore:
+                resultCount >= pageSize
+                && (!Number.isFinite(total) || resultCount < total),
+            },
+          })
+          allCards.push(...cards)
+        }
+        commit('BUMP_DRAG_SYNC')
+        dispatch('scheduleMoveOptionsRefresh')
+        dispatch('hydrateCardLinkTitles', {
+          cards: allCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        dispatch('hydrateAttachmentCounts', {
+          cards: allCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        dispatch('hydrateChildCounts', {
+          cards: allCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        return true
+      },
+      /**
+       * After first pages: top-up each column to initialColumnCardMinimum.
+       * Remaining pages load on column scroll via loadChildColumnPage.
+       */
+      async topUpInitialChildColumns({ dispatch, state }, { scopeId, args } = {}) {
+        const hydrated = state.childPanels[scopeId]
+        if (!hydrated) {
           return
         }
         await Promise.allSettled(
-          panel.columns.map(async (_column, columnIndex) => {
-            await dispatch('loadChildColumnPage', { scopeId, columnIndex, reset })
-            // Top-up until every child column is fully loaded (no inner panel scroll).
-            let guard = 0
-            while (guard < 50) {
-              guard += 1
+          hydrated.columns.map(async (column, columnIndex) => {
+            const columnName = column.column_name
+            const total = hydrated.columnTotals?.[columnName]
+            if (!Number.isFinite(total) || total <= 0) {
+              return
+            }
+            const target = Math.min(initialColumnCardMinimum, total)
+            let loaded = column.cards?.length || 0
+            while (loaded < target) {
               const current = state.childPanels[scopeId]
-              const column = current?.columns?.[columnIndex]
-              if (!column) {
+              if (!current) {
                 return
               }
-              const pagination = current.columnPagination?.[column.column_name]
+              const pagination = current.columnPagination?.[columnName]
               if (!pagination?.hasMore || pagination.loading) {
                 return
               }
               const previousOffset = pagination.offset
-              await dispatch('loadChildColumnPage', { scopeId, columnIndex })
-              const next = state.childPanels[scopeId]?.columnPagination?.[column.column_name]
-              if (!next || next.offset === previousOffset) {
+              await dispatch('loadChildColumnPage', {
+                scopeId,
+                columnIndex,
+                args,
+                pageSize: target - loaded,
+              })
+              loaded = state.childPanels[scopeId]?.columns?.[columnIndex]?.cards?.length || 0
+              if (state.childPanels[scopeId]?.columnPagination?.[columnName]?.offset === previousOffset) {
                 return
               }
             }
