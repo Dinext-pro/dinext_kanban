@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createKanbanStore, buildPermissiveMoveOptions } from '../../utils/store'
+import { CARD_EXPAND_DELAY_MS } from '../../utils/kanban'
 import KanbanCard from './KanbanCard.vue'
 
 vi.mock('../../utils/cardMoveFlash', () => ({
@@ -772,7 +773,7 @@ test('keeps parent minimized while panel open even with Minimize on and hover', 
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -783,7 +784,7 @@ test('keeps parent minimized while panel open even with Minimize on and hover', 
   expect(store.state.densityHoldExpandedCard).toBeNull()
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--minimized')
   expect(wrapper.classes()).not.toContain('kanban-card--expanded')
@@ -1437,7 +1438,7 @@ test('collapses fields and tags slots while minimized; keeps header and meta', a
   expect(wrapper.get('.assignments-block').exists()).toBe(true)
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
   expect(wrapper.classes()).not.toContain('kanban-card--minimized')
@@ -1485,7 +1486,7 @@ test('shows deadline icon before title only while minimized', async () => {
   expect(titleIcon.find('use').attributes('href')).toBe('#icon-solid-error')
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).not.toContain('kanban-card--minimized')
   const expandedIcon = wrapper.find('.kanban-title-area .kanban-title-deadline-icon')
@@ -1590,7 +1591,7 @@ test('expands minimized card after hover delay and collapses after leave', async
   expect(wrapper.classes()).toContain('kanban-card--minimized')
   expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
 
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
   expect(wrapper.classes()).not.toContain('kanban-card--minimized')
@@ -1629,7 +1630,7 @@ test('keeps expanded density while dragging and after remount until leave', asyn
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -1702,7 +1703,7 @@ test('expands minimized card on tag-drag hover after expand delay', async () => 
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--minimized')
 
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
   expect(wrapper.classes()).not.toContain('kanban-card--minimized')
@@ -1745,7 +1746,7 @@ test('pointerenter expands during tag-drag after the same delay', async () => {
   expect(wrapper.classes()).toContain('kanban-card--minimized')
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
 
   expect(wrapper.classes()).toContain('kanban-card--expanded')
@@ -1788,7 +1789,7 @@ test('marks minimized card as tag drop target; expands only after hover delay', 
   expect(wrapper.classes()).toContain('kanban-card--minimized')
   expect(wrapper.classes()).toContain('kanban-card-tag-drop-allowed')
 
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
   expect(wrapper.classes()).toContain('kanban-card-tag-drop-allowed')
@@ -1946,7 +1947,7 @@ test('clears force-collapse and expands again on intentional hover', async () =>
   expect(wrapper.classes()).toContain('kanban-card--minimized')
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
 
   expect(store.state.densityForceCollapsedCards['TASK-1']).toBeUndefined()
@@ -2039,7 +2040,7 @@ test('collapses after inline-edit ends when pointer already left the card', asyn
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -2092,7 +2093,7 @@ test('stays expanded after inline-edit ends while pointer remains over the card'
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -2153,7 +2154,7 @@ test('collapses after tag-edit ends when pointer already left the card', async (
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -2207,7 +2208,7 @@ test('stays expanded after tag-edit ends while pointer remains over the card', a
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -2267,7 +2268,7 @@ test('keeps expanded density while move menu is open after pointer leave', async
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -2309,7 +2310,7 @@ test('collapses after move menu closes when pointer already left the card', asyn
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
 
   await wrapper.get('[aria-label="Move First task"]').trigger('click')
@@ -2359,7 +2360,7 @@ test('stays expanded after move menu closes while pointer remains over the card'
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
 
   await wrapper.get('[aria-label="Move First task"]').trigger('click')
@@ -2418,7 +2419,7 @@ test('keeps expanded density while files menu is open after pointer leave', asyn
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
   expect(wrapper.classes()).toContain('kanban-card--expanded')
 
@@ -2462,7 +2463,7 @@ test('collapses after files menu closes when pointer already left the card', asy
   })
 
   await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
-  await vi.advanceTimersByTimeAsync(400)
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
   await flushPromises()
 
   await wrapper.get('[aria-label="Attachments"]').trigger('click')
