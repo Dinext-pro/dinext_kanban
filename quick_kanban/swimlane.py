@@ -40,18 +40,36 @@ def resolve_swimlane_mode(swimlane_field, meta=None):
 	)
 
 
-def get_swimlane_field_options(doctype):
-	"""Options for Kanban Board.custom_swimlane_field."""
+def get_swimlane_field_options(doctype, board_name=None, include_deadlines=None):
+	"""Options for Kanban Board.custom_swimlane_field.
+
+	Deadlines (`__deadlines`) is included only when deadline tracking is enabled
+	for the board: explicit ``include_deadlines``, or non-empty
+	``custom_deadline_field`` when ``board_name`` is given. If neither is set,
+	Deadlines is omitted.
+	"""
 	if not doctype:
 		return []
 	if not frappe.has_permission(doctype, "read"):
 		frappe.throw(_("You cannot read this document type."), frappe.PermissionError)
 
+	if include_deadlines is None and board_name:
+		include_deadlines = bool(
+			str(
+				frappe.db.get_value("Kanban Board", board_name, "custom_deadline_field") or ""
+			).strip()
+		)
+	elif include_deadlines is None:
+		include_deadlines = False
+	else:
+		include_deadlines = bool(cint(include_deadlines) if not isinstance(include_deadlines, bool) else include_deadlines)
+
 	meta = frappe.get_meta(doctype)
 	options = [
 		{"value": SWIMLANE_ASSIGN, "label": _("Assigned To")},
-		{"value": SWIMLANE_DEADLINES, "label": _("Deadlines")},
 	]
+	if include_deadlines:
+		options.append({"value": SWIMLANE_DEADLINES, "label": _("Deadlines")})
 	for df in meta.fields:
 		if not df.fieldname:
 			continue
@@ -66,12 +84,19 @@ def get_swimlane_field_options(doctype):
 	return options
 
 
-def normalize_swimlane_field(doctype, swimlane_field):
+def normalize_swimlane_field(doctype, swimlane_field, board_name=None, include_deadlines=None):
 	"""Return '' or a validated swimlane fieldname for the doctype."""
 	value = (swimlane_field or "").strip()
 	if not value:
 		return ""
-	allowed = {row["value"] for row in get_swimlane_field_options(doctype)}
+	allowed = {
+		row["value"]
+		for row in get_swimlane_field_options(
+			doctype,
+			board_name=board_name,
+			include_deadlines=include_deadlines,
+		)
+	}
 	if value not in allowed:
 		frappe.throw(_("Invalid swimlane field: {0}").format(value))
 	return value

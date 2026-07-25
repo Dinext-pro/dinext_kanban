@@ -35,7 +35,10 @@ function set_swimlane_field_options(frm) {
 
     frappe.call({
         method: "quick_kanban.api.get_swimlane_field_options",
-        args: { doctype: frm.doc.reference_doctype },
+        args: {
+            doctype: frm.doc.reference_doctype,
+            include_deadlines: Boolean(frm.doc.custom_deadline_field),
+        },
         callback(r) {
             const rows = r.message || [];
             const data = [
@@ -85,7 +88,7 @@ function set_deadline_field_options(frm) {
         const data = [
             {
                 value: "",
-                label: __("—", null, QUICK_KANBAN_CTX),
+                label: __("No Deadline Field", null, QUICK_KANBAN_CTX),
             },
         ].concat(
             $.map(frappe.get_meta(doctype).fields, function (field) {
@@ -237,7 +240,7 @@ frappe.ui.form.on("Kanban Board", {
         set_highlighted_field_options(frm);
         set_swimlane_field_options(frm);
         set_deadline_field_options(frm);
-        if (frm.is_new() || !frm.doc.custom_deadline_field) {
+        if (frm.is_new()) {
             apply_task_deadline_defaults(frm);
         }
         render_deadline_columns_multicheck(frm);
@@ -251,5 +254,14 @@ frappe.ui.form.on("Kanban Board", {
     },
     field_name(frm) {
         render_deadline_columns_multicheck(frm);
+    },
+    custom_deadline_field(frm) {
+        set_swimlane_field_options(frm);
+        if (
+            !frm.doc.custom_deadline_field
+            && frm.doc.custom_swimlane_field === "__deadlines"
+        ) {
+            frm.set_value("custom_swimlane_field", "");
+        }
     },
 });
