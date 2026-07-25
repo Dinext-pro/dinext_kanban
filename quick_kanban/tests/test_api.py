@@ -915,6 +915,22 @@ class TestSwimlaneApi(FrappeTestCase):
         options = get_swimlane_field_options("ToDo")
         values = {row["value"] for row in options}
         self.assertIn("__assign", values)
+        self.assertNotIn("__deadlines", values)
+
+    def test_get_swimlane_field_options_deadlines_gated_by_board(self):
+        from quick_kanban.api import get_swimlane_field_options
+
+        board_name = ensure_todo_kanban_board()
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "")
+        without = get_swimlane_field_options("ToDo", board_name=board_name)
+        self.assertNotIn("__deadlines", {row["value"] for row in without})
+
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "date")
+        with_field = get_swimlane_field_options("ToDo", board_name=board_name)
+        self.assertIn("__deadlines", {row["value"] for row in with_field})
+
+        explicit = get_swimlane_field_options("ToDo", include_deadlines=1)
+        self.assertIn("__deadlines", {row["value"] for row in explicit})
 
     def test_set_swimlane_field_sets_and_clears(self):
         from quick_kanban.api import set_swimlane_field
@@ -940,6 +956,19 @@ class TestSwimlaneApi(FrappeTestCase):
         board_name = ensure_todo_kanban_board()
         with self.assertRaises(frappe.ValidationError):
             set_swimlane_field(board_name, "not_a_real_field_xyz")
+
+    def test_set_swimlane_field_rejects_deadlines_without_deadline_field(self):
+        from quick_kanban.api import set_swimlane_field
+
+        board_name = ensure_todo_kanban_board()
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "")
+        with self.assertRaises(frappe.ValidationError):
+            set_swimlane_field(board_name, "__deadlines")
+
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "date")
+        result = set_swimlane_field(board_name, "__deadlines")
+        self.assertEqual(result["custom_swimlane_field"], "__deadlines")
+        set_swimlane_field(board_name, "")
 
     def test_set_swimlane_field_requires_write(self):
         from quick_kanban.api import set_swimlane_field

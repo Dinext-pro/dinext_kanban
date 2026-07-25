@@ -160,6 +160,7 @@
 "No Deadline","Без срока",""
 "Deadline Tracking","Отслеживание сроков",""
 "Deadline Field","Поле срока",""
+"No Deadline Field","Без поля срока","QuickKanban.Board"
 "Attention Working Days","Рабочих дней для внимания",""
 "Deadline Columns","Колонки со сроками",""
 "Track Deadlines In Columns","Отслеживать сроки в колонках","QuickKanban.Board"

@@ -419,10 +419,14 @@ def delete_card(board_name, name, expected_modified=None):
 
 @frappe.whitelist()
 @frappe.read_only()
-def get_swimlane_field_options(doctype):
+def get_swimlane_field_options(doctype, board_name=None, include_deadlines=None):
 	from quick_kanban.swimlane import get_swimlane_field_options as _get_options
 
-	return _get_options(doctype)
+	return _get_options(
+		doctype,
+		board_name=board_name,
+		include_deadlines=include_deadlines,
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -432,7 +436,11 @@ def set_swimlane_field(board_name, swimlane_field=None):
 
 	board = frappe.get_doc("Kanban Board", board_name)
 	board.check_permission("write")
-	value = normalize_swimlane_field(board.reference_doctype, swimlane_field)
+	value = normalize_swimlane_field(
+		board.reference_doctype,
+		swimlane_field,
+		board_name=board_name,
+	)
 	board.custom_swimlane_field = value
 	board.save()
 	return {"custom_swimlane_field": board.custom_swimlane_field or ""}

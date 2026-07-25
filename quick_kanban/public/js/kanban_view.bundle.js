@@ -529,7 +529,10 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
 
         frappe.call({
             method: "quick_kanban.api.get_swimlane_field_options",
-            args: { doctype },
+            args: {
+                doctype,
+                board_name: this.board_name || this.board?.name || "",
+            },
             callback: (r) => {
                 if (this._groupby_options_token !== requestToken) {
                     return;
