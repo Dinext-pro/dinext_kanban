@@ -11,6 +11,7 @@
       v-if="swimlanesEnabled"
       ref="kanbanBoard"
       class="kanban kanban--swimlanes"
+      :class="{ 'kanban--child-panel-open': boardHostedChildPanels.length > 0 }"
       tabindex="0"
       :style="swimlaneBoardCssVars"
       :aria-label="__('Kanban columns with swimlane groups. Scroll to see more.')"
@@ -71,12 +72,31 @@
       >
         {{ __('No columns are configured for this board.') }}
       </p>
+      <div
+        ref="childPanelPortal"
+        class="child-panel-portal"
+      >
+        <ChildPanel
+          v-for="panel in boardHostedChildPanels"
+          :key="panel.scopeId"
+          :parent-name="panel.parentName"
+          :depth="panel.depth"
+          :scope-id="panel.scopeId"
+          :config="config"
+          teleported
+          :host-rect="boardHostedPanelRects[panel.scopeId]"
+          @dragstart="rememberDrag"
+          @drop="dropSwimlane"
+          @height-change="(height) => onBoardHostedPanelHeight(panel.parentName, height)"
+        />
+      </div>
     </div>
 
     <div
       v-else
       ref="kanbanBoard"
       class="kanban"
+      :class="{ 'kanban--child-panel-open': boardHostedChildPanels.length > 0 }"
       tabindex="0"
       :aria-label="__('Kanban columns. Scroll horizontally to see more.')"
     >
@@ -97,6 +117,29 @@
       >
         {{ __('No columns are configured for this board.') }}
       </p>
+      <!--
+        Host all open child-panel depths here so overlays start at the board
+        content origin (including nested panels) and paint above columns.
+      -->
+      <div
+        ref="childPanelPortal"
+        class="child-panel-portal"
+        aria-hidden="false"
+      >
+        <ChildPanel
+          v-for="panel in boardHostedChildPanels"
+          :key="panel.scopeId"
+          :parent-name="panel.parentName"
+          :depth="panel.depth"
+          :scope-id="panel.scopeId"
+          :config="config"
+          teleported
+          :host-rect="boardHostedPanelRects[panel.scopeId]"
+          @dragstart="rememberDrag"
+          @drop="drop"
+          @height-change="(height) => onBoardHostedPanelHeight(panel.parentName, height)"
+        />
+      </div>
     </div>
 
     <p class="sr-only" aria-live="polite" aria-atomic="true">
@@ -109,6 +152,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, provide, watch } from "vue";
 import { useStore } from "vuex";
 import KanbanColumn from "./KanbanColumn.vue";
+import ChildPanel from "./ChildPanel.vue";
 import SwimlaneColumn from "./SwimlaneColumn.vue";
 import SwimlaneRow from "./SwimlaneRow.vue";
 import AddColumnControl from "./AddColumnControl.vue";
@@ -124,8 +168,10 @@ import {
 } from "../../utils/cardRollbackAnimation";
 import { flashMovedCard } from "../../utils/cardMoveFlash";
 import {
+  getScrollerTopInset,
   resolveComponentRootEl,
   revealCardInColumn,
+  scrollCardToScrollerTop,
   scrollColumnIntoView,
   waitForPaint,
   waitMs,
@@ -134,6 +180,11 @@ import {
   decodeCellListId,
   encodeCellListId,
 } from "../../utils/swimlaneBoard";
+import {
+  decodeChildListId,
+  isChildListId,
+  resolveChildPanelSpacerHeight,
+} from "../../utils/childPanelBoard";
 import {
   clearCardDropHoverElement,
   completeCellAppendDrop,
@@ -160,6 +211,7 @@ import {
 const SWIMLANE_COLUMN_GAP_PX = 8
 
 const store = useStore();
+const kanbanBoard = ref(null);
 const columns = computed(() => store.getters.getColumns);
 const lanes = computed(() => store.getters.getLanes);
 const swimlanesEnabled = computed(() => store.getters.swimlanesEnabled);
@@ -244,6 +296,617 @@ function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
 const swimlaneColumnTracks = computed(() => (
   formatTrackTemplate(animatedSwimlaneTrackWidths.value)
 ))
+const boardColumnTracks = computed(() => {
+  if (swimlanesEnabled.value) {
+    return swimlaneColumnTracks.value
+  }
+  return formatTrackTemplate(widthsFromTracks(targetSwimlaneTracks.value))
+})
+provide('boardColumnTracks', boardColumnTracks)
+const childPanelPortal = ref(null)
+const boardHostedPanelRects = ref({})
+const childPanelSpacerHeights = ref({})
+provide('childPanelSpacerHeights', childPanelSpacerHeights)
+const boardHostedChildPanels = computed(() => {
+  const byDepth = store.state.childPanelByDepth || {}
+  return Object.keys(byDepth)
+    .map((depthKey) => Number(depthKey))
+    .filter((depth) => Number.isFinite(depth))
+    .sort((a, b) => a - b)
+    .map((depth) => {
+      const scopeId = byDepth[depth]
+      const panel = scopeId ? store.state.childPanels?.[scopeId] : null
+      if (!panel) {
+        return null
+      }
+      return {
+        scopeId,
+        parentName: panel.parentName,
+        depth: panel.depth ?? depth,
+      }
+    })
+    .filter(Boolean)
+})
+let boardHostedGeometryRaf = 0
+let boardHostedScrollBound = false
+let boardHostedPanelsSignature = ''
+/**
+ * Parent-panel lists kept as bounded scrollports while nested hosts are pinned.
+ * Multi-level open needs a stack: clearing an ancestor lock re-grows that list
+ * (maxScroll 0) and unpins the mid-host.
+ */
+const nestedPinListLocks = new Set()
+
+function unlockNestedPinListEl(el) {
+  if (!el?.style) {
+    nestedPinListLocks.delete(el)
+    return
+  }
+  el.classList.remove('kanban-card-list--nested-pin')
+  el.style.removeProperty('overflow-y')
+  el.style.removeProperty('height')
+  el.style.removeProperty('max-height')
+  nestedPinListLocks.delete(el)
+}
+
+function clearNestedPinListLocks() {
+  for (const el of [...nestedPinListLocks]) {
+    unlockNestedPinListEl(el)
+  }
+}
+
+/** Keep locks only for lists that still host an open nested (depth >= 1) panel. */
+function pruneNestedPinListLocks() {
+  const board = kanbanBoard.value
+  const panels = boardHostedChildPanels.value || []
+  const needed = new Set()
+  for (const panel of panels) {
+    if ((Number(panel.depth) || 0) < 1) {
+      continue
+    }
+    const parent = String(panel.parentName || '').trim()
+    if (!parent || !board) {
+      continue
+    }
+    const host = board.querySelector?.(
+      `.kanban-card[data-card-name="${escapePanelParentName(parent)}"]`,
+    )
+    const list = host?.closest?.('.kanban-card-list')
+    if (list?.closest?.('.child-panel')) {
+      needed.add(list)
+    }
+  }
+  for (const el of [...nestedPinListLocks]) {
+    if (!el?.isConnected || !needed.has(el)) {
+      unlockNestedPinListEl(el)
+    }
+  }
+}
+
+/**
+ * Non-fill child-panel lists grow with content (overflow visible / height auto),
+ * so scrollTop cannot move mid-host cards. Bound the list to the board
+ * remainder and keep overflow auto while nested panels stay open.
+ * When spacer moved to a deeper host, shrink height so cards above still scroll away.
+ */
+function lockNestedPinListScroller(scroller) {
+  const isNestedList = Boolean(
+    scroller?.style
+    && scroller !== kanbanBoard.value
+    && scroller.classList?.contains('kanban-card-list')
+    && scroller.closest?.('.child-panel'),
+  )
+  if (!isNestedList) {
+    // Board / depth-0 column pin: drop nested scrollports only when no nested open.
+    const newest = resolveNewestPanelParentName()
+    const board = kanbanBoard.value
+    const newestHost = newest && board?.querySelector?.(
+      `.kanban-card[data-card-name="${escapePanelParentName(newest)}"]`,
+    )
+    if (!newestHost?.closest?.('.child-panel')) {
+      clearNestedPinListLocks()
+    } else {
+      pruneNestedPinListLocks()
+    }
+    return false
+  }
+  const board = kanbanBoard.value
+  if (!board) {
+    return false
+  }
+  const listRect = scroller.getBoundingClientRect()
+  const boardRect = board.getBoundingClientRect()
+  const boardRoom = Math.max(120, Math.floor(boardRect.bottom - listRect.top))
+  const hostCard = scroller.querySelector?.('.kanban-vl-item--panel-host .kanban-card')
+  // Measure before constraining — height:auto scrollHeight is full content.
+  const naturalContentH = scroller.scrollHeight || 0
+  const naturalHostOffset = hostCard
+    ? Math.max(
+      0,
+      hostCard.getBoundingClientRect().top
+        - scroller.getBoundingClientRect().top
+        + (scroller.scrollTop || 0),
+    )
+    : 0
+  let heightPx = boardRoom
+  if (naturalHostOffset > 1 && naturalContentH > naturalHostOffset + 80) {
+    // maxScroll must cover cards above; spacer may already be on a deeper host.
+    heightPx = Math.max(80, Math.min(boardRoom, Math.floor(naturalContentH - naturalHostOffset)))
+  }
+  nestedPinListLocks.add(scroller)
+  scroller.classList.add('kanban-card-list--nested-pin')
+  scroller.style.setProperty('height', `${heightPx}px`, 'important')
+  scroller.style.setProperty('max-height', `${heightPx}px`, 'important')
+  scroller.style.setProperty('overflow-y', 'auto', 'important')
+  void scroller.scrollHeight
+  // Layout can shrink content after the first constrain — top up maxScroll if needed.
+  if (hostCard && naturalHostOffset > 1) {
+    const maxScroll = Math.max(0, (scroller.scrollHeight || 0) - (scroller.clientHeight || 0))
+    if (maxScroll + 1 < naturalHostOffset) {
+      heightPx = Math.max(
+        80,
+        Math.min(boardRoom, Math.floor((scroller.scrollHeight || 0) - naturalHostOffset)),
+      )
+      scroller.style.setProperty('height', `${heightPx}px`, 'important')
+      scroller.style.setProperty('max-height', `${heightPx}px`, 'important')
+    }
+  }
+  return true
+}
+
+function clearBoardHostedPanelChrome() {
+  clearNestedPinListLocks()
+  boardHostedPanelRects.value = {}
+  childPanelSpacerHeights.value = {}
+}
+
+/**
+ * Newest open panel parent (deepest). Nested hosts pin inside the parent panel
+ * list scroller; depth-0 pins on the board — never board-scroll a nested host.
+ */
+function resolveNewestPanelParentName(panels = boardHostedChildPanels.value) {
+  if (!panels?.length) {
+    return ''
+  }
+  const newest = panels[panels.length - 1]
+  return String(newest?.parentName || '').trim()
+}
+
+/** Open panel hosts shallow → deep (depth-0 first). */
+function resolveOpenPanelParentNames(panels = boardHostedChildPanels.value) {
+  return (panels || [])
+    .map((panel) => String(panel?.parentName || '').trim())
+    .filter(Boolean)
+}
+
+function isPanelHostNearTop(parentName) {
+  const board = kanbanBoard.value
+  const parent = String(parentName || '').trim()
+  if (!board || !parent) {
+    return true
+  }
+  const escaped = escapePanelParentName(parent)
+  const hostCard = board.querySelector?.(`.kanban-card[data-card-name="${escaped}"]`)
+  if (!hostCard) {
+    return true
+  }
+  const insideChildPanel = Boolean(hostCard.closest?.('.child-panel'))
+  let scroller
+  let topInset = 0
+  if (insideChildPanel) {
+    scroller = hostCard.closest?.('.kanban-card-list') || board
+  } else if (swimlanesEnabled.value) {
+    scroller = board
+    topInset = getScrollerTopInset(scroller, hostCard.closest?.('.kanban-column'))
+  } else {
+    scroller = hostCard.closest?.('.kanban-card-list') || board
+    topInset = getScrollerTopInset(scroller, hostCard.closest?.('.kanban-column'))
+  }
+  const cardRect = hostCard.getBoundingClientRect()
+  const scrollerRect = scroller.getBoundingClientRect()
+  return Math.abs(cardRect.top - (scrollerRect.top + topInset)) < 1.5
+}
+
+function escapePanelParentName(parentName) {
+  if (typeof CSS !== 'undefined' && CSS.escape) {
+    return CSS.escape(parentName)
+  }
+  return String(parentName).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function waitAnimationFrame() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve())
+  })
+}
+
+function panelRectsEqual(left, right) {
+  const a = left || {}
+  const b = right || {}
+  const aKeys = Object.keys(a)
+  const bKeys = Object.keys(b)
+  if (aKeys.length !== bKeys.length) {
+    return false
+  }
+  const near = (x, y) => Math.abs((Number(x) || 0) - (Number(y) || 0)) < 0.5
+  for (const key of aKeys) {
+    const l = a[key]
+    const r = b[key]
+    if (!r) {
+      return false
+    }
+    if (
+      !near(l.top, r.top)
+      || !near(l.left, r.left)
+      || !near(l.width, r.width)
+      || !near(l.height, r.height)
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+let flushPinChain = Promise.resolve()
+let flushPinQueuedParent = null
+
+async function onBoardHostedPanelHeight(parentName, height) {
+  const parent = String(parentName || '').trim()
+  if (!parent) {
+    return
+  }
+  // Emit height is a layout signal; viewport-fill spacer comes from apply.
+  // Do not write emit height into spacer map (avoids fight + extra VL churn).
+  void height
+  // Always pin the deepest open host. Shallow-panel height feedback must not
+  // re-pin depth-0 on the board (that clears the nested list scrollport).
+  const newest = resolveNewestPanelParentName() || parent
+  await flushGeometryThenPin(newest)
+}
+
+function resolvePanelHostTop(board, boardRect, parentName, previousTop) {
+  const escaped = escapePanelParentName(parentName)
+  const spacer = board.querySelector(`.child-panel-spacer[data-panel-parent="${escaped}"]`)
+  const hostCard = board.querySelector(`.kanban-card[data-card-name="${escaped}"]`)
+  if (spacer) {
+    const spacerRect = spacer.getBoundingClientRect()
+    return spacerRect.top - boardRect.top + board.scrollTop
+  }
+  if (hostCard) {
+    const cardRect = hostCard.getBoundingClientRect()
+    return cardRect.bottom - boardRect.top + board.scrollTop
+  }
+  if (Number.isFinite(previousTop)) {
+    return previousTop
+  }
+  return null
+}
+
+/** Synchronous spacer/rect update — call before pin so maxScroll includes pad. */
+function applyBoardHostedPanelGeometry() {
+  const board = kanbanBoard.value
+  const panels = boardHostedChildPanels.value
+  if (!board || !panels.length || typeof board.getBoundingClientRect !== 'function') {
+    if (Object.keys(boardHostedPanelRects.value || {}).length) {
+      boardHostedPanelRects.value = {}
+    }
+    return
+  }
+  const boardRect = board.getBoundingClientRect()
+  const width = Math.max(board.scrollWidth || 0, boardRect.width || 0)
+  const overhangRaw = getComputedStyle(board).getPropertyValue('--swimlane-lane-overhang')
+  const overhang = swimlanesEnabled.value
+    ? Math.max(0, Number.parseFloat(overhangRaw) || 0)
+    : 0
+  const maxDepth = Math.max(...panels.map((panel) => Number(panel.depth) || 0))
+  const nextRects = {}
+  const previousRects = boardHostedPanelRects.value || {}
+  const nextSpacerHeights = {}
+  let spacerHeightsChanged = false
+  for (const panel of panels) {
+    const top = resolvePanelHostTop(
+      board,
+      boardRect,
+      panel.parentName,
+      previousRects[panel.scopeId]?.top,
+    )
+    if (top == null) {
+      continue
+    }
+    const rect = {
+      top,
+      left: overhang,
+      width: Math.max(0, width - overhang),
+    }
+    if (Number(panel.depth) === maxDepth) {
+      const escaped = escapePanelParentName(panel.parentName)
+      const hostCard = board.querySelector(`.kanban-card[data-card-name="${escaped}"]`)
+      const columnEl = hostCard?.closest?.('.kanban-column')
+      const listEl = hostCard?.closest?.('.kanban-card-list')
+      // Pin target is list top (under column/lane chrome), not board top — flat headers ~52px.
+      const topInset = listEl
+        ? Math.max(0, listEl.getBoundingClientRect().top - boardRect.top)
+        : getScrollerTopInset(board, columnEl)
+      const hostHeight = hostCard?.getBoundingClientRect?.().height || 0
+      // Viewport fill as if host were pinned under sticky — not current Y.
+      const height = resolveChildPanelSpacerHeight({
+        scrollerClientHeight: board.clientHeight,
+        topInset,
+        hostHeight,
+      })
+      rect.height = height
+      const parent = String(panel.parentName || '').trim()
+      if (parent) {
+        nextSpacerHeights[parent] = height
+        if (childPanelSpacerHeights.value?.[parent] !== height) {
+          spacerHeightsChanged = true
+        }
+      }
+    }
+    nextRects[panel.scopeId] = rect
+  }
+  // Drop spacer heights for closed / non-deepest hosts (empty pad only while open).
+  const previousSpacer = childPanelSpacerHeights.value || {}
+  if (
+    spacerHeightsChanged
+    || Object.keys(previousSpacer).length !== Object.keys(nextSpacerHeights).length
+    || Object.keys(previousSpacer).some((key) => previousSpacer[key] !== nextSpacerHeights[key])
+  ) {
+    spacerHeightsChanged = true
+  }
+  // Skip identical rect writes — ChildPanel watches hostRect and would re-emit height.
+  if (!panelRectsEqual(previousRects, nextRects)) {
+    boardHostedPanelRects.value = nextRects
+  }
+  if (spacerHeightsChanged) {
+    childPanelSpacerHeights.value = nextSpacerHeights
+  }
+}
+
+/** Debounced for scroll/resize; open/height path uses flushGeometryThenPin instead. */
+function syncBoardHostedPanelGeometry() {
+  if (boardHostedGeometryRaf) {
+    cancelAnimationFrame(boardHostedGeometryRaf)
+  }
+  boardHostedGeometryRaf = requestAnimationFrame(() => {
+    boardHostedGeometryRaf = 0
+    applyBoardHostedPanelGeometry()
+  })
+}
+
+/**
+ * Cancel pending rAF sync, apply spacer now, wait for DOM/VL settle, then pin.
+ * Single-flight + trailing parent so hostRect/height feedback cannot stack flushes.
+ * Re-pin every open host shallow→deep: spacer move remounts VL and drops ancestors.
+ */
+function flushGeometryThenPin(parentName) {
+  if (!parentName) {
+    return flushPinChain
+  }
+  flushPinQueuedParent = parentName
+  flushPinChain = flushPinChain
+    .catch(() => {})
+    .then(async () => {
+      const parent = flushPinQueuedParent
+      flushPinQueuedParent = null
+      if (!parent) {
+        return
+      }
+      if (boardHostedGeometryRaf) {
+        cancelAnimationFrame(boardHostedGeometryRaf)
+        boardHostedGeometryRaf = 0
+      }
+      pruneNestedPinListLocks()
+      const escaped = escapePanelParentName(parent)
+      const openParents = () => {
+        const names = resolveOpenPanelParentNames()
+        // Ensure trailing flush target is included even if panels lag one tick.
+        if (parent && !names.includes(parent)) {
+          names.push(parent)
+        }
+        return names
+      }
+      const allHostsNearTop = () => openParents().every((name) => isPanelHostNearTop(name))
+      const alignOpenChain = async () => {
+        for (const name of openParents()) {
+          await ensureBoardHostedPanelAnchorVisible(name)
+        }
+      }
+      // Wait until spacer is in layout (needed for short columns; also gates VL height).
+      for (let i = 0; i < 8; i += 1) {
+        applyBoardHostedPanelGeometry()
+        await nextTick()
+        await waitAnimationFrame()
+        const board = kanbanBoard.value
+        const spacer = board?.querySelector?.(
+          `.child-panel-spacer[data-panel-parent="${escaped}"]`,
+        )
+        if (spacer && (spacer.getBoundingClientRect().height || 0) > 1) {
+          break
+        }
+      }
+      // Re-pin until stable across a VL remount window (~scrollTop reset).
+      const deadline = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 1500
+      let stableFrames = 0
+      while ((typeof performance !== 'undefined' ? performance.now() : Date.now()) < deadline) {
+        applyBoardHostedPanelGeometry()
+        pruneNestedPinListLocks()
+        await alignOpenChain()
+        await waitAnimationFrame()
+        if (allHostsNearTop()) {
+          stableFrames += 1
+          if (stableFrames >= 3) {
+            return
+          }
+        } else {
+          stableFrames = 0
+        }
+      }
+      await alignOpenChain()
+    })
+  return flushPinChain
+}
+
+provide('syncChildPanelGeometry', syncBoardHostedPanelGeometry)
+
+let boardHostedResizeObserver = null
+
+function bindBoardHostedGeometryListeners() {
+  const board = kanbanBoard.value
+  if (!board || boardHostedScrollBound) {
+    return
+  }
+  board.addEventListener('scroll', syncBoardHostedPanelGeometry, { passive: true })
+  window.addEventListener('resize', syncBoardHostedPanelGeometry, { passive: true })
+  if (typeof ResizeObserver !== 'undefined') {
+    boardHostedResizeObserver = new ResizeObserver(() => syncBoardHostedPanelGeometry())
+    boardHostedResizeObserver.observe(board)
+  }
+  boardHostedScrollBound = true
+}
+
+function unbindBoardHostedGeometryListeners() {
+  const board = kanbanBoard.value
+  if (board && boardHostedScrollBound) {
+    board.removeEventListener('scroll', syncBoardHostedPanelGeometry)
+  }
+  window.removeEventListener('resize', syncBoardHostedPanelGeometry)
+  boardHostedResizeObserver?.disconnect()
+  boardHostedResizeObserver = null
+  boardHostedScrollBound = false
+}
+
+async function ensureBoardHostedPanelAnchorVisible(parentName) {
+  const board = kanbanBoard.value
+  if (!board || !parentName) {
+    return
+  }
+  const escaped = escapePanelParentName(parentName)
+
+  const resolveAlignContext = (hostCard) => {
+    const insideChildPanel = Boolean(hostCard.closest?.('.child-panel'))
+    let scroller
+    let topInset = 0
+    if (insideChildPanel) {
+      // Nested host: pin inside the parent panel column list (not the board).
+      scroller = hostCard.closest?.('.kanban-card-list') || board
+      topInset = 0
+    } else if (swimlanesEnabled.value) {
+      scroller = board
+      topInset = getScrollerTopInset(scroller, hostCard.closest?.('.kanban-column'))
+    } else {
+      scroller = hostCard.closest?.('.kanban-card-list') || board
+      topInset = getScrollerTopInset(scroller, hostCard.closest?.('.kanban-column'))
+    }
+    return { scroller, topInset }
+  }
+
+  /**
+   * Unlock scroller for programmatic pin.
+   * Nested mid-host: keep a bounded scrollport on the parent list (non-fill
+   * lists grow with content → maxScroll 0 unless height is constrained).
+   * Board: temporary overflow-y unlock with !important, then restore.
+   */
+  const withScrollerYScrollUnlock = (scroller, run) => {
+    if (!scroller?.style?.setProperty) {
+      return run()
+    }
+    if (lockNestedPinListScroller(scroller)) {
+      void scroller.scrollHeight
+      return run()
+    }
+    scroller.style.setProperty('overflow-y', 'auto', 'important')
+    void scroller.scrollHeight
+    try {
+      return run()
+    } finally {
+      const keptTop = scroller.scrollTop
+      scroller.style.removeProperty('overflow-y')
+      scroller.scrollTop = keptTop
+    }
+  }
+
+  const alignHost = () => {
+    const hostCard = board.querySelector(`.kanban-card[data-card-name="${escaped}"]`)
+    if (!hostCard) {
+      return false
+    }
+    const { scroller, topInset } = resolveAlignContext(hostCard)
+    // auto: VirtualList remounts (minimize/spacer) cancel smooth mid-flight.
+    return withScrollerYScrollUnlock(scroller, () => scrollCardToScrollerTop(hostCard, scroller, {
+      topInset,
+      behavior: 'auto',
+      margin: 0,
+    }))
+  }
+
+  const hostNearTop = () => {
+    const hostCard = board.querySelector(`.kanban-card[data-card-name="${escaped}"]`)
+    if (!hostCard) {
+      return true
+    }
+    const { scroller, topInset } = resolveAlignContext(hostCard)
+    const cardRect = hostCard.getBoundingClientRect()
+    const scrollerRect = scroller.getBoundingClientRect()
+    const visibleTop = scrollerRect.top + topInset
+    return Math.abs(cardRect.top - visibleTop) < 1
+  }
+
+  const spacerLaidOut = () => {
+    const spacer = board.querySelector(`.child-panel-spacer[data-panel-parent="${escaped}"]`)
+    return Boolean(spacer && (spacer.getBoundingClientRect().height || 0) > 1)
+  }
+
+  // Retry while spacer/maxScroll catch up (short columns fit viewport without pad).
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    alignHost()
+    if (hostNearTop()) {
+      return
+    }
+    if (!spacerLaidOut()) {
+      applyBoardHostedPanelGeometry()
+    }
+    await nextTick()
+    await waitAnimationFrame()
+  }
+  alignHost()
+}
+
+watch(
+  boardHostedChildPanels,
+  async (panels) => {
+    const signature = panels.map((panel) => panel.scopeId).join('|')
+    if (!panels.length) {
+      boardHostedPanelsSignature = ''
+      clearBoardHostedPanelChrome()
+      return
+    }
+    const previousSignature = boardHostedPanelsSignature
+    boardHostedPanelsSignature = signature
+    await nextTick()
+    bindBoardHostedGeometryListeners()
+    // Spacer mounts after VirtualList paints; apply synchronously then pin.
+    if (signature !== previousSignature) {
+      await flushGeometryThenPin(resolveNewestPanelParentName(panels))
+    } else {
+      syncBoardHostedPanelGeometry()
+    }
+  },
+  { immediate: true, deep: true },
+)
+
+watch(
+  () => store.state.collapsedColumns,
+  async () => {
+    if (!boardHostedChildPanels.value.length) {
+      return
+    }
+    await nextTick()
+    syncBoardHostedPanelGeometry()
+  },
+  { deep: true },
+)
+
 const swimlaneLabelInsetPx = computed(() => (
   swimlaneLabelInsetFromWidths(animatedSwimlaneTrackWidths.value)
 ))
@@ -311,7 +974,6 @@ function onColumnRailDblclick(column) {
   })
 }
 
-const kanbanBoard = ref(null);
 const columnRefs = ref([])
 const headerColumnRefs = ref({})
 const cellColumnRefs = ref({})
@@ -751,6 +1413,11 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (boardHostedGeometryRaf) {
+    cancelAnimationFrame(boardHostedGeometryRaf)
+    boardHostedGeometryRaf = 0
+  }
+  unbindBoardHostedGeometryListeners()
   cancelSwimlaneTrackTween()
   teardownColumnSortable()
   teardownSwimlaneStickyTopObserver()
@@ -840,8 +1507,21 @@ async function drop(event) {
     return
   }
 
-  const toColumn = Number(event.event?.to?.id)
-  const fromColumn = Number(event.event?.from?.id ?? context.fromColumn)
+  const toId = event.event?.to?.id
+  const fromId = event.event?.from?.id ?? context.fromColumn
+
+  if (isChildListId(toId) || isChildListId(fromId) || context.childScopeId) {
+    await dropChildPanel({
+      event,
+      context,
+      toId,
+      fromId,
+    })
+    return
+  }
+
+  const toColumn = Number(toId)
+  const fromColumn = Number(fromId)
 
   if (!Number.isFinite(toColumn) || fromColumn === toColumn) {
     return
@@ -888,6 +1568,55 @@ async function drop(event) {
   })
 }
 
+async function dropChildPanel({ event, context, toId, fromId }) {
+  const toDecoded = decodeChildListId(toId)
+  const fromDecoded = isChildListId(fromId)
+    ? decodeChildListId(fromId)
+    : { scopeOrdinal: null, columnIndex: Number(fromId) }
+  const toColumn = toDecoded.columnIndex
+  const fromColumn = Number.isFinite(fromDecoded.columnIndex)
+    ? fromDecoded.columnIndex
+    : context.fromColumn
+  const scopeOrdinal = Number.isFinite(toDecoded.scopeOrdinal)
+    ? toDecoded.scopeOrdinal
+    : context.childScopeId
+      ? store.state.childPanels[context.childScopeId]?.ordinal
+      : fromDecoded.scopeOrdinal
+
+  let childScopeId = context.childScopeId || null
+  if (!childScopeId && Number.isFinite(scopeOrdinal)) {
+    childScopeId = Object.keys(store.state.childPanels).find(
+      (scopeId) => store.state.childPanels[scopeId]?.ordinal === scopeOrdinal,
+    ) || null
+  }
+
+  if (!childScopeId || !Number.isFinite(toColumn) || fromColumn === toColumn) {
+    return
+  }
+
+  const destinationRect = captureCardRect(
+    context.cardName,
+    kanbanBoard.value || document,
+  )
+  await nextTick()
+  const result = await store.dispatch('persistMovedCard', {
+    cardName: context.cardName,
+    fromColumn,
+    toColumn,
+    fromIndex: context.fromIndex,
+    toIndex: event.newIndex,
+    childScopeId,
+  }).catch(() => null)
+
+  await nextTick()
+  if (result?.needsAnimatedRollback) {
+    await playRollbackAnimation(context.cardName, destinationRect)
+  }
+  await flashMovedCard(context.cardName, {
+    outcome: result?.ok ? 'success' : 'failure',
+  })
+}
+
 async function dropSwimlane(event) {
   clearActiveDragVisual()
   const context = dragContext
@@ -897,8 +1626,21 @@ async function dropSwimlane(event) {
     return
   }
 
-  const toDecoded = decodeCellListId(event.event?.to?.id)
-  const fromDecoded = decodeCellListId(event.event?.from?.id)
+  const toId = event.event?.to?.id
+  const fromId = event.event?.from?.id
+  if (isChildListId(toId) || isChildListId(fromId) || context.childScopeId) {
+    await dropChildPanel({
+      event,
+      context,
+      toId,
+      fromId,
+    })
+    clearDragLaneState()
+    return
+  }
+
+  const toDecoded = decodeCellListId(toId)
+  const fromDecoded = decodeCellListId(fromId)
   const toLaneIndex = Number.isFinite(toDecoded.laneIndex)
     ? toDecoded.laneIndex
     : event.laneIndex

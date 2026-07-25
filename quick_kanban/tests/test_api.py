@@ -12,6 +12,8 @@ from quick_kanban.api import (
     delete_card,
     get_attachment_counts,
     get_board_document_names,
+    get_child_column_page,
+    get_child_column_totals,
     get_child_counts,
     get_column_totals,
     move_card,
@@ -683,6 +685,58 @@ class TestGetChildCounts(FrappeTestCase):
         ):
             with self.assertRaises(frappe.PermissionError):
                 get_child_counts("Task", ["TASK-1"])
+
+
+class TestGetChildColumnTotals(FrappeTestCase):
+    def test_injects_parent_filter_and_disables_hide_children(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        with (
+            patch("quick_kanban.board_children.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.get_column_totals", return_value={"Open": 2}) as totals,
+        ):
+            result = get_child_column_totals(
+                "Task",
+                "status",
+                ["Open"],
+                "PARENT-1",
+                parent_field="parent_task",
+                filters=[["project", "=", "PROJ"]],
+            )
+
+        self.assertEqual(result, {"Open": 2})
+        totals.assert_called_once()
+        kwargs = totals.call_args.kwargs
+        self.assertEqual(kwargs["hide_board_children"], False)
+        self.assertIn(
+            ["Task", "parent_task", "=", "PARENT-1"],
+            kwargs["filters"],
+        )
+
+    def test_child_column_page_injects_parent_filter(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        with (
+            patch("quick_kanban.board_children.frappe.get_meta", return_value=meta),
+            patch(
+                "quick_kanban.api.get_column_page",
+                return_value={"keys": ["name"], "values": []},
+            ) as page,
+        ):
+            get_child_column_page(
+                "Task",
+                "status",
+                "Open",
+                "PARENT-1",
+                parent_field="parent_task",
+                filters=[],
+            )
+
+        page.assert_called_once()
+        kwargs = page.call_args.kwargs
+        self.assertEqual(kwargs["hide_board_children"], False)
+        self.assertIn(
+            ["Task", "parent_task", "=", "PARENT-1"],
+            kwargs["filters"],
+        )
 
 
 class TestGetBoardDocumentNames(FrappeTestCase):

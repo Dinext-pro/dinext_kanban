@@ -90,6 +90,7 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
   height: min(80vh, calc(100dvh - var(--navbar-height) - var(--page-bottom-margin)));
   padding-bottom: 5px;
   scroll-padding-inline: 8px;
+  isolation: isolate;
 }
 
 /* Swimlane mode: one shared x/y scroller; lane rows share column tracks. */
@@ -101,6 +102,7 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
   --swimlane-lane-animation-ms: 220ms;
   /* Gap between stuck lane title and sticky Add footer. */
   --swimlane-sticky-footer-gap: 8px;
+  /* Lane wash over column track color (fg 8%). Child-panel column tint uses the same step. */
   --swimlane-lane-tint: color-mix(in srgb, var(--fg, var(--text-color)) 8%, transparent);
   --swimlane-chrome-tint: color-mix(in srgb, var(--fg, var(--text-color)) 16%, transparent);
   --swimlane-chrome-tint-hover: color-mix(
@@ -1684,6 +1686,274 @@ html.kanban-tag-drag-move * {
 #kanbanapp .kanban-child-count__value {
   font-size: var(--text-sm, 12px);
   font-variant-numeric: tabular-nums;
+}
+
+#kanbanapp .kanban-child-count[aria-expanded="true"] {
+  color: var(--text-color);
+  border-color: color-mix(in srgb, var(--text-color) 35%, var(--border-color));
+  background: var(--control-bg);
+}
+
+#kanbanapp .kanban-card--panel-inert {
+  opacity: 0.45;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-card--panel-inert * {
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-card--panel-ancestor {
+  --kanban-host-panel-border: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 28%,
+    var(--border-color, transparent)
+  );
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 8px 8px 0 0 !important;
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  gap: 0;
+  box-shadow: none;
+  background: linear-gradient(
+    to bottom,
+    var(--card-bg) 0%,
+    var(--card-bg) 90%,
+    var(--kanban-host-panel-border) 100%
+  );
+}
+
+#kanbanapp .kanban-card--panel-ancestor.kanban-card--panel-host-nested {
+  --kanban-host-panel-border: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 40%,
+    var(--border-color, transparent)
+  );
+}
+
+#kanbanapp .kanban-card--panel-ancestor.kanban-card--has-color {
+  box-shadow: inset 4px 0 0 var(--kanban-card-accent);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--kanban-card-accent) 10%, var(--card-bg)) 0%,
+    color-mix(in srgb, var(--kanban-card-accent) 10%, var(--card-bg)) 90%,
+    var(--kanban-host-panel-border) 100%
+  );
+}
+
+#kanbanapp .kanban-card--panel-ancestor:is(:hover, :focus-within) {
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+#kanbanapp .kanban-card--panel-ancestor.kanban-card--has-color:is(:hover, :focus-within) {
+  border-bottom: 0;
+  box-shadow: inset 4px 0 0 var(--kanban-card-accent);
+}
+
+@supports not (background: color-mix(in srgb, red 10%, white)) {
+  #kanbanapp .kanban-card--panel-ancestor,
+  #kanbanapp .kanban-card--panel-ancestor.kanban-card--has-color {
+    background: var(--card-bg);
+  }
+}
+
+#kanbanapp .kanban-card--panel-ancestor * {
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-card--panel-ancestor .kanban-child-count {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-card--panel-ancestor .kanban-card-meta {
+  display: none;
+}
+
+#kanbanapp .child-panel-portal {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Flat/swimlane columns stay below the board-hosted child-panel overlay. */
+#kanbanapp .kanban:not(.kanban--swimlanes) > .kanban-column {
+  position: relative;
+  z-index: 1;
+}
+
+#kanbanapp .kanban--swimlanes.kanban--child-panel-open > .swimlane-board-content {
+  position: relative;
+  z-index: 1;
+}
+
+#kanbanapp .kanban:not(.kanban--swimlanes).kanban--child-panel-open > .kanban-column {
+  /* Keep column chrome interactive; cards under the panel are covered by z-index. */
+  z-index: 1;
+}
+
+/* Lock outer vertical scroll while any child panel is open; keep horizontal scroll. */
+#kanbanapp .kanban--swimlanes.kanban--child-panel-open {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#kanbanapp .kanban--child-panel-open .kanban-card-list {
+  overflow-y: hidden !important;
+}
+
+#kanbanapp .child-panel {
+  --child-panel-radius: var(--swimlane-lane-radius, 12px);
+  --child-panel-tint: var(
+    --swimlane-lane-tint,
+    color-mix(in srgb, var(--fg, var(--text-color)) 8%, transparent)
+  );
+  --child-panel-border: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 28%,
+    var(--border-color, transparent)
+  );
+  --child-panel-border-nested: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 40%,
+    var(--border-color, transparent)
+  );
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  margin: 6px 0 10px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--child-panel-radius);
+  background: var(--child-panel-tint);
+  box-shadow: inset 0 0 0 1px var(--child-panel-border);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+#kanbanapp .child-panel--nested {
+  box-shadow: inset 0 0 0 1.5px var(--child-panel-border-nested);
+}
+
+#kanbanapp .child-panel--teleported {
+  margin: 0;
+  z-index: 50;
+  pointer-events: auto;
+}
+
+/* Grid tracks for panel columns; deepest panel fills host→board-bottom. */
+#kanbanapp .child-panel-scroll {
+  display: grid;
+  align-items: stretch;
+  gap: var(--kanban-column-gutter, 8px);
+  width: max-content;
+  min-width: 100%;
+  max-height: none;
+  overflow: visible;
+}
+
+#kanbanapp .child-panel--viewport-fill {
+  overflow: hidden;
+}
+
+#kanbanapp .child-panel--viewport-fill .child-panel-scroll {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+#kanbanapp .child-panel-group,
+#kanbanapp .child-panel-cell-spacer {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 100%;
+  height: 100%;
+  /* Inset above the scrollport so the gap stays while cards scroll. */
+  padding-top: 8px;
+  border-radius: 0;
+  /* Same inset wash pattern as swimlane-group; strength from --child-panel-column-tint. */
+  box-shadow: inset 0 0 0 100vmax var(--child-panel-column-tint, transparent);
+}
+
+#kanbanapp .child-panel--viewport-fill .child-panel-group,
+#kanbanapp .child-panel--viewport-fill .child-panel-cell-spacer {
+  min-height: 0;
+  height: 100%;
+}
+
+#kanbanapp .child-panel-cell-spacer {
+  min-height: 100%;
+  cursor: pointer;
+}
+
+#kanbanapp .child-panel .kanban-column,
+#kanbanapp .child-panel .kanban-column.kanban-column--cell {
+  flex: 1 1 auto;
+  align-self: stretch;
+  max-height: none !important;
+  min-height: 100%;
+  height: 100%;
+  overflow: visible !important;
+}
+
+#kanbanapp .child-panel--viewport-fill .kanban-column,
+#kanbanapp .child-panel--viewport-fill .kanban-column.kanban-column--cell {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden !important;
+}
+
+#kanbanapp .child-panel .kanban-card-list,
+#kanbanapp .child-panel .kanban-card-list.kanban-card-list--external-scroller {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
+  max-height: none !important;
+  padding-top: 0;
+  overflow: visible !important;
+}
+
+/* Deepest panel: flat-style per-column vertical scroll. */
+#kanbanapp .child-panel--viewport-fill .kanban-card-list,
+#kanbanapp .child-panel--viewport-fill .kanban-card-list.kanban-card-list--external-scroller {
+  height: 100% !important;
+  max-height: none !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+/* Shallower open panels: no column scroll. */
+#kanbanapp .child-panel:not(.child-panel--viewport-fill) .kanban-card-list {
+  overflow-y: hidden !important;
+}
+
+/* Nested mid-host pin: parent list becomes a bounded scrollport (height via inline). */
+#kanbanapp .child-panel .kanban-card-list.kanban-card-list--nested-pin {
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+#kanbanapp .child-panel-spacer {
+  width: 100%;
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-vl-item--panel-host {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 #kanbanapp .kanban-inline-field {

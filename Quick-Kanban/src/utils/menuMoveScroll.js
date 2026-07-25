@@ -35,6 +35,40 @@ export function resolveComponentRootEl(component) {
   return null
 }
 
+const STUCK_LANE_STICKY_TOLERANCE_PX = 2
+const DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX = 40
+
+/**
+ * Lane sticky currently stuck under the column header row (nested ChildPanel hosts
+ * live outside .swimlane-lane, so closest-lane lookup fails).
+ */
+function findStuckLaneSticky(scroller, headerBottom) {
+  if (!scroller?.querySelectorAll || !Number.isFinite(headerBottom)) {
+    return null
+  }
+  const stickies = [...scroller.querySelectorAll('.swimlane-lane-sticky')]
+  return stickies.find((sticky) => {
+    const top = sticky.getBoundingClientRect?.().top
+    return Number.isFinite(top) && Math.abs(top - headerBottom) <= STUCK_LANE_STICKY_TOLERANCE_PX
+  }) || null
+}
+
+function readSwimlaneLaneChromeHeight(scroller) {
+  if (!scroller || typeof globalThis.getComputedStyle !== 'function') {
+    return DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX
+  }
+  try {
+    const raw = globalThis.getComputedStyle(scroller)
+      .getPropertyValue('--swimlane-lane-chrome-height')
+    const parsed = Number.parseFloat(raw)
+    return Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX
+  } catch {
+    return DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX
+  }
+}
+
 /**
  * Bottom edge (viewport Y) of sticky swimlane chrome above cards.
  * Matches KanbanColumn scroll-to-top inset logic.
@@ -50,7 +84,12 @@ export function getLaneStickyBottom(scroller, columnEl) {
   }
   const header = scroller.querySelector?.('.swimlane-header-row')
   if (header) {
-    return header.getBoundingClientRect().bottom
+    const headerBottom = header.getBoundingClientRect().bottom
+    const stuckSticky = findStuckLaneSticky(scroller, headerBottom)
+    if (stuckSticky) {
+      return stuckSticky.getBoundingClientRect().bottom
+    }
+    return headerBottom + readSwimlaneLaneChromeHeight(scroller)
   }
   return scroller.getBoundingClientRect().top
 }
@@ -172,6 +211,47 @@ export function scrollCardIntoScroller(
   }
 
   const nextTop = Math.max(0, scrollerEl.scrollTop + delta)
+  if (typeof scrollerEl.scrollTo === 'function') {
+    scrollerEl.scrollTo({ top: nextTop, behavior })
+  } else {
+    scrollerEl.scrollTop = nextTop
+  }
+  return true
+}
+
+/**
+ * Align card top to the scroller visible top (topInset + margin), always.
+ * Unlike scrollCardIntoScroller (nearest), this pulls the card as high as possible.
+ */
+export function scrollCardToScrollerTop(
+  cardEl,
+  scrollerEl,
+  {
+    behavior = resolveScrollBehavior(),
+    margin = DEFAULT_MARGIN,
+    topInset = 0,
+  } = {},
+) {
+  if (!cardEl || !scrollerEl) {
+    return false
+  }
+
+  const cardRect = cardEl.getBoundingClientRect()
+  const scrollerRect = scrollerEl.getBoundingClientRect()
+  const visibleTop = scrollerRect.top + topInset + margin
+  const delta = cardRect.top - visibleTop
+  if (Math.abs(delta) < 0.5) {
+    return false
+  }
+
+  const maxScroll = Math.max(
+    0,
+    (scrollerEl.scrollHeight || 0) - (scrollerEl.clientHeight || 0),
+  )
+  const nextTop = Math.min(maxScroll, Math.max(0, scrollerEl.scrollTop + delta))
+  if (Math.abs(nextTop - (scrollerEl.scrollTop || 0)) < 0.5) {
+    return false
+  }
   if (typeof scrollerEl.scrollTo === 'function') {
     scrollerEl.scrollTo({ top: nextTop, behavior })
   } else {

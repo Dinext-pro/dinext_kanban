@@ -159,13 +159,28 @@
       ghostClass="ghost-card"
     >
       <template v-slot:item="{ record }">
-        <KanbanCard
-          :card="record"
-          :config="config"
-          :columnIndex="columnIndex"
-          :laneIndex="laneIndex"
-          :laneKey="laneKey"
-        />
+        <div
+          class="kanban-vl-item"
+          :class="{
+            'kanban-vl-item--panel-host': isPanelHost(record.name),
+          }"
+        >
+          <KanbanCard
+            :card="record"
+            :config="config"
+            :columnIndex="columnIndex"
+            :laneIndex="laneIndex"
+            :laneKey="laneKey"
+            :childDepth="childDepth"
+          />
+          <div
+            v-if="isPanelHost(record.name)"
+            :ref="setPanelSpacerRef"
+            class="child-panel-spacer"
+            :style="{ height: `${spacerHeightFor(record.name)}px` }"
+            :data-panel-parent="record.name"
+          />
+        </div>
       </template>
 
       <template #footer>
@@ -240,6 +255,7 @@
 <script setup>
 import {
   computed,
+  inject,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -271,7 +287,29 @@ const SCROLL_TOP_VISIBLE_PX = 8
 const store = useStore();
 const slots = useSlots()
 const canEditBoard = computed(() => store.getters.canEditBoard)
-const cardsLimit = ref(30);
+const cardsLimit = computed(() => {
+  const loaded = props.column?.cards?.length || 0
+  // Child panel has no inner scroll: render all loaded cards.
+  if (props.childScopeId) {
+    return Math.max(30, loaded + 5)
+  }
+  // Board-hosted ChildPanel: viewport-fill spacer inflates VL item height;
+  // keep all loaded cards mounted so a mid-column host cannot virtualize away.
+  const depth = Math.max(0, Number(props.childDepth) || 0)
+  const openByDepth = store.state.childPanelByDepth || {}
+  const scopeId = openByDepth[depth]
+  const openParent = scopeId
+    ? String(store.state.childPanels?.[scopeId]?.parentName || '')
+    : ''
+  const hasPanelHost = Boolean(
+    openParent
+    && (props.column?.cards || []).some((card) => String(card?.name || '') === openParent),
+  )
+  if (hasPanelHost) {
+    return Math.max(30, loaded + 5)
+  }
+  return 30
+})
 const virtualListRef = ref(null)
 const showScrollTop = ref(false)
 let boundExternalScroller = null
@@ -314,6 +352,8 @@ const props = defineProps({
   headerOnly: { type: Boolean, default: false },
   externalScroller: { type: Object, default: null },
   totalOverride: { type: Number, default: null },
+  childScopeId: { type: String, default: null },
+  childDepth: { type: Number, default: 0 },
 });
 
 const emits = defineEmits(["drop", "dragstart"]);
@@ -327,6 +367,7 @@ const cards = computed({
   set: (value) => store.commit("SET_COLUMN_CARDS", {
     columnIndex: props.columnIndex,
     laneIndex: props.laneIndex,
+    childScopeId: props.childScopeId,
     cards: value,
   }),
 })
@@ -424,6 +465,12 @@ const showForbiddenOverlay = computed(() => {
   return !isTargetDropAllowed(activeDrag.value.cardName)
 })
 const pagination = computed(() => {
+  if (props.childScopeId) {
+    return store.getters.getChildColumnPagination(
+      props.childScopeId,
+      props.column.column_name,
+    )
+  }
   if (props.laneKey != null && store.getters.swimlanesEnabled) {
     return store.getters.getCellPagination(props.laneKey, props.column.column_name)
   }
@@ -436,11 +483,67 @@ const columnTotal = computed(() => {
   if (Number.isFinite(props.totalOverride)) {
     return props.totalOverride
   }
+  if (props.childScopeId) {
+    return store.state.childPanels[props.childScopeId]?.columnTotals?.[props.column.column_name]
+  }
   if (props.laneKey != null && store.getters.swimlanesEnabled) {
     return store.getters.getCellTotal(props.laneKey, props.column.column_name)
   }
   return store.state.columnTotals[columnKey.value]
 })
+
+const childPanelSpacerHeights = inject('childPanelSpacerHeights', ref({}))
+const syncChildPanelGeometry = inject('syncChildPanelGeometry', () => {})
+let panelSpacerEl = null
+let geometryColumnScrollEl = null
+let onGeometryColumnScroll = null
+
+/** Every panel host reserves vertical space; panels themselves are board-hosted. */
+const hostPanelDepth = computed(() => props.childDepth)
+
+function isPanelHost(cardName) {
+  return store.getters.isChildPanelOpenFor(cardName, hostPanelDepth.value)
+}
+
+function spacerHeightFor(cardName) {
+  return Math.max(0, Number(childPanelSpacerHeights.value?.[cardName]) || 0)
+}
+
+function setPanelSpacerRef(el) {
+  panelSpacerEl = el || null
+  bindGeometryScrollListeners()
+  syncChildPanelGeometry()
+}
+
+function unbindGeometryScrollListeners() {
+  if (geometryColumnScrollEl && onGeometryColumnScroll) {
+    geometryColumnScrollEl.removeEventListener('scroll', onGeometryColumnScroll)
+  }
+  geometryColumnScrollEl = null
+  onGeometryColumnScroll = null
+}
+
+function bindGeometryScrollListeners() {
+  unbindGeometryScrollListeners()
+  if (!panelSpacerEl) {
+    return
+  }
+  const columnScroller = panelSpacerEl.closest?.('.kanban-card-list')
+  if (columnScroller) {
+    geometryColumnScrollEl = columnScroller
+    onGeometryColumnScroll = () => syncChildPanelGeometry()
+    columnScroller.addEventListener('scroll', onGeometryColumnScroll, { passive: true })
+  }
+}
+
+watch(
+  () => store.state.childPanelByDepth[hostPanelDepth.value],
+  async () => {
+    await nextTick()
+    bindGeometryScrollListeners()
+    syncChildPanelGeometry()
+  },
+)
 const totalDisplay = computed(
   () => Number.isFinite(columnTotal.value) ? columnTotal.value : '…',
 )
@@ -670,6 +773,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unbindGeometryScrollListeners()
   if (scrollTopRaf != null) {
     cancelAnimationFrame(scrollTopRaf)
     scrollTopRaf = null
@@ -696,12 +800,21 @@ function drag(evt) {
     fromIndex: evt.index,
     fromLaneIndex: props.laneIndex,
     fromLaneKey: props.laneKey,
+    childScopeId: props.childScopeId,
+    childDepth: props.childDepth,
   })
 }
 
 function loadNextPage() {
   if (pagination.value.loading || !pagination.value.hasMore) {
     return Promise.resolve(false)
+  }
+  if (props.childScopeId) {
+    return store.dispatch("loadChildColumnPage", {
+      scopeId: props.childScopeId,
+      columnIndex: props.columnIndex,
+      args: window.cur_list?.get_args?.(),
+    }).catch(() => {})
   }
   if (props.laneIndex != null && store.getters.swimlanesEnabled) {
     return store.dispatch("loadCellPage", {

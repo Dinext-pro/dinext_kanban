@@ -295,7 +295,500 @@ test('renders child count badge after highlight when _child_count > 0', () => {
   expect(childCount.text()).toContain('3')
   expect(childCount.attributes('aria-label')).toBe('Child records')
   expect(childCount.find('use[href="#es-line-bullet-list"]').exists()).toBe(true)
+  expect(childCount.find('use[href="#icon-collapse"]').exists()).toBe(false)
   expect(childCount.find('.kanban-child-count__chevron').exists()).toBe(false)
+})
+
+test('child count badge uses collapse icon while panel is open', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.get('.kanban-child-count use').attributes('href')).toBe('#es-line-bullet-list')
+  openChildPanelFor(store, 'TASK-1', 0)
+  await flushPromises()
+  expect(wrapper.get('.kanban-child-count').attributes('aria-expanded')).toBe('true')
+  expect(wrapper.get('.kanban-child-count use').attributes('href')).toBe('#icon-collapse')
+  expect(wrapper.get('.kanban-title-area .kanban-child-count').exists()).toBe(true)
+  expect(wrapper.find('.kanban-card-meta .kanban-child-count').exists()).toBe(false)
+  expect(wrapper.find('.drag-handle').exists()).toBe(false)
+
+  store.commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+  await flushPromises()
+  expect(wrapper.get('.kanban-child-count use').attributes('href')).toBe('#es-line-bullet-list')
+  expect(wrapper.get('.kanban-card-meta .kanban-child-count').exists()).toBe(true)
+  expect(wrapper.find('.kanban-title-area .kanban-child-count').exists()).toBe(false)
+  expect(wrapper.find('.drag-handle').exists()).toBe(true)
+})
+
+test('panel-open host keeps badge in title row instead of drag handle', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-1', 0)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-ancestor')
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  const titleArea = wrapper.get('.kanban-title-area')
+  expect(titleArea.find('.kanban-child-count').exists()).toBe(true)
+  expect(titleArea.find('.drag-handle').exists()).toBe(false)
+  expect(wrapper.find('.kanban-card-meta .kanban-child-count').exists()).toBe(false)
+})
+
+test('depth-0 panel host does not get nested border gradient class', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-1', 0)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-ancestor')
+  expect(wrapper.classes()).not.toContain('kanban-card--panel-host-nested')
+})
+
+test('nested panel host uses nested border gradient class', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-ROOT', 0)
+  openChildPanelFor(store, 'TASK-CHILD', 1)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-CHILD',
+        subject: 'Child host',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 1,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-ancestor')
+  expect(wrapper.classes()).toContain('kanban-card--panel-host-nested')
+})
+
+test('child count click toggles child panel at card depth', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 1,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.get('.kanban-child-count').trigger('click')
+  expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
+    parentName: 'TASK-1',
+    depth: 1,
+  })
+  expect(wrapper.get('.kanban-child-count').attributes('aria-expanded')).toBe('false')
+})
+
+test('marks non-host board cards inert when child panel is open', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-PARENT', 0)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-OTHER',
+        subject: 'Other task',
+        status: 'Open',
+        priority: 'Low',
+        _assign: {},
+        _child_count: 0,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-inert')
+  expect(wrapper.classes()).not.toContain('kanban-card--panel-ancestor')
+})
+
+test('inert board card click closes child panels from depth 0', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-PARENT', 0)
+  const commit = vi.spyOn(store, 'commit')
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-OTHER',
+        subject: 'Other task',
+        status: 'Open',
+        priority: 'Low',
+        _assign: {},
+        _child_count: 0,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-inert')
+
+  await wrapper.trigger('click')
+  expect(commit).toHaveBeenCalledWith('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+})
+
+test('inert nested sibling click closes from depth 1 only', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-ROOT', 0)
+  openChildPanelFor(store, 'TASK-CHILD', 1)
+  const commit = vi.spyOn(store, 'commit')
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-SIBLING',
+        subject: 'Sibling in parent panel',
+        status: 'Open',
+        priority: 'Low',
+        _assign: {},
+        _child_count: 0,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 1,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-inert')
+
+  await wrapper.trigger('click')
+  expect(commit).toHaveBeenCalledWith('CLOSE_CHILD_PANELS_FROM_DEPTH', 1)
+  expect(commit).not.toHaveBeenCalledWith('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+})
+
+test('ancestor host keeps badge clickable while panel is open', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  openChildPanelFor(store, 'TASK-1', 0)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-ancestor')
+  expect(wrapper.classes()).not.toContain('kanban-card--panel-inert')
+  expect(wrapper.get('.kanban-child-count use').attributes('href')).toBe('#icon-collapse')
+  await wrapper.get('.kanban-child-count').trigger('click')
+  expect(dispatch).toHaveBeenCalledTimes(1)
+  expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
+    parentName: 'TASK-1',
+    depth: 0,
+  })
+})
+
+test('ancestor host card click closes child panel from card depth', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  openChildPanelFor(store, 'TASK-1', 0)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-ancestor')
+
+  await wrapper.trigger('click')
+  expect(dispatch).toHaveBeenCalledTimes(1)
+  expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
+    parentName: 'TASK-1',
+    depth: 0,
+  })
+})
+
+test('nested ancestor root click closes from depth 0', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-ROOT', 0)
+  openChildPanelFor(store, 'TASK-CHILD', 1)
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-ROOT',
+        subject: 'Root parent',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--panel-ancestor')
+
+  await wrapper.trigger('click')
+  expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
+    parentName: 'TASK-ROOT',
+    depth: 0,
+  })
+})
+
+test('active card click does not toggle child panel', async () => {
+  const store = createStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  openChildPanelFor(store, 'TASK-PARENT', 0)
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  const commit = vi.spyOn(store, 'commit')
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-IN-PANEL',
+        subject: 'Child in open panel',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+        _child_count: 0,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 1,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+  await flushPromises()
+  expect(wrapper.classes()).not.toContain('kanban-card--panel-inert')
+  expect(wrapper.classes()).not.toContain('kanban-card--panel-ancestor')
+
+  await wrapper.trigger('click')
+  expect(dispatch).not.toHaveBeenCalledWith(
+    'toggleChildPanel',
+    expect.anything(),
+  )
+  expect(commit).not.toHaveBeenCalledWith('CLOSE_CHILD_PANELS_FROM_DEPTH', expect.anything())
+})
+
+function openChildPanelFor(store, parentName, depth = 0) {
+  const scopeId = `${depth}::${parentName}`
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId,
+    parentName,
+    depth,
+    ordinal: 0,
+    columns: store.state.columns.map((column) => ({ ...column, cards: [] })),
+    columnPagination: {},
+    columnTotals: {},
+  })
+}
+
+test('minimizes parent card when child panel opens with Minimize off', async () => {
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', false)
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+  openChildPanelFor(store, 'TASK-1', 0)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.get('.kanban-card-fields-slot').element.style.maxHeight).toBe('0px')
+  expect(wrapper.get('.kanban-child-count').attributes('aria-expanded')).toBe('true')
+
+  store.commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+  await flushPromises()
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+})
+
+test('keeps parent minimized while panel open even with Minimize on and hover', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+
+  openChildPanelFor(store, 'TASK-1', 0)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.classes()).not.toContain('kanban-card--expanded')
+  expect(store.state.densityHoldExpandedCard).toBeNull()
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+  expect(wrapper.classes()).not.toContain('kanban-card--expanded')
+
+  vi.useRealTimers()
 })
 
 test('hides child count badge when _child_count is zero or missing', () => {

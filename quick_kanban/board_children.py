@@ -139,3 +139,29 @@ def board_name_set_for_hide(
 		or_filters=or_filters,
 	)
 	return parent_field, {str(name) for name in board_names}
+
+
+def append_parent_filter(doctype, filters, parent_field, parent_name):
+	"""Return a copy of filters with a direct-parent equality constraint."""
+	from frappe import _
+
+	parent = str(parent_name or "").strip()
+	field = str(parent_field or "").strip()
+	if not parent or not field:
+		frappe.throw(_("Parent name and parent field are required."))
+	merged = list(filters or [])
+	merged.append([doctype, field, "=", parent])
+	return merged
+
+
+def resolve_tree_parent_field(doctype, parent_field=None):
+	"""Return validated nsm parent field for a tree DocType."""
+	from frappe import _
+
+	resolved = tree_parent_field(doctype)
+	if not resolved:
+		frappe.throw(_("DocType {0} is not hierarchical.").format(doctype))
+	requested = str(parent_field or "").strip()
+	if requested and requested != resolved:
+		frappe.throw(_("Invalid parent field for hierarchical DocType."))
+	return resolved

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  getLaneStickyBottom,
+  getScrollerTopInset,
   isCardVisibleInList,
   isCardVisibleInScroller,
   resolveComponentRootEl,
@@ -7,6 +9,7 @@ import {
   revealCardInColumn,
   revealMovedCard,
   scrollCardIntoScroller,
+  scrollCardToScrollerTop,
   scrollColumnIntoView,
   waitForPaint,
 } from './menuMoveScroll'
@@ -230,6 +233,42 @@ describe('menu move scroll', () => {
     })
   })
 
+  test('scrollCardToScrollerTop aligns card top to visible top with inset', () => {
+    const scrollerEl = {
+      scrollTop: 100,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        this.scrollTop = top
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 50,
+        bottom: 450,
+      }),
+    }
+    const cardEl = {
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 250,
+        bottom: 320,
+      }),
+    }
+
+    // visibleTop = 50 + 40 + 8 = 98; delta = 250 - 98 = 152; nextTop = 100 + 152 = 252
+    scrollerEl.scrollHeight = 1000
+    scrollerEl.clientHeight = 400
+    expect(scrollCardToScrollerTop(cardEl, scrollerEl, {
+      behavior: 'auto',
+      topInset: 40,
+      margin: 8,
+    })).toBe(true)
+    expect(scrollerEl.scrollTo).toHaveBeenCalledWith({
+      top: 252,
+      behavior: 'auto',
+    })
+  })
+
   test('revealCardInColumn with getScrollerEl scrolls the board when list check would pass', async () => {
     const scrollToCard = vi.fn()
     const tallList = {
@@ -386,5 +425,80 @@ describe('menu move scroll', () => {
 
     expect(revealed).toBe(true)
     expect(getListEl).toHaveBeenCalled()
+  })
+})
+
+describe('getLaneStickyBottom / getScrollerTopInset', () => {
+  test('uses lane sticky bottom when host is inside .swimlane-lane', () => {
+    const sticky = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 100, top: 80, bottom: 120 }),
+    }
+    const lane = {
+      querySelector: (selector) => (selector === '.swimlane-lane-sticky' ? sticky : null),
+    }
+    const columnEl = {
+      closest: (selector) => (selector === '.swimlane-lane' ? lane : null),
+    }
+    const scroller = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 600 }),
+      querySelector: vi.fn(),
+      querySelectorAll: vi.fn(() => []),
+    }
+
+    expect(getLaneStickyBottom(scroller, columnEl)).toBe(120)
+    expect(getScrollerTopInset(scroller, columnEl)).toBe(120)
+    expect(scroller.querySelector).not.toHaveBeenCalled()
+  })
+
+  test('nested host outside lane uses stuck sticky under header', () => {
+    const header = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 64 }),
+    }
+    const stuckSticky = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 64, bottom: 104 }),
+    }
+    const otherSticky = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 300, bottom: 340 }),
+    }
+    const columnEl = {
+      closest: () => null,
+    }
+    const scroller = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 10, bottom: 610 }),
+      querySelector: (selector) => (selector === '.swimlane-header-row' ? header : null),
+      querySelectorAll: (selector) => (
+        selector === '.swimlane-lane-sticky' ? [otherSticky, stuckSticky] : []
+      ),
+    }
+
+    expect(getLaneStickyBottom(scroller, columnEl)).toBe(104)
+    expect(getScrollerTopInset(scroller, columnEl)).toBe(94)
+  })
+
+  test('nested host outside lane falls back to header plus chrome height var', () => {
+    const header = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 50 }),
+    }
+    const columnEl = {
+      closest: () => null,
+    }
+    const scroller = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 600 }),
+      querySelector: (selector) => (selector === '.swimlane-header-row' ? header : null),
+      querySelectorAll: () => [],
+      style: {},
+    }
+    const getComputedStyle = vi.spyOn(globalThis, 'getComputedStyle').mockReturnValue({
+      getPropertyValue: (name) => (
+        name === '--swimlane-lane-chrome-height' ? '40px' : ''
+      ),
+    })
+
+    try {
+      expect(getLaneStickyBottom(scroller, columnEl)).toBe(90)
+      expect(getScrollerTopInset(scroller, columnEl)).toBe(90)
+    } finally {
+      getComputedStyle.mockRestore()
+    }
   })
 })
