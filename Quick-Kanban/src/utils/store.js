@@ -30,6 +30,7 @@ import {
   resolveExpandedLaneKeys,
   restoreCardInstances,
   sortLanesByOccupancy,
+  findCardInLanes,
 } from './swimlaneBoard'
 import {
   buildMoveFailureAnnouncement,
@@ -53,6 +54,11 @@ import {
   childPanelKey,
   createChildColumnPagination,
 } from './childPanelBoard'
+import {
+  hydrateDeadlineHolidayContext,
+  fieldAffectsDeadlineBucket,
+  refreshCardDeadlineBucket,
+} from './deadline'
 
 const initialColumnCardMinimum = 15
 const moveOptionsDebounceMs = 50
@@ -88,6 +94,10 @@ const emptyConfig = () => ({
   swimlane_mode: 'off',
   swimlane_is_multi: false,
   swimlane_link_field: '',
+  deadline_field: '',
+  deadline_attention_days: 3,
+  deadline_columns: [],
+  deadline_enabled: false,
 })
 
 function withColumnDisplayNames(columns, config) {
@@ -249,11 +259,17 @@ function isSwimlaneFieldReadOnly(state) {
   if (state.config?.swimlane_mode === 'assign') {
     return false
   }
+  if (state.config?.swimlane_mode === 'deadlines') {
+    return true
+  }
   return Boolean(state.config?.swimlane_field_meta?.read_only)
 }
 
 function canChangeLaneClient(state, _cardName) {
   if (!swimlanesActive(state)) {
+    return false
+  }
+  if (state.config?.swimlane_mode === 'deadlines') {
     return false
   }
   if (isSwimlaneFieldReadOnly(state)) {
@@ -349,6 +365,14 @@ function fieldAffectsSwimlaneLayout(state, fieldname) {
     && fieldname === state.config?.swimlane_field
   ) {
     return true
+  }
+  if (state.config?.swimlane_mode === 'deadlines') {
+    if (fieldname === state.config?.deadline_field) {
+      return true
+    }
+    if (fieldname === 'project') {
+      return true
+    }
   }
   return false
 }
@@ -1102,10 +1126,14 @@ export function createKanbanStore() {
         state.pendingFieldUpdates = pendingFieldUpdates
       },
       UPDATE_CARD_FIELD(state, { cardName, fieldname, value, modified }) {
+        const refreshDeadline = fieldAffectsDeadlineBucket(state.config, fieldname)
         forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
           card[fieldname] = value
           if (modified) {
             card.modified = modified
+          }
+          if (refreshDeadline) {
+            refreshCardDeadlineBucket(card, state.config)
           }
         })
         forEachChildPanel(state, (panel) => {
@@ -1113,6 +1141,9 @@ export function createKanbanStore() {
             card[fieldname] = value
             if (modified) {
               card.modified = modified
+            }
+            if (refreshDeadline) {
+              refreshCardDeadlineBucket(card, state.config)
             }
           })
         })
@@ -1819,6 +1850,12 @@ export function createKanbanStore() {
             state.config.field_name,
           )
 
+          if (state.config?.deadline_enabled) {
+            const projects = flattenCardsFromColumns(columns)
+              .map((card) => card.project)
+              .filter(Boolean)
+            await hydrateDeadlineHolidayContext(projects)
+          }
           commit('SET_COLUMNS', columns)
           commit(
             'SET_COLUMN_PAGINATION',
@@ -1887,6 +1924,7 @@ export function createKanbanStore() {
               swimlane_field: state.config.swimlane_field,
               filters: sourceArgs.filters,
               or_filters: sourceArgs.or_filters,
+              board_name: state.config.board_name,
             },
           })
           const laneRows = lanesResponse.message || []
@@ -1955,6 +1993,7 @@ export function createKanbanStore() {
             filters: sourceArgs.filters,
             or_filters: sourceArgs.or_filters,
             hide_board_children: shouldHideBoardChildren(state),
+            board_name: state.config.board_name,
           },
         })
         if (
@@ -2012,6 +2051,7 @@ export function createKanbanStore() {
             or_filters: sourceArgs.or_filters,
             start: 0,
             page_length: pageSize,
+            board_name: state.config.board_name,
             ...buildSwimlanePageHideArgs(state, sourceArgs),
           },
         })
@@ -2038,6 +2078,12 @@ export function createKanbanStore() {
           }),
           state,
         )
+        if (state.config?.deadline_enabled) {
+          const projects = flattenCardsFromColumns(grouped)
+            .map((card) => card.project)
+            .filter(Boolean)
+          await hydrateDeadlineHolidayContext(projects)
+        }
         const resultCount = page.values?.length || 0
         const pageWasFull = resultCount >= pageSize
 
@@ -2226,6 +2272,7 @@ export function createKanbanStore() {
               or_filters: sourceArgs.or_filters,
               start: reset ? 0 : pagination.offset,
               page_length: pageSize,
+              board_name: state.config.board_name,
               ...buildSwimlanePageHideArgs(state, sourceArgs),
             },
           })
@@ -2246,6 +2293,11 @@ export function createKanbanStore() {
             cardsFromPageMessage(page, page.user_info),
             state,
           )
+          if (state.config?.deadline_enabled) {
+            await hydrateDeadlineHolidayContext(
+              cards.map((card) => card.project).filter(Boolean),
+            )
+          }
           const resultCount = page.values?.length || 0
           const nextOffset = (reset ? 0 : pagination.offset) + resultCount
           const total = state.cellTotals?.[laneKey]?.[column.column_name]
@@ -3610,8 +3662,76 @@ export function createKanbanStore() {
           commit('RECONCILE_CARD_INSTANCES', cardName)
         }
       },
+      async relocateDeadlineSwimlaneCard({ commit, dispatch, state }, { cardName } = {}) {
+        if (
+          state.config?.swimlane_mode !== 'deadlines'
+          || !cardName
+          || !state.lanes?.length
+        ) {
+          return false
+        }
+        const found = findCardInLanes(state.lanes, cardName)
+        if (!found) {
+          return false
+        }
+        const template = { ...found.card }
+        refreshCardDeadlineBucket(template, state.config)
+        const targetKey = String(template._deadline_bucket ?? 'none')
+        const sourceKey = String(found.lane.key ?? '')
+        if (targetKey === sourceKey) {
+          return false
+        }
+
+        const statusField = state.config.field_name
+        const columnName = template[statusField]
+        if (!columnName) {
+          return false
+        }
+
+        commit('ADD_EXPANDED_LANE', targetKey)
+        await dispatch('ensureLaneHydrated', { laneKey: targetKey })
+
+        if (state.lanes.findIndex((lane) => String(lane.key) === targetKey) < 0) {
+          return false
+        }
+
+        // Re-read after hydrate; always re-place at top of target column.
+        const latest = findCard(state, cardName)
+        const card = latest ? { ...latest } : template
+        refreshCardDeadlineBucket(card, state.config)
+        const finalTarget = String(card._deadline_bucket ?? 'none')
+        commit('REMOVE_CARD', cardName)
+        commit('PREPEND_CREATED_CARD_TO_CELL', {
+          laneKey: finalTarget,
+          columnName,
+          card,
+          incrementTotal: false,
+        })
+
+        const laneIndex = state.lanes.findIndex(
+          (lane) => String(lane.key) === finalTarget,
+        )
+        const columnIndex = laneIndex >= 0
+          ? (state.lanes[laneIndex].columns || []).findIndex(
+            (column) => column.column_name === columnName,
+          )
+          : -1
+        if (laneIndex >= 0 && columnIndex >= 0) {
+          commit('SET_REVEAL_CREATED_CARD', {
+            cardName,
+            laneIndex,
+            columnIndex,
+            cardIndex: 0,
+            flash: true,
+          })
+        }
+        commit('INVALIDATE_COUNT_RESPONSES')
+        dispatch('fetchCellTotals')
+        dispatch('scheduleMoveOptionsRefresh')
+        return true
+      },
       async updateCardField(
-        { commit, state },
+        { commit, dispatch, state },
         { cardName, fieldname, value, previousValue },
       ) {
         const card = findCard(state, cardName)
@@ -3654,6 +3774,12 @@ export function createKanbanStore() {
             && fieldAffectsSwimlaneLayout(state, fieldname)
           ) {
             commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
+          if (
+            state.config.swimlane_mode === 'deadlines'
+            && fieldAffectsSwimlaneLayout(state, fieldname)
+          ) {
+            await dispatch('relocateDeadlineSwimlaneCard', { cardName })
           }
           if (typeof frappe.model?.clear_doc === 'function') {
             frappe.model.clear_doc(state.config.ref_doctype, cardName)
@@ -4507,6 +4633,7 @@ function buildFlatColumnPageArgs(state, columnName, sourceArgs, { start, pageLen
     page_length: pageLength,
     hide_board_children: shouldHideBoardChildren(state),
     column_values: activeColumnValues(state),
+    board_name: state.config.board_name,
   }
   if (sourceArgs.or_filters !== undefined && sourceArgs.or_filters !== null) {
     args.or_filters = sourceArgs.or_filters

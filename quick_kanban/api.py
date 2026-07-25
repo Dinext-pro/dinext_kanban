@@ -440,9 +440,11 @@ def set_swimlane_field(board_name, swimlane_field=None):
 
 @frappe.whitelist()
 @frappe.read_only()
-def get_swimlane_lanes(doctype, swimlane_field, filters=None, or_filters=None):
+def get_swimlane_lanes(doctype, swimlane_field, filters=None, or_filters=None, board_name=None):
 	from quick_kanban.swimlane import get_swimlane_lanes as _get_lanes
 
+	if board_name:
+		frappe.flags.quick_kanban_board_name = board_name
 	return _get_lanes(doctype, swimlane_field, filters=filters, or_filters=or_filters)
 
 
@@ -457,9 +459,12 @@ def get_cell_totals(
 	filters=None,
 	or_filters=None,
 	hide_board_children=None,
+	board_name=None,
 ):
 	from quick_kanban.swimlane import get_cell_totals as _get_cell_totals
 
+	if board_name:
+		frappe.flags.quick_kanban_board_name = board_name
 	return _get_cell_totals(
 		doctype,
 		status_field,
@@ -487,9 +492,12 @@ def get_swimlane_column_page(
 	page_length=20,
 	hide_board_children=None,
 	column_values=None,
+	board_name=None,
 ):
 	from quick_kanban.swimlane import get_swimlane_column_page as _get_page
 
+	if board_name:
+		frappe.flags.quick_kanban_board_name = board_name
 	return _get_page(
 		doctype,
 		status_field,
@@ -520,9 +528,12 @@ def get_swimlane_lane_page(
 	page_length=100,
 	hide_board_children=None,
 	column_values=None,
+	board_name=None,
 ):
 	from quick_kanban.swimlane import get_swimlane_lane_page as _get_page
 
+	if board_name:
+		frappe.flags.quick_kanban_board_name = board_name
 	return _get_page(
 		doctype,
 		status_field,
@@ -536,6 +547,48 @@ def get_swimlane_lane_page(
 		hide_board_children=hide_board_children,
 		column_values=column_values,
 	)
+
+
+@frappe.whitelist()
+@frappe.read_only()
+def get_deadline_holiday_context(projects=None, from_date=None, to_date=None):
+	"""Holiday lists + dates for deadline classification on the client."""
+	from frappe.utils import add_days, getdate, today
+	from quick_kanban.deadline import (
+		holiday_dates_in_range,
+		resolve_projects_holiday_lists,
+	)
+
+	projects = frappe.parse_json(projects) if isinstance(projects, str) else (projects or [])
+	start = getdate(from_date or today())
+	end = getdate(to_date or add_days(start, 120))
+	project_lists = resolve_projects_holiday_lists(projects)
+	unique_lists = {name for name in project_lists.values() if name}
+	dates_by_list = {}
+	for holiday_list in unique_lists:
+		dates_by_list[holiday_list] = [
+			d.isoformat() for d in sorted(holiday_dates_in_range(holiday_list, start, end))
+		]
+	return {
+		"project_holiday_lists": project_lists,
+		"holiday_dates": dates_by_list,
+		"from_date": start.isoformat(),
+		"to_date": end.isoformat(),
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def ensure_deadline_column_values(values):
+	"""Create Kanban Column Value docs for MultiCheck sync on the board form."""
+	from quick_kanban.deadline import ensure_column_value
+
+	values = frappe.parse_json(values) if isinstance(values, str) else (values or [])
+	out = []
+	for value in values:
+		name = ensure_column_value(value)
+		if name:
+			out.append(name)
+	return out
 
 
 @frappe.whitelist()
@@ -623,6 +676,7 @@ def get_column_page(
 	page_length=20,
 	hide_board_children=None,
 	column_values=None,
+	board_name=None,
 ):
 	"""Return reportview-like page for one flat kanban column."""
 	from frappe.utils import cint
@@ -632,6 +686,7 @@ def get_column_page(
 		board_name_set_for_hide,
 	)
 	from quick_kanban.swimlane import (
+		_apply_deadline_bucket_to_page,
 		_ensure_card_fetch_fields,
 		_empty_page,
 		_matching_parent_names,
@@ -640,10 +695,24 @@ def get_column_page(
 		_parse_or_filters,
 	)
 
+	if board_name:
+		frappe.flags.quick_kanban_board_name = board_name
+
 	filters = _parse_filters(filters)
 	or_filters = _parse_or_filters(or_filters)
 	fields = frappe.parse_json(fields) if isinstance(fields, str) else (fields or ["name"])
-	fields = _ensure_card_fetch_fields(fields, doctype=doctype, status_field=status_field)
+	deadline_field = None
+	flag_board = frappe.flags.get("quick_kanban_board_name")
+	if flag_board:
+		from quick_kanban.deadline import get_board_deadline_settings
+
+		deadline_field = get_board_deadline_settings(flag_board).get("deadline_field") or None
+	fields = _ensure_card_fetch_fields(
+		fields,
+		doctype=doctype,
+		status_field=status_field,
+		deadline_field=deadline_field,
+	)
 	column_values = (
 		frappe.parse_json(column_values) if isinstance(column_values, str) else column_values
 	)
@@ -688,6 +757,9 @@ def get_column_page(
 		order_by="modified desc",
 		start=start,
 		page_length=page_length,
+	)
+	paged, fields = _apply_deadline_bucket_to_page(
+		paged, fields, doctype=doctype, status_field=status_field
 	)
 	return _page_rows_as_keys_values(paged, fields)
 

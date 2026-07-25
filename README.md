@@ -37,7 +37,8 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 - Inline-редактирование видимых полей карточки (заголовок из `title_field`, поля `Fields`, Highlighted Field): одинарный клик открывает штатный контрол Frappe после `frappe.model.with_doc`; двойной клик по карточке (включая поля и chrome) открывает форму документа; двойной клик по Link — связанную запись; теги, кнопка Move и назначения навигацию не запускают.
 - Переход из диалога Kanban Settings к записи текущей Kanban Board.
 - Режим **Минимизировать**: компактные карточки (заголовок, drag-handle, highlight, Move, assignees) с раскрытием по hover; плотность при DnD карточек и меток хранится в Vuex (в том числе принудительное схлопывание источника после tag-drag).
-- Режим **Swimlane** (**Group By** / **Группировать**): горизонтальные дорожки по **Assigned To** / **Исполнитель**, полю `Select` / `Link` / `User` или `Table MultiSelect`; общий x/y-скролл, sticky-заголовки колонок и дорожек, ленивая подгрузка ячеек, DnD между колонками и дорожками с теми же проверками прав, что и у обычного перемещения.
+- Режим **Swimlane** (**Group By** / **Группировать**): горизонтальные дорожки по **Assigned To** / **Исполнитель**, полю `Select` / `Link` / `User` или `Table MultiSelect`, либо по **Deadlines** / **Сроки**; общий x/y-скролл, sticky-заголовки колонок и дорожек, ленивая подгрузка ячеек, DnD между колонками и дорожками с теми же проверками прав, что и у обычного перемещения (смена дорожки **Сроки** запрещена).
+- **Отслеживание сроков** на Kanban Board: поле Date/Datetime, окно внимания в рабочих днях, список колонок для трекинга; подсветка даты на карточке (просрочено / приближается) и группировка **Group By → Сроки**.
 - Явные состояния загрузки, отсутствия данных и ошибки с повторным запросом.
 - Санитизация форматированного содержимого карточек через DOMPurify.
 - Обновление через стандартный lifecycle списка Frappe без дополнительной realtime-подписки.
@@ -195,9 +196,10 @@ cd ../frappe && yarn run production --apps quick_kanban
 5. Для расцветки карточек добавьте в целевой DocType поле **`color`** с типом **`Color`** и заполните его у записей (hex, например `#FF5733`). Поле подтягивается автоматически и не отображается в теле карточки.
 6. Чтобы показывать метки на карточках, включите **Show Tags** / **Показывать теги** на форме Kanban Board (после `show_labels`).
 7. Чтобы показывать ряд ссылка / like / комментарии / файлы, включите **Extra Info** / **Доп. информация** на форме Kanban Board.
-8. Чтобы сгруппировать карточки по дорожкам (swimlane), задайте **Swimlane Field** / **Поле swimlane** на форме Kanban Board или выберите группировку в выпадающем списке **Group By** / **Группировать** на панели инструментов Kanban (при праве записи на `Kanban Board`).
-9. Откройте Kanban-представление списка.
-10. Для tree DocType при необходимости включите **Show child tasks** / **Показывать дочерние задачи** на панели инструментов (рядом с **Минимизировать**), чтобы снова показывать дочерние записи, скрытые по умолчанию.
+8. Чтобы сгруппировать карточки по дорожкам (swimlane), задайте **Swimlane Field** / **Поле swimlane** на форме Kanban Board или выберите группировку в выпадающем списке **Group By** / **Группировать** на панели инструментов Kanban (при праве записи на `Kanban Board`). Для группировки по срокам выберите **Deadlines** / **Сроки** (нужны настройки раздела **Deadline Tracking** / **Отслеживание сроков** на форме доски).
+9. При необходимости настройте **Deadline Field** / **Поле срока**, **Attention Working Days** / **Рабочих дней для внимания** и **Track Deadlines In Columns** / **Отслеживать сроки в колонках** (см. [Отслеживание сроков](#отслеживание-сроков-deadlines)). Для Task по умолчанию подставляются `exp_end_date`, 3 рабочих дня и колонки Open / Working / Overdue.
+10. Откройте Kanban-представление списка.
+11. Для tree DocType при необходимости включите **Show child tasks** / **Показывать дочерние задачи** на панели инструментов (рядом с **Минимизировать**), чтобы снова показывать дочерние записи, скрытые по умолчанию.
 
 Двойной клик по badge с количеством записей в заголовке колонки открывает ListView того же DocType с фильтром по значению колонки (например, `status = Open`) и текущими фильтрами доски из filter bar. Одиночный клик по счётчику ничего не делает. Если дочерние на доске скрыты, List дополнительно исключает их через `name not in` (см. [Show child tasks](#show-child-tasks--дочерние-задачи)).
 
@@ -301,10 +303,11 @@ Swimlane разбивает доску на горизонтальные дор�
 |----------------------------------|-------|---------|
 | пусто | `off` | обычная доска без swimlane |
 | `__assign` (**Assigned To** / **Исполнитель**) | `assign` | по **Open** ToDo-назначениям (как `_assign`; Closed/Cancelled и DocShare не участвуют) + дорожка **Unassigned** / **Без назначения** |
+| `__deadlines` (**Deadlines** / **Сроки**) | `deadlines` | **Overdue** / **Просрочено**, **Deadline Approaching** / **Срок приближается**, **On Track** / **В плане**, **No Deadline** / **Без срока** (см. [Отслеживание сроков](#отслеживание-сроков-deadlines)) |
 | поле `Select`, `Link` или `User` | `field` | по значениям поля (+ **Unassigned** / **Без назначения** для пустых) |
 | поле `Table MultiSelect` | `multi` | по значениям child Link; карточка с несколькими значениями может отображаться в нескольких дорожках (+ **Unassigned** / **Без назначения**) |
 
-Для `Select` дорожки строятся по options поля (с учётом переводов DocType). Для `Link` / `User` / assign / multi — по фактически встречающимся значениям среди записей, попадающих под текущие фильтры доски; подписи Link используют title field связанного DocType, User — полное имя.
+Для `Select` дорожки строятся по options поля (с учётом переводов DocType). Для `Link` / `User` / assign / multi — по фактически встречающимся значениям среди записей, попадающих под текущие фильтры доски; подписи Link используют title field связанного DocType, User — полное имя. Режим `deadlines` доступен в **Group By** после **Assigned To**; пункт появляется, когда на доске задано **Поле срока**.
 
 #### Макет и навигация
 
@@ -332,9 +335,44 @@ Drag-and-drop и меню **Move to** работают между колонка
 - **колонка** — как обычно: Workflow / `doc.save()`, обязательные поля, optimistic update и откат;
 - **дорожка `field`** — запись значения swimlane-поля (пустое → Unassigned);
 - **дорожка `assign`** — Assign To / снятие назначения через Desk API (`assign_to.add` / `remove`); перенос в Unassigned снимает всех assignees;
-- **дорожка `multi`** — обновление child-строк Table MultiSelect (добавление целевого значения, снятие исходного при смене дорожки; Unassigned очищает поле).
+- **дорожка `multi`** — обновление child-строк Table MultiSelect (добавление целевого значения, снятие исходного при смене дорожки; Unassigned очищает поле);
+- **дорожка `deadlines`** — смена дорожки **запрещена** (сервер: `Deadline swimlanes cannot be changed by dragging.`); перемещение **между колонками** в той же дорожке остаётся доступным.
 
-Смена дорожки запрещена, если нет `write` на DocType, swimlane-поле read-only / без права на поле, или Workflow state не разрешает правку. Фронтенд заранее скрывает запрещённые цели и показывает overlay на ячейках, куда drop недоступен. После успеха — тот же scroll-reveal и подсветка, что и на обычной доске.
+Смена дорожки запрещена, если режим `deadlines`, нет `write` на DocType, swimlane-поле read-only / без права на поле, или Workflow state не разрешает правку. Фронтенд заранее скрывает запрещённые цели и показывает overlay на ячейках, куда drop недоступен. После успеха — тот же scroll-reveal и подсветка, что и на обычной доске.
+
+### Отслеживание сроков (Deadlines)
+
+Настройки хранятся в Custom Fields на `Kanban Board` (секция **Deadline Tracking** / **Отслеживание сроков**, fixture [`kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json)). Логика — [`quick_kanban/deadline.py`](quick_kanban/deadline.py) и клиент [`Quick-Kanban/src/utils/deadline.js`](Quick-Kanban/src/utils/deadline.js).
+
+#### Настройка на форме доски
+
+| Поле | Тип | Назначение |
+|------|-----|------------|
+| **Deadline Field** / **Поле срока** (`custom_deadline_field`) | Autocomplete | Date / Datetime целевого DocType; в UI — переведённый label поля, в БД — `fieldname` (как у Swimlane Field) |
+| **Attention Working Days** / **Рабочих дней для внимания** (`custom_deadline_attention_days`) | Int | Сколько рабочих дней до срока считать «приближается» (по умолчанию 3) |
+| **Track Deadlines In Columns** / **Отслеживать сроки в колонках** | MultiCheck → Table MultiSelect | Значения колонок канбана, в которых сроки учитываются для подсветки и дорожек Overdue / Approaching |
+
+Child DocType `Kanban Board Deadline Column` хранит выбранные значения через Link на каталог `Kanban Column Value`. Form script [`kanban_highlight.js`](quick_kanban/public/js/kanban_highlight.js) заполняет опции поля срока и MultiCheck колонок; для Task при пустых настройках подставляет defaults.
+
+Без выбранного **Поле срока** трекинг выключен (`deadline_enabled` ложен).
+
+#### Классификация
+
+Рабочие дни считаются с учётом Holiday List: **Project.holiday_list** → **Company.default_holiday_list** проекта/компании по умолчанию; если списка нет — все дни считаются рабочими. Клиент получает карты списков через API holidays для доски.
+
+| Bucket | Условие | Дорожка |
+|--------|---------|---------|
+| `none` | пустая дата в поле срока | **No Deadline** / **Без срока** |
+| `overdue` | дата в прошлом **и** статус колонки в списке трекинга | **Overdue** / **Просрочено** |
+| `attention` | до срока ≤ N рабочих дней **и** колонка в трекинге | **Deadline Approaching** / **Срок приближается** |
+| `planned` | дата дальше окна внимания, **или** дата задана, но колонка **не** в списке трекинга (в т.ч. пустой список колонок) | **On Track** / **В плане** |
+
+#### Подсветка на карточке
+
+Дата подсвечивается, только если поле срока входит в **Fields** доски, трекинг включён, статус карточки в выбранных колонках и bucket — `overdue` или `attention`:
+
+- просрочено — красный текст и иконка `#icon-solid-error`;
+- приближается — жёлтый текст и `#icon-solid-warning`.
 
 ### Режим «Минимизировать»
 
@@ -544,14 +582,18 @@ bench --site <site-name> clear-cache
 - [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
 - [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
 - [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_child_counts`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), ширина колонок (`set_column_widths`, override `update_column_order`).
+- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_child_counts`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), сроки (`get_deadline_holiday_context`, `ensure_deadline_column_values`), ширина колонок (`set_column_widths`, override `update_column_order`).
 - [`quick_kanban/board_children.py`](quick_kanban/board_children.py) — скрытие on-board children (membership, exclude до page slice, hidden names).
 - [`quick_kanban/move_policy.py`](quick_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
-- [`quick_kanban/swimlane.py`](quick_kanban/swimlane.py) — режимы группировки, построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
+- [`quick_kanban/swimlane.py`](quick_kanban/swimlane.py) — режимы группировки (в т.ч. `__deadlines`), построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
+- [`quick_kanban/deadline.py`](quick_kanban/deadline.py) — рабочие дни, buckets сроков, настройки доски, фильтры имён для deadline-lanes.
 - [`quick_kanban/get_beta_users.py`](quick_kanban/get_beta_users.py) — `get_kanban_config` (feature flags `kanban_beta` / `kanban_beta_users`).
-- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks и resize колонок в Vuex).
-- [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info** и **Swimlane Field** на Kanban Board.
+- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `deadline`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks и resize колонок в Vuex).
+- [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info**, **Swimlane Field**, **Deadline Field** / attention days / deadline columns на Kanban Board.
 - [`quick_kanban/quick_kanban/custom/kanban_board_column.json`](quick_kanban/quick_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
+- [`quick_kanban/quick_kanban/doctype/kanban_column_value/`](quick_kanban/quick_kanban/doctype/kanban_column_value/) — каталог значений колонок для MultiSelect сроков.
+- [`quick_kanban/quick_kanban/doctype/kanban_board_deadline_column/`](quick_kanban/quick_kanban/doctype/kanban_board_deadline_column/) — child Table MultiSelect «колонки со сроками».
+- [`quick_kanban/public/js/kanban_highlight.js`](quick_kanban/public/js/kanban_highlight.js) — form script Kanban Board (highlight, swimlane/deadline Autocomplete, MultiCheck колонок).
 
 После каждого commit локальный `post-commit` hook формирует предложение для документации в `../dinext-docs/doc-proposals/inbox/`. Повторная установка hook:
 
@@ -576,7 +618,7 @@ dinext_kanban/
 │   ├── src/
 │   │   ├── components/         # Vue-компоненты доски, колонок, карточек, меток и swimlane
 │   │   ├── test/               # Общая настройка Vitest и тесты интеграционных scripts
-│   │   ├── utils/              # Store, listNavigation, createValidation, swimlaneCreate, DnD меток, swimlaneBoard, меню
+│   │   ├── utils/              # Store, listNavigation, createValidation, swimlaneCreate, deadline, DnD меток, swimlaneBoard, меню
 │   │   ├── App.vue             # Корневой Vue-компонент
 │   │   ├── main.js             # Mount/unmount Vue-приложения (в т.ч. setQuickKanbanShowChildTasks)
 │   │   └── style.css           # Стили нового Kanban
@@ -586,15 +628,18 @@ dinext_kanban/
 ├── quick_kanban/
 │   ├── public/
 │   │   ├── css/                # Собранные и подключаемые стили
-│   │   └── js/                 # Bootstrap, KanbanView override и Vue bundle
-│   ├── quick_kanban/custom/    # Custom Fields: Show Tags / Extra Info / Swimlane Field (Board), Column Width (Column)
+│   │   └── js/                 # Bootstrap, KanbanView override, form script и Vue bundle
+│   ├── quick_kanban/
+│   │   ├── custom/             # Custom Fields Board (tags, extra info, swimlane, deadlines) и Column Width
+│   │   └── doctype/            # Kanban Column Value, Kanban Board Deadline Column
 │   ├── tests/                  # Backend-тесты Frappe
 │   ├── translations/           # CSV-переводы (ru)
 │   ├── api.py                  # Permission-aware API доски (в т.ч. get_column_page)
 │   ├── board_children.py       # Hide on-board child docs для tree DocType
+│   ├── deadline.py             # Buckets сроков, holiday lists, фильтры deadline-lanes
 │   ├── move_policy.py          # Политики move / create и Workflow
 │   ├── validation.py           # Mandatory rules при перемещении
-│   ├── swimlane.py             # Группировка по дорожкам и lane membership
+│   ├── swimlane.py             # Группировка по дорожкам (в т.ч. deadlines) и lane membership
 │   ├── get_beta_users.py       # Чтение feature flags из site config
 │   └── hooks.py                # Метаданные Frappe и подключение assets
 ├── AGENTS.md                   # Указатель на central dinext-docs
@@ -621,6 +666,8 @@ flowchart LR
     Store --> CreateOpts[get_create_options]
     Store --> SwimLanes[get_swimlane_lanes / get_cell_totals]
     SwimLanes --> CellPage[get_swimlane_lane_page / get_swimlane_column_page]
+    SwimLanes --> Deadlines[deadline buckets / holidays]
+    CellPage --> Deadlines
     ColumnPage --> BoardChildren[board_children exclude]
     CellPage --> BoardChildren
     Totals --> BoardChildren
@@ -638,6 +685,7 @@ flowchart LR
     Optimistic --> MoveAPI[move_card]
     Optimistic --> CellAPI[move_card_to_cell]
     CellAPI --> LaneMem[apply_lane_membership]
+    LaneMem -->|deadlines| LaneBlocked[Смена дорожки запрещена]
     MoveAPI -->|Успех| Saved[Документ сохранён]
     CellAPI -->|Успех| Saved
     MoveAPI -->|Ошибка или конфликт| Rollback[Позиция восстановлена]

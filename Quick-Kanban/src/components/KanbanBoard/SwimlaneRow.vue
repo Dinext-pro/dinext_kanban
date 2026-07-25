@@ -36,7 +36,29 @@
             class="swimlane-lane-avatar"
             aria-hidden="true"
           />
-          <span class="swimlane-lane-title">{{ laneLabel }}</span>
+          <span
+            v-if="laneDeadlineTone"
+            class="kanban-deadline-icon"
+            :class="`kanban-deadline-icon--${laneDeadlineTone}`"
+            aria-hidden="true"
+          >
+            <svg
+              class="icon icon-sm"
+              aria-hidden="true"
+            >
+              <use
+                :href="laneDeadlineTone === 'overdue'
+                  ? '#icon-solid-error'
+                  : '#icon-solid-warning'"
+              ></use>
+            </svg>
+          </span>
+          <span
+            class="swimlane-lane-title"
+            :class="laneDeadlineTone
+              ? `swimlane-lane-title--deadline-${laneDeadlineTone}`
+              : undefined"
+          >{{ laneLabel }}</span>
           <span class="swimlane-lane-count">{{ laneTotalDisplay }}</span>
         </span>
       </header>
@@ -119,6 +141,7 @@ import {
   getIndicatorClass,
   LANE_DRAG_EXPAND_DELAY_MS,
 } from '../../utils/kanban'
+import { deadlineLaneTone } from '../../utils/deadline'
 import { prefersReducedMotion } from '../../utils/cardRollbackAnimation'
 import { animateLaneRowHeight } from '../../utils/laneExpandAnimation'
 import {
@@ -163,6 +186,7 @@ let awaitingExpandAnim = false
 const expanded = computed(() => store.getters.isLaneExpanded(props.lane.key))
 const hydrationStatus = computed(() => store.state.laneHydration[String(props.lane.key)])
 const laneLabel = computed(() => props.lane.label || props.lane.key || __('Unassigned'))
+const laneDeadlineTone = computed(() => deadlineLaneTone(props.lane?.key))
 const laneTotal = computed(() => store.getters.getLaneTotal(props.lane.key))
 const laneTotalDisplay = computed(() => (
   Number.isFinite(laneTotal.value) ? String(laneTotal.value) : '…'
