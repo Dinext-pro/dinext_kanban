@@ -16,6 +16,8 @@ import {
   resolvePanelHostCard,
   resolvePanelHostSpacer,
   setSortableNearestParticipation,
+  stabilizeCollapsedHostPanelRect,
+  stabilizeHostPanelRectOnColumnToggle,
 } from './childPanelBoard.js'
 
 function buildDuplicateHostDom() {
@@ -182,6 +184,74 @@ describe('childPanelBoard', () => {
       topInset: 80,
       hostHeight: 40,
     })).toBe(0)
+  })
+
+  test('stabilizeHostPanelRectOnColumnToggle freezes top/height on flat collapsed host', () => {
+    const previousRect = { top: 120, left: 0, width: 900, height: 400 }
+    const nextRect = { top: 40, left: 0, width: 800, height: 520 }
+    const { rect, verticalFrozen } = stabilizeHostPanelRectOnColumnToggle({
+      previousRect,
+      nextRect,
+      hostColumnCollapsed: true,
+      swimlanesEnabled: false,
+    })
+    expect(verticalFrozen).toBe(true)
+    expect(rect).toEqual({ top: 120, left: 0, width: 800, height: 400 })
+  })
+
+  test('stabilizeHostPanelRectOnColumnToggle freezes on verticalLock or hostMissing', () => {
+    const previousRect = { top: 120, left: 0, width: 900, height: 400 }
+    const nextRect = { top: 40, left: 0, width: 800, height: 520 }
+    expect(stabilizeHostPanelRectOnColumnToggle({
+      previousRect,
+      nextRect,
+      verticalLock: true,
+      swimlanesEnabled: false,
+    })).toEqual({
+      rect: { top: 120, left: 0, width: 800, height: 400 },
+      verticalFrozen: true,
+    })
+    expect(stabilizeHostPanelRectOnColumnToggle({
+      previousRect,
+      nextRect,
+      hostMissing: true,
+      swimlanesEnabled: false,
+    })).toEqual({
+      rect: { top: 120, left: 0, width: 800, height: 400 },
+      verticalFrozen: true,
+    })
+  })
+
+  test('stabilizeHostPanelRectOnColumnToggle does not freeze when expanded or swimlane', () => {
+    const previousRect = { top: 120, left: 0, width: 900, height: 400 }
+    const nextRect = { top: 40, left: 0, width: 800, height: 520 }
+    expect(stabilizeHostPanelRectOnColumnToggle({
+      previousRect,
+      nextRect,
+      hostColumnCollapsed: false,
+      swimlanesEnabled: false,
+    })).toEqual({ rect: nextRect, verticalFrozen: false })
+    expect(stabilizeHostPanelRectOnColumnToggle({
+      previousRect,
+      nextRect,
+      hostColumnCollapsed: true,
+      verticalLock: true,
+      hostMissing: true,
+      swimlanesEnabled: true,
+    })).toEqual({ rect: nextRect, verticalFrozen: false })
+    expect(stabilizeHostPanelRectOnColumnToggle({
+      previousRect: null,
+      nextRect,
+      hostColumnCollapsed: true,
+      swimlanesEnabled: false,
+    })).toEqual({ rect: nextRect, verticalFrozen: false })
+    // Deprecated alias still freezes collapsed hosts.
+    expect(stabilizeCollapsedHostPanelRect({
+      previousRect,
+      nextRect,
+      hostColumnCollapsed: true,
+      swimlanesEnabled: false,
+    }).verticalFrozen).toBe(true)
   })
 
   test('resolvePanelHostCard prefers board instance at depth 0', () => {

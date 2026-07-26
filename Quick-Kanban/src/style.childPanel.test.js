@@ -114,6 +114,15 @@ describe('child panel geometry CSS', () => {
     )
   })
 
+  test('collapsed flat child-panel host keeps card-list in flow', () => {
+    expect(styleCss).toMatch(
+      /\.kanban-column--collapsed\.kanban-column--child-panel-host\s+\.kanban-card-list\s*\{[^}]*position:\s*relative/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-column--collapsed\.kanban-column--child-panel-host\s+\.kanban-card-list\s*\{[^}]*inset:\s*auto/s,
+    )
+  })
+
   test('child panel open/close uses animation tokens and transitions', () => {
     expect(styleCss).toMatch(/--kanban-child-panel-anim-ms:\s*200ms/)
     expect(styleCss).toMatch(/--kanban-child-panel-pin-ms:\s*300ms/)
