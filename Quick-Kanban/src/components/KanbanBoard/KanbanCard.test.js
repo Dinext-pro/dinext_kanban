@@ -1,7 +1,10 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createKanbanStore, buildPermissiveMoveOptions } from '../../utils/store'
-import { CARD_EXPAND_DELAY_MS } from '../../utils/kanban'
+import {
+  CARD_EXPAND_DELAY_MS,
+  CARD_EXPAND_DELAY_OVER_CHILD_COUNT_MS,
+} from '../../utils/kanban'
 import KanbanCard from './KanbanCard.vue'
 
 vi.mock('../../utils/cardMoveFlash', () => ({
@@ -1604,6 +1607,131 @@ test('expands minimized card after hover delay and collapses after leave', async
   expect(wrapper.classes()).not.toContain('kanban-card--expanded')
   expect(wrapper.find('.kanban-card-fields-slot').exists()).toBe(true)
 
+  vi.useRealTimers()
+})
+
+test('uses longer expand delay while hovering child-count badge', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.get('.kanban-child-count').trigger('pointerenter', { pointerType: 'mouse' })
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  await vi.advanceTimersByTimeAsync(
+    CARD_EXPAND_DELAY_OVER_CHILD_COUNT_MS - CARD_EXPAND_DELAY_MS,
+  )
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('entering child-count badge reschedules expand to the longer delay', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS - 100)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  await wrapper.get('.kanban-child-count').trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--minimized')
+
+  await vi.advanceTimersByTimeAsync(
+    CARD_EXPAND_DELAY_OVER_CHILD_COUNT_MS - CARD_EXPAND_DELAY_MS,
+  )
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+
+  wrapper.unmount()
+  vi.useRealTimers()
+})
+
+test('leaving child-count badge restores the base expand delay while still on card', async () => {
+  vi.useFakeTimers()
+  const store = createStore()
+  store.commit('SET_MINIMIZE_CARDS', true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        due_date: '2026-07-10',
+        project: 'TEST-PROJECT',
+        _assign: {},
+        _child_count: 2,
+      },
+      config: store.state.config,
+      columnIndex: 0,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  const matchesSpy = vi.spyOn(wrapper.element, 'matches').mockImplementation((selector) => {
+    if (selector === ':hover') {
+      return true
+    }
+    return Element.prototype.matches.call(wrapper.element, selector)
+  })
+
+  await wrapper.get('.kanban-child-count').trigger('pointerenter', { pointerType: 'mouse' })
+  await wrapper.get('.kanban-child-count').trigger('pointerleave', { pointerType: 'mouse' })
+
+  await vi.advanceTimersByTimeAsync(CARD_EXPAND_DELAY_MS)
+  await flushPromises()
+  expect(wrapper.classes()).toContain('kanban-card--expanded')
+  expect(wrapper.classes()).not.toContain('kanban-card--minimized')
+
+  matchesSpy.mockRestore()
+  wrapper.unmount()
   vi.useRealTimers()
 })
 
