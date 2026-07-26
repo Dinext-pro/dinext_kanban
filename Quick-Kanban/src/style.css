@@ -1881,6 +1881,12 @@ html.kanban-tag-drag-move * {
   opacity: 0.85;
 }
 
+#kanbanapp .kanban-child-count__icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+
 #kanbanapp .kanban-child-count__value {
   font-size: var(--text-sm, 12px);
   font-variant-numeric: tabular-nums;

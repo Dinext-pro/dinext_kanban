@@ -413,9 +413,14 @@ const QuickKanbanView = class KanbanView extends NativeKanbanView {
             const labelSpan = document.createElement("span");
             labelSpan.className = "quick-kanban-show-child-tasks-label";
             labelSpan.setAttribute("aria-hidden", "true");
-            // Same glyph as card child-count badge (#es-line-bullet-list).
+            // Same glyph as card child-count badge (Quick-Kanban/src/icons/childTreeIcon.js).
             labelSpan.innerHTML =
-                '<svg class="icon icon-sm" aria-hidden="true"><use href="#es-line-bullet-list"></use></svg>';
+                '<svg class="icon icon-sm" viewBox="0 0 16 16" fill="none" data-icon="child-tree" aria-hidden="true">' +
+                '<path stroke="var(--icon-stroke)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M3.25 2.5h4M5.25 2.5v9.75c0 .69.56 1.25 1.25 1.25H8.5"/>' +
+                '<path stroke="var(--icon-stroke)" stroke-width="1.5" stroke-linecap="round" d="M5.25 6.5H8.5"/>' +
+                '<rect x="8.5" y="4.5" width="5" height="4" rx="1" stroke="var(--icon-stroke)" stroke-width="1.5"/>' +
+                '<rect x="8.5" y="11" width="5" height="4" rx="1" stroke="var(--icon-stroke)" stroke-width="1.5"/>' +
+                "</svg>";
             control.append(checkbox, labelSpan);
 
             checkbox.addEventListener("change", () => {
