@@ -108,19 +108,42 @@ function panelSpacerCandidates(root, parentName) {
   return [...root.querySelectorAll(`.child-panel-spacer[data-panel-parent="${escaped}"]`)]
 }
 
+function normalizeHostLaneKey(hostLaneKey) {
+  if (hostLaneKey == null) {
+    return null
+  }
+  const key = String(hostLaneKey).trim()
+  return key === '' ? null : key
+}
+
+function elementMatchesHostLane(el, hostLaneKey) {
+  const key = normalizeHostLaneKey(hostLaneKey)
+  if (key == null || !el?.closest) {
+    return true
+  }
+  const lane = el.closest(`.swimlane-lane[data-lane-key="${escapePanelParentName(key)}"]`)
+  return Boolean(lane)
+}
+
 /**
  * Resolve the DOM host card for a board-hosted child panel by depth.
  * Depth 0: main-board instance only (not inside .child-panel).
+ * When hostLaneKey is set, prefer the swimlane instance in that lane.
  * Depth >= 1: instance inside parent panel depth-1; never prefer a board duplicate.
  */
-export function resolvePanelHostCard(root, parentName, depth = 0) {
+export function resolvePanelHostCard(root, parentName, depth = 0, hostLaneKey = null) {
   const cards = panelHostCandidates(root, parentName)
   if (!cards.length) {
     return null
   }
   const level = Math.max(0, Number(depth) || 0)
   if (level <= 0) {
-    return cards.find((card) => !card.closest?.('.child-panel')) || null
+    const boardCards = cards.filter((card) => !card.closest?.('.child-panel'))
+    const laneMatch = boardCards.find((card) => elementMatchesHostLane(card, hostLaneKey))
+    if (normalizeHostLaneKey(hostLaneKey) != null && laneMatch) {
+      return laneMatch
+    }
+    return boardCards[0] || null
   }
   const parentPanel = root?.querySelector?.(
     `.child-panel[data-child-depth="${level - 1}"]`,
@@ -137,14 +160,19 @@ export function resolvePanelHostCard(root, parentName, depth = 0) {
 /**
  * Resolve the spacer under a panel host, scoped the same way as resolvePanelHostCard.
  */
-export function resolvePanelHostSpacer(root, parentName, depth = 0) {
+export function resolvePanelHostSpacer(root, parentName, depth = 0, hostLaneKey = null) {
   const spacers = panelSpacerCandidates(root, parentName)
   if (!spacers.length) {
     return null
   }
   const level = Math.max(0, Number(depth) || 0)
   if (level <= 0) {
-    return spacers.find((el) => !el.closest?.('.child-panel')) || null
+    const boardSpacers = spacers.filter((el) => !el.closest?.('.child-panel'))
+    const laneMatch = boardSpacers.find((el) => elementMatchesHostLane(el, hostLaneKey))
+    if (normalizeHostLaneKey(hostLaneKey) != null && laneMatch) {
+      return laneMatch
+    }
+    return boardSpacers[0] || null
   }
   const parentPanel = root?.querySelector?.(
     `.child-panel[data-child-depth="${level - 1}"]`,

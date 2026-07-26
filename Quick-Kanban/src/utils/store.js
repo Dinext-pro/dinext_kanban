@@ -2206,11 +2206,14 @@ export function createKanbanStore() {
         if (!state.expandedLaneKeys.includes(key)) {
           const depth0ScopeId = state.childPanelByDepth?.[0]
           const depth0Panel = depth0ScopeId ? state.childPanels?.[depth0ScopeId] : null
-          if (
-            depth0Panel
-            && findLaneKeyForCard(state, depth0Panel.parentName) === key
-          ) {
-            commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+          if (depth0Panel) {
+            const hostKey = depth0Panel.hostLaneKey != null
+              && String(depth0Panel.hostLaneKey).trim() !== ''
+              ? String(depth0Panel.hostLaneKey)
+              : findLaneKeyForCard(state, depth0Panel.parentName)
+            if (hostKey === key) {
+              commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+            }
           }
         }
       },
@@ -2687,7 +2690,10 @@ export function createKanbanStore() {
           throw error
         }
       },
-      async toggleChildPanel({ commit, dispatch, state }, { parentName, depth = 0, args } = {}) {
+      async toggleChildPanel(
+        { commit, dispatch, state, getters },
+        { parentName, depth = 0, laneKey = null, args } = {},
+      ) {
         const parent = String(parentName || '').trim()
         if (!parent || !state.config?.parent_field) {
           return false
@@ -2703,10 +2709,20 @@ export function createKanbanStore() {
         commit('BUMP_CHILD_PANEL_ORDINAL')
         const scopeId = childPanelKey(parent, level)
         const columns = buildEmptyChildColumns(state.columns)
+        let hostLaneKey = null
+        if (
+          level === 0
+          && getters.swimlanesEnabled
+          && laneKey != null
+          && String(laneKey).trim() !== ''
+        ) {
+          hostLaneKey = String(laneKey)
+        }
         commit('OPEN_CHILD_PANEL', {
           scopeId,
           parentName: parent,
           depth: level,
+          hostLaneKey,
           ordinal: state.nextChildPanelOrdinal,
           columns,
           columnPagination: createChildColumnPagination(columns, true),
@@ -4570,6 +4586,23 @@ export function createKanbanStore() {
         const panel = scopeId ? state.childPanels[scopeId] : null
         return Boolean(panel && panel.parentName === String(parentName || ''))
       },
+      isChildPanelHostFor: (state) => (parentName, depth = 0, laneKey = null) => {
+        const scopeId = state.childPanelByDepth[depth]
+        const panel = scopeId ? state.childPanels[scopeId] : null
+        if (!panel || panel.parentName !== String(parentName || '')) {
+          return false
+        }
+        const hostKey = panel.hostLaneKey != null && String(panel.hostLaneKey).trim() !== ''
+          ? String(panel.hostLaneKey)
+          : null
+        if (hostKey == null) {
+          return true
+        }
+        if (laneKey == null || String(laneKey).trim() === '') {
+          return false
+        }
+        return String(laneKey) === hostKey
+      },
       getChildPanelScopeId: (state) => (parentName, depth = 0) => {
         const scopeId = state.childPanelByDepth[depth]
         const panel = scopeId ? state.childPanels[scopeId] : null
@@ -4595,13 +4628,31 @@ export function createKanbanStore() {
         }
         return names
       },
-      getCardChildPanelMode: (state, getters) => (cardName, childDepth = 0) => {
+      getCardChildPanelMode: (state, getters) => (cardName, childDepth = 0, laneKey = null) => {
         const maxDepth = getters.maxOpenChildPanelDepth
         if (maxDepth == null) {
           return 'active'
         }
         const name = String(cardName || '').trim()
         if (name && getters.childPanelAncestorNames.has(name)) {
+          let hostLaneKey = null
+          for (const scopeId of Object.values(state.childPanelByDepth || {})) {
+            const panel = scopeId ? state.childPanels?.[scopeId] : null
+            if (panel && String(panel.parentName || '').trim() === name) {
+              hostLaneKey = panel.hostLaneKey != null && String(panel.hostLaneKey).trim() !== ''
+                ? String(panel.hostLaneKey)
+                : null
+              break
+            }
+          }
+          if (
+            hostLaneKey != null
+            && laneKey != null
+            && String(laneKey).trim() !== ''
+            && String(laneKey) !== hostLaneKey
+          ) {
+            return 'inert'
+          }
           return 'ancestor'
         }
         if (Number(childDepth) === maxDepth + 1) {

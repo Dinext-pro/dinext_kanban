@@ -334,6 +334,8 @@ test('forwards the drag origin supplied by the virtual list', async () => {
     fromLaneIndex: null,
     fromLaneKey: null,
     fromIndex: 0,
+    childDepth: 0,
+    childScopeId: null,
   })
 })
 
@@ -1129,5 +1131,102 @@ test('swimlane cell shows forbidden overlay mark while dragging into a blocked c
   expect(wrapper.classes()).toContain('kanban-column-drop-forbidden')
   expect(wrapper.find('.kanban-column-drop-overlay').exists()).toBe(true)
   expect(wrapper.find('.kanban-column-drop-overlay__mark').exists()).toBe(true)
+  wrapper.unmount()
+})
+
+test('disables Add outside the deepest open child panel', async () => {
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_CREATE_OPTIONS_BY_COLUMN', {
+    Open: {
+      allowed: true,
+      reason: null,
+      form_mode: 'quick_entry',
+      missing_mandatory: [],
+      missing_fieldnames: [],
+    },
+  })
+  await wrapper.vm.$nextTick()
+
+  const headerAdd = wrapper.get('[aria-label="Add Task to Open"]')
+  const footerAdd = wrapper.get('.addcard button')
+  expect(headerAdd.attributes('disabled')).toBeUndefined()
+  expect(footerAdd.attributes('disabled')).toBeUndefined()
+
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT-A',
+    parentName: 'PARENT-A',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  expect(headerAdd.attributes('disabled')).toBeDefined()
+  expect(footerAdd.attributes('disabled')).toBeDefined()
+  wrapper.unmount()
+})
+
+test('keeps Add enabled inside the deepest child panel columns', async () => {
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+    parent_field: 'parent_task',
+  })
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards: [],
+  }
+  store.commit('SET_COLUMNS', [column])
+  store.commit('SET_CREATE_OPTIONS_BY_COLUMN', {
+    Open: {
+      allowed: true,
+      reason: null,
+      form_mode: 'quick_entry',
+      missing_mandatory: [],
+      missing_fieldnames: [],
+    },
+  })
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT-A',
+    parentName: 'PARENT-A',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+    columnPagination: {},
+    columnTotals: {},
+  })
+
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      childDepth: 1,
+      hideHeader: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          inheritAttrs: false,
+          template: '<div role="list" class="kanban-card-list"><slot name="footer" /></div>',
+        },
+      },
+    },
+  })
+
+  expect(wrapper.get('.addcard button').attributes('disabled')).toBeUndefined()
   wrapper.unmount()
 })

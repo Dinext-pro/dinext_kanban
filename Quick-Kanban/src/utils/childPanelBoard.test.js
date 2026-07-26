@@ -116,4 +116,25 @@ describe('childPanelBoard', () => {
     expect(resolvePanelHostSpacer(root, 'TASK-L1', 1)?.id).toBe('panel-spacer-l1')
     expect(resolvePanelHostSpacer(root, 'TASK-L2', 2)?.id).toBe('nested-spacer-l2')
   })
+
+  test('resolvePanelHostCard prefers matching swimlane hostLaneKey at depth 0', () => {
+    const root = document.createElement('div')
+    root.innerHTML = `
+      <div class="kanban">
+        <section class="swimlane-lane" data-lane-key="alice">
+          <div class="kanban-card" data-card-name="TASK-DUP" id="host-alice"></div>
+          <div class="child-panel-spacer" data-panel-parent="TASK-DUP" id="spacer-alice"></div>
+        </section>
+        <section class="swimlane-lane" data-lane-key="bob">
+          <div class="kanban-card" data-card-name="TASK-DUP" id="host-bob"></div>
+          <div class="child-panel-spacer" data-panel-parent="TASK-DUP" id="spacer-bob"></div>
+        </section>
+      </div>
+    `
+    expect(resolvePanelHostCard(root, 'TASK-DUP', 0, 'bob')?.id).toBe('host-bob')
+    expect(resolvePanelHostCard(root, 'TASK-DUP', 0, 'alice')?.id).toBe('host-alice')
+    // Unknown lane falls back to first board instance.
+    expect(resolvePanelHostCard(root, 'TASK-DUP', 0, 'carol')?.id).toBe('host-alice')
+    expect(resolvePanelHostSpacer(root, 'TASK-DUP', 0, 'bob')?.id).toBe('spacer-bob')
+  })
 })

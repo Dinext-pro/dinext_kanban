@@ -334,10 +334,10 @@ const forceCollapsed = computed(
   () => Boolean(store.state.densityForceCollapsedCards?.[props.card.name]),
 )
 const childPanelOpen = computed(() =>
-  store.getters.isChildPanelOpenFor(props.card.name, props.childDepth),
+  store.getters.isChildPanelHostFor(props.card.name, props.childDepth, props.laneKey),
 )
 const panelMode = computed(() =>
-  store.getters.getCardChildPanelMode(props.card.name, props.childDepth),
+  store.getters.getCardChildPanelMode(props.card.name, props.childDepth, props.laneKey),
 )
 const isPanelInteractionActive = computed(() => panelMode.value === 'active')
 const panelModeClasses = computed(() => ({
@@ -526,6 +526,7 @@ function onChildCountClick() {
   store.dispatch('toggleChildPanel', {
     parentName: props.card.name,
     depth: props.childDepth,
+    laneKey: props.laneKey,
   })
 }
 
@@ -534,6 +535,7 @@ function onPanelDismissCardClick() {
     store.dispatch('toggleChildPanel', {
       parentName: props.card.name,
       depth: props.childDepth,
+      laneKey: props.laneKey,
     })
     return
   }
