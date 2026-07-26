@@ -182,6 +182,7 @@ import { flashMovedCard } from "../../utils/cardMoveFlash";
 import {
   getScrollerTopInset,
   resolveComponentRootEl,
+  revealCardInChildColumn,
   revealCardInColumn,
   scrollCardToScrollerTop,
   scrollColumnIntoView,
@@ -1570,6 +1571,8 @@ function onColumnRailDblclick(column) {
 const columnRefs = ref([])
 const headerColumnRefs = ref({})
 const cellColumnRefs = ref({})
+/** scopeId → { [columnIndex]: component handle } */
+const childColumnRefs = ref({})
 const loading = computed(() => store.state.loading)
 const error = computed(() => store.state.error)
 const announcement = computed(() => store.state.announcement)
@@ -1776,6 +1779,29 @@ function registerCellColumnRef(listId, el) {
   delete cellColumnRefs.value[listId]
 }
 
+function registerChildColumnRef(scopeId, columnIndex, el) {
+  const scope = String(scopeId || '').trim()
+  if (!scope || !Number.isFinite(columnIndex)) {
+    return
+  }
+  const byScope = { ...(childColumnRefs.value[scope] || {}) }
+  if (el) {
+    byScope[columnIndex] = el
+  } else {
+    delete byScope[columnIndex]
+  }
+  if (Object.keys(byScope).length === 0) {
+    const next = { ...childColumnRefs.value }
+    delete next[scope]
+    childColumnRefs.value = next
+    return
+  }
+  childColumnRefs.value = {
+    ...childColumnRefs.value,
+    [scope]: byScope,
+  }
+}
+
 function resolveColumnDomEl(columnIndex, { preferHeader = false } = {}) {
   const board = kanbanBoard.value
   const column = columns.value[columnIndex]
@@ -1811,7 +1837,10 @@ function resolveColumnDomEl(columnIndex, { preferHeader = false } = {}) {
   return board.querySelector(`.kanban-column[data-column-value="${escaped}"]`)
 }
 
-function resolveCardColumnComponent(columnIndex, laneIndex) {
+function resolveCardColumnComponent(columnIndex, laneIndex, childScopeId = null) {
+  if (childScopeId) {
+    return childColumnRefs.value[childScopeId]?.[columnIndex] || null
+  }
   if (swimlanesEnabled.value && Number.isFinite(laneIndex)) {
     const listId = encodeCellListId(laneIndex, columnIndex)
     return cellColumnRefs.value[listId] || null
@@ -1851,6 +1880,7 @@ async function scrollToMovedCard({
   cardName,
   cardIndex,
   laneIndex = null,
+  childScopeId = null,
 }) {
   const { didExpandColumn, didExpandLane } = await expandDestinationForReveal(
     columnIndex,
@@ -1870,6 +1900,36 @@ async function scrollToMovedCard({
   }
 
   const board = kanbanBoard.value
+
+  if (childScopeId) {
+    const childComponent = resolveCardColumnComponent(
+      columnIndex,
+      laneIndex,
+      childScopeId,
+    )
+    const horizontalEl = resolveComponentRootEl(childComponent)
+    if (board && horizontalEl) {
+      // Child panel rides board.scrollLeft; .child-panel-scroll is overflow:visible.
+      scrollColumnIntoView(horizontalEl, board, {
+        behavior: 'auto',
+      })
+      await waitForPaint()
+    }
+    await revealCardInChildColumn({
+      cardName,
+      cardIndex,
+      root: board || document,
+      getListEl: () => (
+        resolveComponentRootEl(childComponent)?.querySelector?.('.kanban-card-list')
+        || null
+      ),
+      scrollToCard: (name, index) => {
+        childComponent?.scrollToCard?.(name, index)
+      },
+    })
+    return
+  }
+
   const horizontalEl = resolveColumnDomEl(columnIndex, {
     preferHeader: swimlanesEnabled.value,
   })
@@ -1905,6 +1965,7 @@ async function scrollToMovedCard({
 provide('scrollToMovedCard', scrollToMovedCard)
 provide('registerHeaderColumnRef', registerHeaderColumnRef)
 provide('registerCellColumnRef', registerCellColumnRef)
+provide('registerChildColumnRef', registerChildColumnRef)
 
 watch(
   () => store.state.revealCreatedCard,
@@ -2220,6 +2281,20 @@ async function dropChildPanel({ event, context, toId, fromId }) {
   await nextTick()
   if (result?.needsAnimatedRollback) {
     await playRollbackAnimation(context.cardName, destinationRect)
+  }
+
+  await nextTick()
+  if (result?.ok) {
+    try {
+      await scrollToMovedCard({
+        columnIndex: toColumn,
+        cardName: context.cardName,
+        cardIndex: event.newIndex,
+        childScopeId,
+      })
+    } catch {
+      // Reveal is best-effort; move already succeeded.
+    }
   }
   await flashMovedCard(context.cardName, {
     outcome: result?.ok ? 'success' : 'failure',

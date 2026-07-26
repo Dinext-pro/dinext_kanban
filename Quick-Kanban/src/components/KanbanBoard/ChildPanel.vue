@@ -26,6 +26,10 @@
           :data-column-value="column.column_name"
           :style="columnTrackStyle(column)"
           aria-hidden="true"
+          @pointerenter="onCollapsedSpacerPointerEnter(column)"
+          @pointerleave="onCollapsedSpacerPointerLeave"
+          @dragenter.prevent="onCollapsedSpacerPointerEnter(column)"
+          @dragleave="onCollapsedSpacerPointerLeave"
           @dblclick="onCollapsedColumnDblclick(column)"
         />
         <section
@@ -65,7 +69,11 @@ import {
 } from 'vue'
 import { useStore } from 'vuex'
 import KanbanColumn from './KanbanColumn.vue'
-import { getColumnKey, getIndicatorClass } from '../../utils/kanban'
+import {
+  COLUMN_DRAG_EXPAND_DELAY_MS,
+  getColumnKey,
+  getIndicatorClass,
+} from '../../utils/kanban'
 import {
   childPanelColumnTintValue,
   encodeChildListId,
@@ -87,6 +95,8 @@ const __ = globalThis.__
 const boardColumnTracks = inject('boardColumnTracks', computed(() => ''))
 const panelRoot = ref(null)
 let resizeObserver = null
+let expandOnDragTimer = null
+const activeDrag = computed(() => store.getters.activeDragCard)
 
 const panel = computed(() => store.getters.getChildPanel(props.scopeId))
 const ordinal = computed(() => panel.value?.ordinal ?? 0)
@@ -151,6 +161,51 @@ function onCollapsedColumnDblclick(column) {
   })
 }
 
+function clearExpandOnDragTimer() {
+  if (expandOnDragTimer) {
+    clearTimeout(expandOnDragTimer)
+    expandOnDragTimer = null
+  }
+}
+
+function scheduleExpandCollapsedColumn(column) {
+  const drag = activeDrag.value
+  if (!drag?.cardName || drag.childScopeId !== props.scopeId) {
+    return
+  }
+  const columnKey = getColumnKey(column)
+  if (!columnKey || !store.getters.isColumnCollapsed(columnKey)) {
+    return
+  }
+  if (expandOnDragTimer) {
+    return
+  }
+  expandOnDragTimer = setTimeout(() => {
+    expandOnDragTimer = null
+    const stillDragging = activeDrag.value
+    if (
+      !stillDragging?.cardName
+      || stillDragging.childScopeId !== props.scopeId
+    ) {
+      return
+    }
+    if (store.getters.isColumnCollapsed(columnKey)) {
+      store.commit('SET_COLUMN_COLLAPSED', {
+        columnKey,
+        collapsed: false,
+      })
+    }
+  }, COLUMN_DRAG_EXPAND_DELAY_MS)
+}
+
+function onCollapsedSpacerPointerEnter(column) {
+  scheduleExpandCollapsedColumn(column)
+}
+
+function onCollapsedSpacerPointerLeave() {
+  clearExpandOnDragTimer()
+}
+
 function onColumnDragStart(event) {
   emits('dragstart', {
     ...event,
@@ -190,6 +245,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  clearExpandOnDragTimer()
   resizeObserver?.disconnect()
   resizeObserver = null
 })

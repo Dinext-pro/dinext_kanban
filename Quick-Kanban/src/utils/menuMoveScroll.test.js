@@ -7,6 +7,7 @@ import {
   isCardVisibleInScroller,
   resolveComponentRootEl,
   resolveScrollBehavior,
+  revealCardInChildColumn,
   revealCardInColumn,
   revealMovedCard,
   scrollCardIntoScroller,
@@ -235,6 +236,101 @@ describe('menu move scroll', () => {
     expect(isCardVisibleInScroller(partiallyObscured, scrollerEl, { topInset: 40 })).toBe(true)
     expect(isCardRevealedInScroller(partiallyObscured, scrollerEl, { topInset: 40 })).toBe(false)
     expect(isCardRevealedInScroller(cleared, scrollerEl, { topInset: 40 })).toBe(true)
+  })
+
+  test('revealCardInChildColumn scrolls VirtualList once and aligns list once when off-screen', async () => {
+    const scrollToCard = vi.fn()
+    let cardTop = 500
+    const cardEl = {
+      classList: { contains: (name) => name === 'kanban-card' },
+      scrollIntoView: vi.fn(),
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: cardTop,
+        bottom: cardTop + 80,
+      }),
+    }
+    const listEl = {
+      scrollTop: 0,
+      scrollHeight: 2000,
+      clientHeight: 300,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        const delta = top - this.scrollTop
+        this.scrollTop = top
+        cardTop -= delta
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 280,
+        top: 0,
+        bottom: 300,
+      }),
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return cardEl
+        }
+        return null
+      }),
+    }
+
+    const revealed = await revealCardInChildColumn({
+      cardName: 'CHILD-1',
+      cardIndex: 4,
+      getListEl: () => listEl,
+      scrollToCard,
+    })
+
+    expect(scrollToCard).toHaveBeenCalledTimes(1)
+    expect(scrollToCard).toHaveBeenCalledWith('CHILD-1', 4)
+    expect(listEl.scrollTo).toHaveBeenCalledTimes(1)
+    expect(listEl.scrollTo).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'auto' }),
+    )
+    expect(cardEl.scrollIntoView).not.toHaveBeenCalled()
+    expect(revealed).toBe(true)
+  })
+
+  test('revealCardInChildColumn skips list align when card already visible', async () => {
+    const scrollToCard = vi.fn()
+    const cardEl = {
+      classList: { contains: (name) => name === 'kanban-card' },
+      scrollIntoView: vi.fn(),
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 40,
+        bottom: 120,
+      }),
+    }
+    const listEl = {
+      scrollTop: 0,
+      scrollTo: vi.fn(),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 280,
+        top: 0,
+        bottom: 300,
+      }),
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return cardEl
+        }
+        return null
+      }),
+    }
+
+    const revealed = await revealCardInChildColumn({
+      cardName: 'CHILD-1',
+      cardIndex: 0,
+      getListEl: () => listEl,
+      scrollToCard,
+    })
+
+    expect(scrollToCard).toHaveBeenCalledTimes(1)
+    expect(listEl.scrollTo).not.toHaveBeenCalled()
+    expect(cardEl.scrollIntoView).not.toHaveBeenCalled()
+    expect(revealed).toBe(true)
   })
 
   test('revealCardInColumn clears sticky with nearest scroll when partially obscured', async () => {

@@ -1551,6 +1551,32 @@ export function createKanbanStore() {
         column.cards = cards
         state.dragSyncGeneration += 1
       },
+      PREPEND_CREATED_CARD_TO_CHILD(state, {
+        childScopeId,
+        columnIndex,
+        card,
+        incrementTotal = true,
+      }) {
+        const panel = childScopeId ? state.childPanels[childScopeId] : null
+        const column = panel?.columns?.[columnIndex]
+        if (!panel || !column) return
+
+        const cards = [...(column.cards || [])]
+        const existingIndex = cards.findIndex(({ name }) => name === card.name)
+        if (existingIndex >= 0) {
+          cards.splice(existingIndex, 1)
+        } else if (incrementTotal) {
+          const colKey = column.column_name
+          const totals = { ...(panel.columnTotals || {}) }
+          if (Number.isFinite(totals[colKey])) {
+            totals[colKey] += 1
+            panel.columnTotals = totals
+          }
+        }
+        cards.unshift(card)
+        column.cards = cards
+        state.dragSyncGeneration += 1
+      },
     },
     actions: {
       async hydrateFromList({ commit, dispatch, state }, {
@@ -3172,7 +3198,10 @@ export function createKanbanStore() {
           commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
         }
       },
-      startCreateCard({ commit, dispatch, state }, { columnIndex, column, laneKey = null }) {
+      startCreateCard(
+        { commit, dispatch, state },
+        { columnIndex, column, laneKey = null, childScopeId = null },
+      ) {
         const formMode = resolveCreateFormMode(
           column,
           state.config,
@@ -3187,10 +3216,18 @@ export function createKanbanStore() {
           return false
         }
 
+        const scopeId = childScopeId ? String(childScopeId) : null
+        const panel = scopeId ? state.childPanels?.[scopeId] : null
+        const parentName = panel?.parentName ? String(panel.parentName) : null
+        const parentField = state.config?.parent_field
+
         const swimlanePlan = buildSwimlaneCreateDefaults(state.config, laneKey)
         const defaults = {
           [state.config.field_name]: column.column_name,
           ...swimlanePlan.defaults,
+        }
+        if (scopeId && parentName && parentField) {
+          defaults[parentField] = parentName
         }
         commit('SET_PENDING_CREATE', {
           column_name: column.column_name,
@@ -3199,6 +3236,7 @@ export function createKanbanStore() {
           form_mode: formMode.mode,
           laneKey: laneKey != null ? String(laneKey) : null,
           assign_to: swimlanePlan.assignTo,
+          childScopeId: scopeId,
         })
 
         return openCreateForm({
@@ -3237,7 +3275,15 @@ export function createKanbanStore() {
         }
 
         const card = docToCard(doc, state.config)
-        if (!filterCardsForChildVisibility([card], state).length) {
+        const childScopeId = pending?.childScopeId || null
+        if (
+          !childScopeId
+          && !filterCardsForChildVisibility([card], state).length
+        ) {
+          commit('CLEAR_PENDING_CREATE')
+          return false
+        }
+        if (childScopeId && !state.childPanels?.[childScopeId]) {
           commit('CLEAR_PENDING_CREATE')
           return false
         }
@@ -3265,8 +3311,18 @@ export function createKanbanStore() {
           }
         }
 
-        const columnName = state.columns[columnIndex]?.column_name || statusValue
-        if (swimlanesActive(state) && pending?.laneKey != null) {
+        const columnName = childScopeId
+          ? (state.childPanels[childScopeId]?.columns?.[columnIndex]?.column_name
+            || state.columns[columnIndex]?.column_name
+            || statusValue)
+          : (state.columns[columnIndex]?.column_name || statusValue)
+        if (childScopeId) {
+          commit('PREPEND_CREATED_CARD_TO_CHILD', {
+            childScopeId,
+            columnIndex,
+            card,
+          })
+        } else if (swimlanesActive(state) && pending?.laneKey != null) {
           if (!cardMatchesLane(card, pending.laneKey, state.config)) {
             commit('CLEAR_PENDING_CREATE')
             return false
@@ -3284,7 +3340,7 @@ export function createKanbanStore() {
           columnName,
         })
         let laneIndex = null
-        if (pending?.laneKey != null) {
+        if (!childScopeId && pending?.laneKey != null) {
           const found = (state.lanes || []).findIndex(
             (lane) => String(lane.key ?? '') === String(pending.laneKey),
           )
@@ -3295,6 +3351,7 @@ export function createKanbanStore() {
           columnIndex,
           cardIndex: 0,
           laneIndex,
+          childScopeId,
         })
         commit('CLEAR_PENDING_CREATE')
         dispatch('scheduleMoveOptionsRefresh')
@@ -3303,7 +3360,7 @@ export function createKanbanStore() {
           boardGeneration: state.boardGeneration,
         })
         dispatch('hydrateBoardDocumentNames')
-        if (!swimlanesActive(state)) {
+        if (!childScopeId && !swimlanesActive(state)) {
           dispatch('fetchColumnTotals')
         }
         return true

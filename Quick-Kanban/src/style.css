@@ -2162,6 +2162,7 @@ html.kanban-tag-drag-move * {
 #kanbanapp .child-panel .kanban-card-list,
 #kanbanapp .child-panel .kanban-card-list.kanban-card-list--external-scroller {
   box-sizing: border-box;
+  order: 1;
   flex: 1 1 auto;
   min-height: 0;
   height: auto !important;
@@ -2170,13 +2171,33 @@ html.kanban-tag-drag-move * {
   overflow: visible !important;
 }
 
-/* Deepest panel: flat-style per-column vertical scroll. */
+/* Deepest panel: flat-style per-column vertical scroll above stick-room + Add. */
 #kanbanapp .child-panel--viewport-fill .kanban-card-list,
 #kanbanapp .child-panel--viewport-fill .kanban-card-list.kanban-card-list--external-scroller {
-  height: 100% !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
   max-height: none !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
+}
+
+/*
+ * DOM is list → footer → stick-room; visual order is list → stick-room → Add
+ * so Add stays pinned to the column bottom while stick-room remains droppable.
+ */
+#kanbanapp .child-panel .column-stick-room-dropzone {
+  order: 2;
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  min-height: 24px;
+  height: auto;
+}
+
+#kanbanapp .child-panel .column-footer-actions {
+  order: 3;
+  flex: 0 0 auto;
 }
 
 /* Shallower open panels: no column scroll. */
