@@ -190,6 +190,8 @@
         :aria-expanded="String(childPanelOpen)"
         @click.stop="onChildCountClick"
         @pointerdown.stop
+        @pointerenter.stop="onChildCountPointerEnter"
+        @pointerleave.stop="onChildCountPointerLeave"
         @dblclick.stop
       >
         <!-- eslint-disable-next-line vue/no-v-html -- theme-aware glyph from childTreeIcon.js -->
@@ -265,6 +267,7 @@ import {
   CARD_COLLAPSE_DELAY_MS,
   CARD_DENSITY_ANIMATION_MS,
   CARD_EXPAND_DELAY_MS,
+  CARD_EXPAND_DELAY_OVER_CHILD_COUNT_MS,
   formatCardField,
   getCardFieldDisplayValue,
   getCardTagsHtml,
@@ -716,25 +719,53 @@ onMounted(async () => {
   densityReady = true
 })
 
-function onPointerEnter(event) {
+function canScheduleHoverExpand(event) {
   if (!minimizeCards.value || childPanelOpen.value || !isPanelInteractionActive.value) {
-    return
+    return false
   }
-  if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
-    return
+  if (event?.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
+    return false
   }
   // Card-move DnD should not expand unrelated cards. Tag-drag allows expand
   // (also driven by tagDragHoverCard when pointerenter is suppressed under button-down).
   if (store.state.activeDrag) {
-    return
+    return false
   }
+  return true
+}
+
+function scheduleHoverExpand(delayMs) {
   clearExpandTimers()
   expandTimer = setTimeout(() => {
     expandTimer = null
     if (!store.state.activeDrag) {
       expandIntentionally()
     }
-  }, CARD_EXPAND_DELAY_MS)
+  }, delayMs)
+}
+
+function onPointerEnter(event) {
+  if (!canScheduleHoverExpand(event)) {
+    return
+  }
+  scheduleHoverExpand(CARD_EXPAND_DELAY_MS)
+}
+
+function onChildCountPointerEnter(event) {
+  if (!canScheduleHoverExpand(event)) {
+    return
+  }
+  scheduleHoverExpand(CARD_EXPAND_DELAY_OVER_CHILD_COUNT_MS)
+}
+
+function onChildCountPointerLeave(event) {
+  if (!canScheduleHoverExpand(event)) {
+    return
+  }
+  if (!isPointerOverCard()) {
+    return
+  }
+  scheduleHoverExpand(CARD_EXPAND_DELAY_MS)
 }
 
 function scheduleCollapseForHoverLeave() {
