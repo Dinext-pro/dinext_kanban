@@ -153,6 +153,40 @@ export function revealMovedCard(cardName, root = globalThis.document) {
   return true
 }
 
+/**
+ * Single-pass vertical reveal inside a child-panel column list.
+ * Does not call scrollIntoView (avoids scrolling board ancestors) and does not retry.
+ */
+export async function revealCardInChildColumn({
+  cardName,
+  cardIndex,
+  root = globalThis.document,
+  getListEl,
+  scrollToCard,
+}) {
+  if (typeof scrollToCard === 'function') {
+    scrollToCard(cardName, cardIndex)
+  }
+  await waitForPaint()
+
+  const listEl = typeof getListEl === 'function' ? getListEl() : null
+  const searchRoot = listEl || root
+  const cardEl = findCardElement(cardName, searchRoot)
+  if (!cardEl || !listEl) {
+    return Boolean(cardEl)
+  }
+  if (isCardVisibleInList(cardEl, listEl)) {
+    return true
+  }
+  scrollCardIntoScroller(cardEl, listEl, {
+    behavior: 'auto',
+    topInset: 0,
+    bottomInset: 0,
+  })
+  await waitForPaint()
+  return isCardVisibleInList(cardEl, listEl)
+}
+
 export function isCardVisibleInList(cardEl, listEl, margin = DEFAULT_MARGIN) {
   if (!cardEl || !listEl) {
     return false

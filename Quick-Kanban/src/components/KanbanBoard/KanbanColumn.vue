@@ -234,7 +234,7 @@
     </div>
 
     <div
-      v-if="externalScroller && !hasCustomBody && !headerOnly"
+      v-if="(externalScroller || childScopeId) && !hasCustomBody && !headerOnly"
       v-show="!collapsed"
       class="column-stick-room-dropzone"
       aria-hidden="true"
@@ -451,8 +451,8 @@ const columnDropClasses = computed(() => {
   if (hasCustomBody.value || props.headerOnly) {
     return {}
   }
-  // Classic columns and swimlane cells (hideHeader + externalScroller).
-  if (props.hideHeader && !props.externalScroller) {
+  // Classic columns, swimlane cells (hideHeader + externalScroller), and child panels.
+  if (props.hideHeader && !props.externalScroller && !props.childScopeId) {
     return {}
   }
   if (!activeDrag.value?.cardName) {
@@ -483,7 +483,7 @@ const showForbiddenOverlay = computed(() => {
   if (hasCustomBody.value || props.headerOnly) {
     return false
   }
-  if (props.hideHeader && !props.externalScroller) {
+  if (props.hideHeader && !props.externalScroller && !props.childScopeId) {
     return false
   }
   if (!activeDrag.value?.cardName) {
@@ -523,9 +523,25 @@ const childPanelSpacerHeights = inject('childPanelSpacerHeights', ref({}))
 const childPanelSpacerHostLanes = inject('childPanelSpacerHostLanes', ref({}))
 const childPanelSpacerAnimatingParents = inject('childPanelSpacerAnimatingParents', ref({}))
 const syncChildPanelGeometry = inject('syncChildPanelGeometry', () => {})
+const registerChildColumnRef = inject('registerChildColumnRef', null)
 let panelSpacerEl = null
 let geometryColumnScrollEl = null
 let onGeometryColumnScroll = null
+
+function childColumnRefHandle() {
+  return {
+    scrollToCard,
+    getRootEl: () => columnRootRef.value,
+    $el: columnRootRef.value,
+  }
+}
+
+function syncChildColumnRegistration(el) {
+  if (!props.childScopeId || !registerChildColumnRef) {
+    return
+  }
+  registerChildColumnRef(props.childScopeId, props.columnIndex, el)
+}
 
 /** Every panel host reserves vertical space; panels themselves are board-hosted. */
 const hostPanelDepth = computed(() => props.childDepth)
@@ -823,13 +839,16 @@ function onResizePointerDown(event) {
 }
 
 onMounted(() => {
+  syncChildColumnRegistration(childColumnRefHandle())
   nextTick(() => {
     bindScrollTopListeners()
     syncSortableNearestParticipation()
+    syncChildColumnRegistration(childColumnRefHandle())
   })
 })
 
 onBeforeUnmount(() => {
+  syncChildColumnRegistration(null)
   unbindGeometryScrollListeners()
   if (scrollTopRaf != null) {
     cancelAnimationFrame(scrollTopRaf)
@@ -920,6 +939,7 @@ function startCreate(_columnName) {
     columnIndex: props.columnIndex,
     column: props.column,
     laneKey: props.laneKey,
+    childScopeId: props.childScopeId,
   })
 }
 

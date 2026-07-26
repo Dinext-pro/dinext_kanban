@@ -2245,6 +2245,7 @@ describe('card creation', () => {
       columnIndex: 0,
       cardIndex: 0,
       laneIndex: null,
+      childScopeId: null,
     })
     expect(store.state.pendingCreate).toBeNull()
   })
@@ -2378,6 +2379,72 @@ describe('card creation', () => {
     })
   })
 
+  test('startCreateCard sets parent_field defaults and prepends into child panel', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+    })
+    store.commit('SET_SHOW_CHILD_TASKS', false)
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [] },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: { Open: 0, Done: 0 },
+    })
+    frappe.model.can_write = vi.fn(() => true)
+    frappe.model.get_new_doc.mockReturnValue({ doctype: 'Task', name: 'new-Task-1' })
+    let capturedDefaults = null
+    frappe.ui.form.make_quick_entry.mockImplementation((_dt, _cb, _init, doc) => {
+      capturedDefaults = { ...doc }
+      return Promise.resolve({})
+    })
+
+    await store.dispatch('startCreateCard', {
+      columnIndex: 0,
+      column: store.state.columns[0],
+      childScopeId: '0::PARENT',
+    })
+
+    expect(store.state.pendingCreate).toMatchObject({
+      column_name: 'Open',
+      childScopeId: '0::PARENT',
+    })
+    expect(capturedDefaults).toMatchObject({
+      status: 'Open',
+      parent_task: 'PARENT',
+    })
+
+    const created = await store.dispatch('handleCardCreated', {
+      doc: {
+        name: 'CHILD-NEW',
+        subject: 'Child task',
+        status: 'Open',
+        parent_task: 'PARENT',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+
+    expect(created).toBe(true)
+    expect(store.state.columns[0].cards.map((card) => card.name)).not.toContain('CHILD-NEW')
+    expect(store.state.childPanels['0::PARENT'].columns[0].cards[0].name).toBe('CHILD-NEW')
+    expect(store.state.childPanels['0::PARENT'].columnTotals.Open).toBe(1)
+    expect(store.state.revealCreatedCard).toEqual({
+      cardName: 'CHILD-NEW',
+      columnIndex: 0,
+      cardIndex: 0,
+      laneIndex: null,
+      childScopeId: '0::PARENT',
+    })
+  })
+
   test('prepends a created card into the swimlane cell', async () => {
     const store = hydratedStore()
     store.commit('SET_KANBAN_CONFIG', {
@@ -2425,6 +2492,7 @@ describe('card creation', () => {
       columnIndex: 0,
       cardIndex: 0,
       laneIndex: 0,
+      childScopeId: null,
     })
   })
 
@@ -2490,6 +2558,7 @@ describe('card creation', () => {
       columnIndex: 0,
       cardIndex: 0,
       laneIndex: 0,
+      childScopeId: null,
     })
   })
 

@@ -981,13 +981,14 @@ async function moveCard(toColumn) {
       fromLaneIndex: props.laneIndex,
       childScopeId,
     })
-    if (moved && scrollToMovedCard && !childScopeId) {
+    if (moved && scrollToMovedCard) {
       try {
         await scrollToMovedCard({
           columnIndex: toColumn,
           cardName: props.card.name,
           cardIndex: toIndex,
           laneIndex: props.laneIndex,
+          childScopeId,
         })
       } catch {
         // Reveal is best-effort; move already succeeded.

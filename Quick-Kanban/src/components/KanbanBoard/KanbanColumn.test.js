@@ -281,6 +281,7 @@ test('renders translated column labels while dispatching create from the column'
       columnIndex: 0,
       column: expect.objectContaining({ column_name: 'Open' }),
       laneKey: null,
+      childScopeId: null,
     })
   } finally {
     globalThis.__ = originalTranslate
@@ -306,6 +307,7 @@ test('passes swimlane laneKey when adding a card from a cell', async () => {
     columnIndex: 0,
     column: expect.objectContaining({ column_name: 'Open' }),
     laneKey: 'PROJ-1',
+    childScopeId: null,
   })
 })
 
@@ -1309,5 +1311,96 @@ test('uses board Sortable group on main columns and scoped group in child panels
   )
   childWrapper.unmount()
 
+  globalThis.__quickKanbanPermissiveMoves = previousPermissive
+})
+
+test('shows stick-room dropzone and drop chrome inside child panel columns', async () => {
+  const previousPermissive = globalThis.__quickKanbanPermissiveMoves
+  globalThis.__quickKanbanPermissiveMoves = false
+
+  const column = {
+    name: 'done',
+    column_name: 'Done',
+    display_name: 'Done',
+    indicator: 'green',
+    cards: [],
+  }
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+    status_field_meta: { fieldname: 'status', fieldtype: 'Select', read_only: 1 },
+  })
+  store.commit('SET_COLUMNS', [
+    { name: 'open', column_name: 'Open', cards: [] },
+    column,
+  ])
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [
+      { name: 'open', column_name: 'Open', cards: [] },
+      column,
+    ],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  store.commit('SET_ACTIVE_DRAG', {
+    cardName: 'CHILD-1',
+    fromColumn: 0,
+    fromIndex: 0,
+    childScopeId: '0::PARENT',
+  })
+
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 1,
+      config: store.state.config,
+      childScopeId: '0::PARENT',
+      childDepth: 1,
+      hideHeader: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          template: '<div class="kanban-card-list"><slot name="footer" /></div>',
+        },
+      },
+    },
+  })
+
+  expect(wrapper.find('.column-stick-room-dropzone').exists()).toBe(true)
+  expect(wrapper.classes()).toContain('kanban-column-drop-forbidden')
+  expect(wrapper.find('.kanban-column-drop-overlay').exists()).toBe(true)
+
+  const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  store.commit('SET_CREATE_OPTIONS_BY_COLUMN', {
+    Done: {
+      allowed: true,
+      reason: null,
+      form_mode: 'quick_entry',
+      missing_mandatory: [],
+      missing_fieldnames: [],
+    },
+  })
+  await wrapper.vm.$nextTick()
+  await wrapper.get('.addcard button').trigger('click')
+  expect(dispatchSpy).toHaveBeenCalledWith('startCreateCard', {
+    columnIndex: 1,
+    column: expect.objectContaining({ column_name: 'Done' }),
+    laneKey: null,
+    childScopeId: '0::PARENT',
+  })
+
+  wrapper.unmount()
   globalThis.__quickKanbanPermissiveMoves = previousPermissive
 })
