@@ -201,6 +201,47 @@ export function resolveChildPanelSpacerHeight({
   return Math.max(0, client - inset - host)
 }
 
+/**
+ * Flat column collapse/expand (and missing host while a ChildPanel track is a
+ * cell-spacer) can corrupt spacer-based top/height. Keep previous vertical
+ * geometry; still allow left/width updates. Swimlane never needs this.
+ *
+ * @returns {{ rect: object, verticalFrozen: boolean }}
+ */
+export function stabilizeHostPanelRectOnColumnToggle({
+  previousRect = null,
+  nextRect = null,
+  hostColumnCollapsed = false,
+  hostMissing = false,
+  verticalLock = false,
+  swimlanesEnabled = false,
+} = {}) {
+  const next = nextRect && typeof nextRect === 'object' ? { ...nextRect } : null
+  if (!next) {
+    return { rect: next, verticalFrozen: false }
+  }
+  const shouldFreeze = Boolean(
+    hostColumnCollapsed || hostMissing || verticalLock,
+  )
+  if (swimlanesEnabled || !shouldFreeze || !previousRect) {
+    return { rect: next, verticalFrozen: false }
+  }
+  const prevTop = previousRect.top
+  const prevHeight = previousRect.height
+  if (Number.isFinite(prevTop)) {
+    next.top = prevTop
+  }
+  if (Number.isFinite(prevHeight) && prevHeight > 0) {
+    next.height = prevHeight
+  }
+  return { rect: next, verticalFrozen: true }
+}
+
+/** @deprecated Use stabilizeHostPanelRectOnColumnToggle */
+export function stabilizeCollapsedHostPanelRect(options = {}) {
+  return stabilizeHostPanelRectOnColumnToggle(options)
+}
+
 /** CSS.escape for data-card-name / data-panel-parent selectors. */
 export function escapePanelParentName(parentName) {
   if (typeof CSS !== 'undefined' && CSS.escape) {

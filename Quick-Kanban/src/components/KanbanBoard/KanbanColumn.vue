@@ -478,6 +478,7 @@ const columnClasses = computed(() => ({
   'kanban-column--header-only': props.headerOnly,
   'kanban-column--external-scroller': Boolean(props.externalScroller),
   'kanban-column--swimlane-shell': hasCustomBody.value,
+  'kanban-column--child-panel-host': isChildPanelHostColumn.value,
 }))
 const showForbiddenOverlay = computed(() => {
   if (hasCustomBody.value || props.headerOnly) {
@@ -570,6 +571,11 @@ function isPanelHost(cardName) {
   }
   return matchesSpacerHostLane(cardName)
 }
+
+const isChildPanelHostColumn = computed(() => {
+  const cards = props.column?.cards || []
+  return cards.some((card) => isPanelHost(card?.name))
+})
 
 function spacerHeightFor(cardName) {
   return Math.max(0, Number(childPanelSpacerHeights.value?.[cardName]) || 0)

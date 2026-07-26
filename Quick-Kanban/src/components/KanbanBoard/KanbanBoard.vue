@@ -199,6 +199,7 @@ import {
   resolveChildPanelSpacerHeight,
   resolvePanelHostCard,
   resolvePanelHostSpacer,
+  stabilizeHostPanelRectOnColumnToggle,
 } from "../../utils/childPanelBoard";
 import {
   clearCardDropHoverElement,
@@ -326,6 +327,11 @@ provide('boardColumnTracks', boardColumnTracks)
 const childPanelPortal = ref(null)
 const boardHostedPanelRects = ref({})
 const childPanelSpacerHeights = ref({})
+/** Last known host pin scrolls while host column was expanded (survive VL reset). */
+let lastGoodHostPinScrolls = []
+/** Freeze panel Y across collapse/expand settle; skip quiet pin while set. */
+let columnCollapseVerticalLock = false
+let columnCollapseSettleGeneration = 0
 provide('childPanelSpacerHeights', childPanelSpacerHeights)
 /** Parents whose spacer height should CSS-animate (open 0→H / close H→0 only). */
 const childPanelSpacerAnimatingParents = ref({})
@@ -532,6 +538,42 @@ function restoreHostPinScrolls(saved) {
       scroller.scrollTop = entry.scrollTop
     }
   }
+}
+
+function hostPinScrollEntryKey(entry) {
+  return `${Number(entry?.depth) || 0}::${String(entry?.parentName || '')}::${
+    entry?.hostLaneKey != null ? String(entry.hostLaneKey) : ''
+  }`
+}
+
+function rememberGoodHostPinScroll(entry) {
+  if (!entry?.parentName) {
+    return
+  }
+  const key = hostPinScrollEntryKey(entry)
+  const next = {
+    parentName: String(entry.parentName).trim(),
+    depth: Number(entry.depth) || 0,
+    hostLaneKey: entry.hostLaneKey ?? null,
+    scrollTop: Math.max(0, Number(entry.scrollTop) || 0),
+  }
+  const idx = lastGoodHostPinScrolls.findIndex(
+    (item) => hostPinScrollEntryKey(item) === key,
+  )
+  if (idx >= 0) {
+    lastGoodHostPinScrolls[idx] = next
+  } else {
+    lastGoodHostPinScrolls.push(next)
+  }
+}
+
+function pruneLastGoodHostPinScrolls() {
+  const openKeys = new Set(
+    resolveOpenPanelHosts().map((host) => hostPinScrollEntryKey(host)),
+  )
+  lastGoodHostPinScrolls = lastGoodHostPinScrolls.filter(
+    (entry) => openKeys.has(hostPinScrollEntryKey(entry)),
+  )
 }
 
 /**
@@ -977,6 +1019,10 @@ async function onBoardHostedPanelHeight(parentName, height) {
   // Emit height is a layout signal; viewport-fill spacer comes from apply.
   // Do not write emit height into spacer map (avoids fight + extra VL churn).
   void height
+  if (columnCollapseVerticalLock) {
+    applyBoardHostedPanelGeometry()
+    return
+  }
   // Cards hydrate after open — quiet sync only (no second open choreography).
   const newest = resolveNewestPanelParentName() || parent
   await flushGeometryThenPin(newest, { animateOpen: false })
@@ -1072,15 +1118,47 @@ function applyBoardHostedPanelGeometry() {
         hostHeight,
       })
       rect.height = height
-      const parent = String(panel.parentName || '').trim()
-      if (parent) {
-        nextSpacerHeights[parent] = height
-        if (childPanelSpacerHeights.value?.[parent] !== height) {
-          spacerHeightsChanged = true
+      const hostColumnCollapsed = Boolean(
+        columnEl?.classList?.contains?.('kanban-column--collapsed'),
+      )
+      const hostMissing = !hostCard
+      if (hostCard && !hostColumnCollapsed && !columnCollapseVerticalLock) {
+        const scroller = resolveHostPinScroller(hostCard)
+        if (scroller) {
+          rememberGoodHostPinScroll({
+            parentName: panel.parentName,
+            depth,
+            hostLaneKey: panel.hostLaneKey,
+            scrollTop: scroller.scrollTop || 0,
+          })
         }
       }
-      nextRects[panel.scopeId] = rect
+      const { rect: stableRect, verticalFrozen } = stabilizeHostPanelRectOnColumnToggle({
+        previousRect: previousRects[panel.scopeId],
+        nextRect: rect,
+        hostColumnCollapsed,
+        hostMissing,
+        verticalLock: columnCollapseVerticalLock,
+        swimlanesEnabled: swimlanesEnabled.value,
+      })
+      const parent = String(panel.parentName || '').trim()
+      if (parent && !verticalFrozen) {
+        nextSpacerHeights[parent] = stableRect.height
+        if (childPanelSpacerHeights.value?.[parent] !== stableRect.height) {
+          spacerHeightsChanged = true
+        }
+      } else if (parent && verticalFrozen) {
+        // Keep prior pad so quiet re-pin cannot inflate spacer during collapse.
+        const prior = childPanelSpacerHeights.value?.[parent]
+        if (Number.isFinite(prior)) {
+          nextSpacerHeights[parent] = prior
+        } else {
+          nextSpacerHeights[parent] = stableRect.height
+        }
+      }
+      nextRects[panel.scopeId] = stableRect
     }
+    pruneLastGoodHostPinScrolls()
     // Spacers live for every open host until close/exit cleanup.
     // Exiting hosts are kept at 0 inside commitChildPanelSpacerHeights for leave layout.
     const previousSpacer = childPanelSpacerHeights.value || {}
@@ -1227,7 +1305,7 @@ function flushGeometryThenPin(parentName, { animateOpen = false } = {}) {
       if (!doAnimateOpen) {
         // Quiet path: geometry only + instant pin if VL dropped the host.
         ensureNestedPinLocks()
-        if (!pinTargetNearTop()) {
+        if (!columnCollapseVerticalLock && !pinTargetNearTop()) {
           await pinTarget('auto')
         }
         restorePreserved()
@@ -1495,8 +1573,25 @@ watch(
     if (!boardHostedChildPanels.value.length) {
       return
     }
+    const generation = ++columnCollapseSettleGeneration
+    columnCollapseVerticalLock = true
     await nextTick()
-    syncBoardHostedPanelGeometry()
+    await waitAnimationFrame()
+    if (generation !== columnCollapseSettleGeneration) {
+      return
+    }
+    restoreHostPinScrolls(lastGoodHostPinScrolls)
+    applyBoardHostedPanelGeometry()
+    await waitMs(COLUMN_COLLAPSE_ANIMATION_MS)
+    if (generation !== columnCollapseSettleGeneration) {
+      return
+    }
+    restoreHostPinScrolls(lastGoodHostPinScrolls)
+    if (generation !== columnCollapseSettleGeneration) {
+      return
+    }
+    columnCollapseVerticalLock = false
+    applyBoardHostedPanelGeometry()
   },
   { deep: true },
 )
