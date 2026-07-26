@@ -192,9 +192,12 @@
         @pointerdown.stop
         @dblclick.stop
       >
-        <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#es-line-bullet-list"></use>
-        </svg>
+        <!-- eslint-disable-next-line vue/no-v-html -- theme-aware glyph from childTreeIcon.js -->
+        <span
+          class="kanban-child-count__icon"
+          aria-hidden="true"
+          v-html="childTreeIconSvg"
+        ></span>
         <span class="kanban-child-count__value">{{ childCountDisplay }}</span>
       </button>
 
@@ -275,6 +278,9 @@ import { navigateToForm } from '../../utils/inlineEditing'
 import { canDropTag, canWriteCardTags } from '../../utils/tagDragDrop'
 import { formatActivityCount } from '../../utils/cardExtraInfo'
 import { deadlineToneForCard } from '../../utils/deadline'
+import { getChildTreeIconSvg } from '../../icons/childTreeIcon'
+
+const childTreeIconSvg = getChildTreeIconSvg()
 
 const CHILD_COUNT_CONTEXT = 'QuickKanban.ChildCount'
 

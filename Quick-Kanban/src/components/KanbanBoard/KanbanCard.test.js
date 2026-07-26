@@ -295,7 +295,7 @@ test('renders child count badge after highlight when _child_count > 0', () => {
   expect(childCount.element.nextElementSibling).toBe(actions.element)
   expect(childCount.text()).toContain('3')
   expect(childCount.attributes('aria-label')).toBe('Child records')
-  expect(childCount.find('use[href="#es-line-bullet-list"]').exists()).toBe(true)
+  expect(childCount.find('svg[data-icon="child-tree"]').exists()).toBe(true)
   expect(childCount.find('use[href="#icon-collapse"]').exists()).toBe(false)
   expect(childCount.find('.kanban-child-count__chevron').exists()).toBe(false)
 })
@@ -323,7 +323,7 @@ test('child count badge uses collapse icon while panel is open', async () => {
     global: { plugins: [store], stubs: { Teleport: true } },
   })
 
-  expect(wrapper.get('.kanban-child-count use').attributes('href')).toBe('#es-line-bullet-list')
+  expect(wrapper.get('.kanban-child-count svg[data-icon="child-tree"]').exists()).toBe(true)
   openChildPanelFor(store, 'TASK-1', 0)
   await flushPromises()
   expect(wrapper.get('.kanban-child-count').attributes('aria-expanded')).toBe('true')
@@ -334,7 +334,7 @@ test('child count badge uses collapse icon while panel is open', async () => {
 
   store.commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
   await flushPromises()
-  expect(wrapper.get('.kanban-child-count use').attributes('href')).toBe('#es-line-bullet-list')
+  expect(wrapper.get('.kanban-child-count svg[data-icon="child-tree"]').exists()).toBe(true)
   expect(wrapper.get('.kanban-card-meta .kanban-child-count').exists()).toBe(true)
   expect(wrapper.find('.kanban-title-area .kanban-child-count').exists()).toBe(false)
   expect(wrapper.find('.drag-handle').exists()).toBe(true)

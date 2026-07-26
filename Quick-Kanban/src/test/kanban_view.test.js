@@ -912,7 +912,7 @@ test('inserts Show child tasks between Minimize and Group By for tree doctypes',
   expect(showChildren.nextElementSibling).toBe(groupby)
   expect(groupby.nextElementSibling).toBe(filterSection)
   expect(showChildren.getAttribute('aria-label')).toBe('Show child tasks')
-  expect(showChildren.querySelector('use[href="#es-line-bullet-list"]')).toBeTruthy()
+  expect(showChildren.querySelector('svg[data-icon="child-tree"]')).toBeTruthy()
   expect(showChildren.textContent).not.toContain('Show child tasks')
   expect(showChildren.querySelector('input[type="checkbox"]').checked).toBe(false)
 })
