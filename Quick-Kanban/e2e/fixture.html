@@ -64,6 +64,19 @@
   </head>
   <body>
     <div id="kanbanapp"></div>
+    <script>
+      // Deterministic layout/geometry in Playwright: skip CSS/JS motion paths.
+      window.matchMedia = (query) => ({
+        matches: String(query).includes('prefers-reduced-motion'),
+        media: query,
+        onchange: null,
+        addListener() {},
+        removeListener() {},
+        addEventListener() {},
+        removeEventListener() {},
+        dispatchEvent() { return false },
+      })
+    </script>
     <script type="module">
       window.__ = (message, values = []) =>
         (values || []).reduce(

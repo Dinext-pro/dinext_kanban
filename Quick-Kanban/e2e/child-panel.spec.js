@@ -1085,6 +1085,269 @@ test.describe('child tasks panel', () => {
     expect(afterL2.depth0Top).toBeGreaterThanOrEqual(afterL2.stickyBottom - 4)
   })
 
+  test('flat 3-level ChildPanel keeps mid host when L2 also exists on board', async ({ page }) => {
+    const depth0 = 'TASK-FLAT-L0'
+    const midL1 = 'TASK-FLAT-L1'
+    const midL2 = 'TASK-FLAT-L2'
+    const leaf = 'TASK-FLAT-L3'
+
+    await page.addInitScript(({ depth0: root, midL1: l1, midL2: l2, leaf: l3 }) => {
+      window.__childCounts = {
+        [root]: 1,
+        [l1]: 1,
+        [l2]: 1,
+      }
+      window.__childColumnTotals = {
+        [root]: { Open: 1, Done: 0 },
+        [l1]: { Open: 1, Done: 0 },
+        [l2]: { Open: 1, Done: 0 },
+      }
+      window.__childColumnPages = {
+        [root]: {
+          Open: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [[l1, 'Flat L1 mid host', 'Open', root]],
+            user_info: {},
+          },
+          Done: { keys: ['name', 'subject', 'status', 'parent_task'], values: [], user_info: {} },
+        },
+        [l1]: {
+          Open: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [[l2, 'Flat L2 deep host', 'Open', l1]],
+            user_info: {},
+          },
+          Done: { keys: ['name', 'subject', 'status', 'parent_task'], values: [], user_info: {} },
+        },
+        [l2]: {
+          Open: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [[l3, 'Flat L3 leaf', 'Open', l2]],
+            user_info: {},
+          },
+          Done: { keys: ['name', 'subject', 'status', 'parent_task'], values: [], user_info: {} },
+        },
+      }
+      // L2 also on the main board (other column) — reproduces first-match pin bug.
+      window.__customQuickKanbanCards = [
+        {
+          name: root,
+          subject: 'Flat L0 parent',
+          status: 'Done',
+          priority: 'High',
+          expected_end_date: '2026-07-10',
+          project: 'TEST-PROJECT',
+          modified: '2026-07-10 10:00:00',
+          _child_count: 1,
+        },
+        {
+          name: l2,
+          subject: 'Flat L2 board duplicate',
+          status: 'Open',
+          priority: 'Low',
+          expected_end_date: '2026-07-11',
+          project: 'SECOND-PROJECT',
+          modified: '2026-07-10 10:00:00',
+          _child_count: 1,
+        },
+      ]
+    }, { depth0, midL1, midL2, leaf })
+
+    await page.goto('/e2e/fixture.html')
+    await expect(page.getByText('Flat L0 parent')).toBeVisible()
+    await expect(page.getByText('Flat L2 board duplicate')).toBeVisible()
+
+    await page.locator(`.kanban-card[data-card-name="${depth0}"] .kanban-child-count`).click()
+    await expect(page.getByText('Flat L1 mid host')).toBeVisible()
+
+    await page.locator(
+      `.child-panel[data-child-depth="0"] .kanban-card[data-card-name="${midL1}"] .kanban-child-count`,
+    ).click()
+    await expect(page.getByText('Flat L2 deep host')).toBeVisible()
+
+    await page.locator(
+      `.child-panel[data-child-depth="1"] .kanban-card[data-card-name="${midL2}"] .kanban-child-count`,
+    ).click()
+    await expect(page.locator('.child-panel')).toHaveCount(3)
+    await expect(page.getByText('Flat L3 leaf')).toBeVisible()
+
+    const metrics = await page.evaluate(async ({ midL1: l1, midL2: l2, depth0: root }) => {
+      await new Promise((r) => setTimeout(r, 900))
+      const panel0 = document.querySelector('.child-panel[data-child-depth="0"]')
+      const panel1 = document.querySelector('.child-panel[data-child-depth="1"]')
+      const mid = panel0?.querySelector(`.kanban-card[data-card-name="${l1}"]`)
+      const deep = panel1?.querySelector(`.kanban-card[data-card-name="${l2}"]`)
+      const d0 = [...document.querySelectorAll(`.kanban-card[data-card-name="${root}"]`)]
+        .find((card) => !card.closest('.child-panel'))
+      const boardDup = [...document.querySelectorAll(`.kanban-card[data-card-name="${l2}"]`)]
+        .find((card) => !card.closest('.child-panel'))
+      const list0 = mid?.closest('.kanban-card-list')
+      if (!mid || !deep || !d0 || !list0) {
+        return null
+      }
+      const midTop = mid.getBoundingClientRect().top
+      const deepTop = deep.getBoundingClientRect().top
+      const d0Top = d0.getBoundingClientRect().top
+      const boardDupTop = boardDup?.getBoundingClientRect().top ?? null
+      return {
+        panels: document.querySelectorAll('.child-panel').length,
+        midAncestor: mid.classList.contains('kanban-card--panel-ancestor'),
+        deepAncestor: deep.classList.contains('kanban-card--panel-ancestor'),
+        midInPanel0: Boolean(mid.closest('.child-panel[data-child-depth="0"]')),
+        deepInPanel1: Boolean(deep.closest('.child-panel[data-child-depth="1"]')),
+        nestedPin: list0.classList.contains('kanban-card-list--nested-pin'),
+        midTop,
+        deepTop,
+        d0Top,
+        boardDupTop,
+        // Mid host must stay above the deep host (stacked), not vanish.
+        midAboveDeep: midTop < deepTop - 2,
+        // Deep in-panel host must not sit on the same band as depth-0 board host.
+        deepNotOnDepth0Band: Math.abs(deepTop - d0Top) > 24,
+      }
+    }, { midL1, midL2, depth0 })
+
+    expect(metrics).not.toBeNull()
+    expect(metrics.panels).toBe(3)
+    expect(metrics.midAncestor).toBe(true)
+    expect(metrics.deepAncestor).toBe(true)
+    expect(metrics.midInPanel0).toBe(true)
+    expect(metrics.deepInPanel1).toBe(true)
+    expect(metrics.nestedPin).toBe(true)
+    expect(metrics.midAboveDeep).toBe(true)
+    expect(metrics.deepNotOnDepth0Band).toBe(true)
+  })
+
+  test('flat mid-column nested open keeps root host and board spacer stable', async ({ page }) => {
+    const depth0 = 'TASK-MID-L0'
+    const midL1 = 'TASK-MID-L1'
+
+    await page.addInitScript(({ depth0: root, midL1: l1 }) => {
+      window.__childCounts = {
+        [root]: 1,
+        [l1]: 1,
+      }
+      window.__childColumnTotals = {
+        [root]: { Open: 1, Done: 0 },
+        [l1]: { Open: 1, Done: 0 },
+      }
+      window.__childColumnPages = {
+        [root]: {
+          Open: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [[l1, 'Mid-col L1 host', 'Open', root]],
+            user_info: {},
+          },
+          Done: { keys: ['name', 'subject', 'status', 'parent_task'], values: [], user_info: {} },
+        },
+        [l1]: {
+          Open: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [['TASK-MID-L2', 'Mid-col L2 leaf', 'Open', l1]],
+            user_info: {},
+          },
+          Done: { keys: ['name', 'subject', 'status', 'parent_task'], values: [], user_info: {} },
+        },
+      }
+      const fillers = Array.from({ length: 8 }, (_, index) => ({
+        name: `FILLER-MID-${index + 1}`,
+        subject: `Filler above root ${index + 1}`,
+        status: 'Done',
+        priority: 'Low',
+        expected_end_date: '2026-07-11',
+        project: 'TEST-PROJECT',
+        modified: '2026-07-10 10:00:00',
+      }))
+      window.__customQuickKanbanCards = [
+        ...fillers,
+        {
+          name: root,
+          subject: 'Mid-col L0 parent',
+          status: 'Done',
+          priority: 'High',
+          expected_end_date: '2026-07-10',
+          project: 'TEST-PROJECT',
+          modified: '2026-07-10 10:00:00',
+          _child_count: 1,
+        },
+      ]
+    }, { depth0, midL1 })
+
+    await page.goto('/e2e/fixture.html')
+    await expect(page.getByText('Mid-col L0 parent')).toBeVisible()
+
+    await page.locator(`.kanban-card[data-card-name="${depth0}"] .kanban-child-count`).click({
+      force: true,
+    })
+    await expect(page.getByText('Mid-col L1 host')).toBeVisible()
+
+    const afterDepth0 = await page.evaluate(async ({ depth0: root }) => {
+      await new Promise((r) => setTimeout(r, 700))
+      const d0 = [...document.querySelectorAll(`.kanban-card[data-card-name="${root}"]`)]
+        .find((card) => !card.closest('.child-panel'))
+      const spacer = document.querySelector(`.child-panel-spacer[data-panel-parent="${root}"]`)
+      if (!d0 || !spacer) {
+        return null
+      }
+      return {
+        top: d0.getBoundingClientRect().top,
+        spacerHeight: spacer.getBoundingClientRect().height,
+        listScrollTop: d0.closest('.kanban-card-list')?.scrollTop ?? 0,
+      }
+    }, { depth0 })
+    expect(afterDepth0).not.toBeNull()
+    expect(afterDepth0.spacerHeight).toBeGreaterThan(100)
+    expect(afterDepth0.listScrollTop).toBeGreaterThan(0)
+
+    await page.locator(
+      `.child-panel[data-child-depth="0"] .kanban-card[data-card-name="${midL1}"] .kanban-child-count`,
+    ).click({ force: true })
+    await expect(page.getByText('Mid-col L2 leaf')).toBeVisible()
+    await expect(page.locator('.child-panel')).toHaveCount(2)
+
+    const afterNested = await page.evaluate(async ({ depth0: root, midL1: l1, before }) => {
+      await new Promise((r) => setTimeout(r, 900))
+      const d0 = [...document.querySelectorAll(`.kanban-card[data-card-name="${root}"]`)]
+        .find((card) => !card.closest('.child-panel'))
+      const mid = document.querySelector(
+        `.child-panel[data-child-depth="0"] .kanban-card[data-card-name="${l1}"]`,
+      )
+      const rootSpacer = document.querySelector(`.child-panel-spacer[data-panel-parent="${root}"]`)
+      const midSpacer = document.querySelector(`.child-panel-spacer[data-panel-parent="${l1}"]`)
+      const list = d0?.closest('.kanban-card-list')
+      if (!d0 || !mid || !rootSpacer) {
+        return null
+      }
+      return {
+        top: d0.getBoundingClientRect().top,
+        topDelta: Math.abs(d0.getBoundingClientRect().top - before.top),
+        scrollDelta: Math.abs((list?.scrollTop ?? 0) - before.listScrollTop),
+        rootSpacerHeight: rootSpacer.getBoundingClientRect().height,
+        midSpacerHeight: midSpacer?.getBoundingClientRect().height ?? 0,
+        midAncestor: mid.classList.contains('kanban-card--panel-ancestor'),
+        nestedPin: Boolean(mid.closest('.kanban-card-list')?.classList.contains('kanban-card-list--nested-pin')),
+        viewportFillCount: document.querySelectorAll('.child-panel--viewport-fill').length,
+        deepestFill: document
+          .querySelector('.child-panel[data-child-depth="1"]')
+          ?.classList.contains('child-panel--viewport-fill') ?? false,
+        shallowFill: document
+          .querySelector('.child-panel[data-child-depth="0"]')
+          ?.classList.contains('child-panel--viewport-fill') ?? false,
+      }
+    }, { depth0, midL1, before: afterDepth0 })
+
+    expect(afterNested).not.toBeNull()
+    expect(afterNested.topDelta).toBeLessThan(8)
+    expect(afterNested.scrollDelta).toBeLessThan(8)
+    expect(afterNested.rootSpacerHeight).toBeGreaterThan(100)
+    expect(afterNested.midSpacerHeight).toBeGreaterThan(100)
+    expect(afterNested.midAncestor).toBe(true)
+    expect(afterNested.nestedPin).toBe(true)
+    expect(afterNested.viewportFillCount).toBe(1)
+    expect(afterNested.deepestFill).toBe(true)
+    expect(afterNested.shallowFill).toBe(false)
+  })
+
   test('swimlane mid-column ChildPanel keeps host card mounted and visible', async ({ page }) => {
     const midHost = 'MID-HOST'
     await page.addInitScript(({ midHost: host }) => {

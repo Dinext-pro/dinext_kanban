@@ -266,6 +266,7 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 - Клик по badge открывает **child panel** — мини-доску с теми же колонками, что у основной, отфильтрованную по родителю (`toggleChildPanel` / `OPEN_CHILD_PANEL`).
 - Панели всех уровней хостятся в portal на корне доски (flat и swimlane); под карточкой-хостом — spacer по высоте панели.
+- Открытие/закрытие анимируется (~200 ms): хост схлопывается в ancestor, spacer растёт/сжимается, панель появляется/исчезает (opacity + clip); затем плавный pin-scroll хоста к верху списка (~300 ms, ручной `scrollTop` tween — native smooth срывается remount’ами VirtualList). `prefers-reduced-motion` отключает анимации.
 - Можно открыть вложенную панель с карточки внутри уже открытой (один активный хост на уровень depth); deepest panel заполняет высоту от низа хоста до низа доски (`child-panel--viewport-fill`), внешний вертикальный скролл доски блокируется.
 - Колонки панели выровнены с колонками доски; у треков — inset tint с учётом depth и swimlane.
 

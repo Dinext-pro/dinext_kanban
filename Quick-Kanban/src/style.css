@@ -53,6 +53,8 @@
 #kanbanapp {
   min-height: 70vh;
   --kanban-column-gutter: 8px;
+  --kanban-child-panel-anim-ms: 200ms;
+  --kanban-child-panel-pin-ms: 300ms;
   --amber-200: var(--yellow-200);
   --amber-800: var(--yellow-800);
   --teal-200: var(--cyan-200);
@@ -1174,6 +1176,8 @@ body.kanban-column-resize-active * {
 
 #kanbanapp .kanban-card {
   --kanban-card-density-duration: 200ms;
+  --kanban-child-panel-anim-ms: 200ms;
+  --kanban-child-panel-pin-ms: 300ms;
   --kanban-card-shadow: var(--shadow-sm);
   display: flex;
   position: relative;
@@ -1344,7 +1348,13 @@ body.kanban-column-resize-active * {
   justify-content: space-between;
   margin: 12px 0 5px;
   gap: 8px;
-  transition: margin var(--kanban-card-density-duration) ease;
+  max-height: 160px;
+  opacity: 1;
+  overflow: hidden;
+  transition:
+    margin var(--kanban-card-density-duration) ease,
+    max-height var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease,
+    opacity var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease;
 }
 
 #kanbanapp .kanban-card-fields-slot {
@@ -1913,6 +1923,13 @@ html.kanban-tag-drag-move * {
     var(--card-bg) 90%,
     var(--kanban-host-panel-border) 100%
   );
+  transition:
+    padding var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    gap var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    margin-bottom var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    border-radius var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    box-shadow 150ms ease,
+    border-color 150ms ease;
 }
 
 #kanbanapp .kanban-card--panel-ancestor.kanban-card--panel-host-nested {
@@ -1960,7 +1977,11 @@ html.kanban-tag-drag-move * {
 }
 
 #kanbanapp .kanban-card--panel-ancestor .kanban-card-meta {
-  display: none;
+  max-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 #kanbanapp .child-panel-portal {
@@ -1998,6 +2019,7 @@ html.kanban-tag-drag-move * {
 }
 
 #kanbanapp .child-panel {
+  --kanban-child-panel-anim-ms: 200ms;
   --child-panel-radius: var(--swimlane-lane-radius, 12px);
   --child-panel-tint: var(
     --swimlane-lane-tint,
@@ -2024,6 +2046,35 @@ html.kanban-tag-drag-move * {
   box-shadow: inset 0 0 0 1px var(--child-panel-border);
   pointer-events: auto;
   overflow: hidden;
+  transform-origin: top center;
+}
+
+/* Vue Transition / TransitionGroup for board-hosted child panels. */
+#kanbanapp .child-panel-enter-active,
+#kanbanapp .child-panel-leave-active {
+  transition:
+    opacity var(--kanban-child-panel-anim-ms, 200ms) ease-out,
+    transform var(--kanban-child-panel-anim-ms, 200ms) ease-out,
+    clip-path var(--kanban-child-panel-anim-ms, 200ms) ease-out;
+}
+
+/* Absolute teleported panels must not FLIP-move (causes remount blink). */
+#kanbanapp .child-panel-move {
+  transition: none;
+}
+
+#kanbanapp .child-panel-enter-from,
+#kanbanapp .child-panel-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+  clip-path: inset(0 0 100% 0);
+}
+
+#kanbanapp .child-panel-enter-to,
+#kanbanapp .child-panel-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+  clip-path: inset(0 0 0 0);
 }
 
 #kanbanapp .child-panel--nested {
@@ -2136,6 +2187,10 @@ html.kanban-tag-drag-move * {
 #kanbanapp .child-panel-spacer {
   width: 100%;
   pointer-events: none;
+}
+
+#kanbanapp .child-panel-spacer--animate {
+  transition: height var(--kanban-child-panel-anim-ms, 200ms) ease-out;
 }
 
 #kanbanapp .kanban-vl-item--panel-host {
