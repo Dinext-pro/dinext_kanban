@@ -235,6 +235,118 @@ function normalizeFieldtypeName(fieldtype) {
   return String(fieldtype || '').replace(/ /g, '')
 }
 
+const PARENT_CREATE_SKIP_TYPES = new Set([
+  'Table',
+  'TableMultiSelect',
+  'Attach',
+  'AttachImage',
+  'Password',
+  'Image',
+  'Button',
+  'HTML',
+  'Heading',
+  'SectionBreak',
+  'ColumnBreak',
+  'TabBreak',
+  'Fold',
+])
+
+const PARENT_CREATE_SYSTEM_FIELDS = new Set([
+  'name',
+  'owner',
+  'creation',
+  'modified',
+  'modified_by',
+  'docstatus',
+  'idx',
+  'lft',
+  'rgt',
+  'old_parent',
+  'is_group',
+])
+
+/** Board / swimlane fieldnames that may be copied onto a child create form. */
+export function listParentCreateCandidateFields(config) {
+  const fields = []
+  const seen = new Set()
+  for (const field of config?.fields || []) {
+    const name = String(field || '').trim()
+    if (!name || seen.has(name)) {
+      continue
+    }
+    seen.add(name)
+    fields.push(name)
+  }
+  const swimlaneMode = config?.swimlane_mode
+  if (
+    (swimlaneMode === 'field' || swimlaneMode === 'multi')
+    && config?.swimlane_field
+  ) {
+    const name = String(config.swimlane_field).trim()
+    if (name && !seen.has(name)) {
+      fields.push(name)
+    }
+  }
+  return fields
+}
+
+/**
+ * Copy scalar parent values into create defaults (project, etc.).
+ * Skips status / parent / title / system / no_copy / set_only_once / non-scalar fieldtypes.
+ */
+export function buildParentCreateDefaults(parentDoc, config, { getMeta } = {}) {
+  if (!parentDoc || !config) {
+    return {}
+  }
+
+  const exclude = new Set(
+    [
+      ...PARENT_CREATE_SYSTEM_FIELDS,
+      config.field_name,
+      config.parent_field,
+      config.title_field,
+      config.title_field_meta?.fieldname,
+    ]
+      .filter(Boolean)
+      .map((name) => String(name)),
+  )
+
+  const resolveMeta = typeof getMeta === 'function'
+    ? getMeta
+    : (doctype) => (
+      typeof frappe?.get_meta === 'function' ? frappe.get_meta(doctype) : null
+    )
+  const meta = resolveMeta(config.ref_doctype)
+  const fieldsByName = Object.fromEntries(
+    (meta?.fields || []).map((field) => [field.fieldname, field]),
+  )
+
+  const defaults = {}
+  for (const fieldname of listParentCreateCandidateFields(config)) {
+    if (exclude.has(fieldname)) {
+      continue
+    }
+    const df = fieldsByName[fieldname]
+    if (df?.no_copy || df?.set_only_once) {
+      continue
+    }
+    const fieldtype = normalizeFieldtypeName(df?.fieldtype)
+    if (df && (PARENT_CREATE_SKIP_TYPES.has(fieldtype) || fieldtype.startsWith('Attach'))) {
+      continue
+    }
+    const value = parentDoc[fieldname]
+    if (value == null || value === '') {
+      continue
+    }
+    const valueType = typeof value
+    if (valueType !== 'string' && valueType !== 'number' && valueType !== 'boolean') {
+      continue
+    }
+    defaults[fieldname] = value
+  }
+  return defaults
+}
+
 /**
  * Apply create defaults onto a new doc. Table / Table MultiSelect values are
  * applied as child rows via frappe.model.add_child when available.

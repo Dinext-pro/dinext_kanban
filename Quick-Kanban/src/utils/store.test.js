@@ -2384,8 +2384,23 @@ describe('card creation', () => {
     store.commit('SET_KANBAN_CONFIG', {
       ...store.state.config,
       parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'project'],
     })
     store.commit('SET_SHOW_CHILD_TASKS', false)
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'PARENT',
+          subject: 'Parent task',
+          status: 'Open',
+          project: 'PROJ-1',
+          _child_count: 1,
+        }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
     store.commit('OPEN_CHILD_PANEL', {
       scopeId: '0::PARENT',
       parentName: 'PARENT',
@@ -2398,6 +2413,35 @@ describe('card creation', () => {
       ],
       columnPagination: {},
       columnTotals: { Open: 0, Done: 0 },
+    })
+    frappe.get_meta.mockReturnValue({
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [
+        { fieldname: 'project', fieldtype: 'Link' },
+        { fieldname: 'subject', fieldtype: 'Data' },
+        { fieldname: 'status', fieldtype: 'Select' },
+        { fieldname: 'parent_task', fieldtype: 'Link' },
+      ],
+    })
+    frappe.db.get_value.mockResolvedValue({ message: {} })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: { PARENT: 2 } }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return {
+          message: {
+            Open: {
+              allowed: true,
+              form_mode: 'quick_entry',
+              missing_mandatory: [],
+              missing_fieldnames: [],
+            },
+          },
+        }
+      }
+      return { message: {} }
     })
     frappe.model.can_write = vi.fn(() => true)
     frappe.model.get_new_doc.mockReturnValue({ doctype: 'Task', name: 'new-Task-1' })
@@ -2420,7 +2464,9 @@ describe('card creation', () => {
     expect(capturedDefaults).toMatchObject({
       status: 'Open',
       parent_task: 'PARENT',
+      project: 'PROJ-1',
     })
+    expect(frappe.db.get_value).not.toHaveBeenCalled()
 
     const created = await store.dispatch('handleCardCreated', {
       doc: {
@@ -2436,12 +2482,132 @@ describe('card creation', () => {
     expect(store.state.columns[0].cards.map((card) => card.name)).not.toContain('CHILD-NEW')
     expect(store.state.childPanels['0::PARENT'].columns[0].cards[0].name).toBe('CHILD-NEW')
     expect(store.state.childPanels['0::PARENT'].columnTotals.Open).toBe(1)
+    expect(store.state.columns[0].cards[0]._child_count).toBe(2)
     expect(store.state.revealCreatedCard).toEqual({
       cardName: 'CHILD-NEW',
       columnIndex: 0,
       cardIndex: 0,
       laneIndex: null,
       childScopeId: '0::PARENT',
+    })
+  })
+
+  test('deleteCard decrements parent _child_count for a child card', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [
+          {
+            name: 'PARENT',
+            subject: 'Parent task',
+            status: 'Open',
+            _child_count: 2,
+          },
+          {
+            name: 'CHILD-1',
+            subject: 'Child task',
+            status: 'Open',
+            parent_task: 'PARENT',
+            modified: '2026-07-12 12:00:00',
+          },
+        ],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_COLUMN_TOTALS', { Open: 2, Done: 0 })
+    frappe.get_meta.mockReturnValue({
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [],
+    })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.delete_card') {
+        return { message: { ok: true } }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: { PARENT: 1 } }
+      }
+      return { message: {} }
+    })
+
+    const deleted = await store.dispatch('deleteCard', { cardName: 'CHILD-1' })
+
+    expect(deleted).toBe(true)
+    expect(store.state.columns[0].cards.map((card) => card.name)).toEqual(['PARENT'])
+    expect(store.state.columns[0].cards[0]._child_count).toBe(1)
+  })
+
+  test('startCreateCard fetches missing parent fields via get_value for child create', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'project'],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'PARENT',
+          subject: 'Parent task',
+          status: 'Open',
+        }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: { Open: 0 },
+    })
+    frappe.get_meta.mockReturnValue({
+      fields: [
+        { fieldname: 'project', fieldtype: 'Link' },
+        { fieldname: 'subject', fieldtype: 'Data' },
+        { fieldname: 'status', fieldtype: 'Select' },
+      ],
+    })
+    frappe.db.get_value.mockResolvedValue({
+      message: { project: 'PROJ-FETCHED' },
+    })
+    frappe.model.can_write = vi.fn(() => true)
+    frappe.model.get_new_doc.mockReturnValue({ doctype: 'Task', name: 'new-Task-1' })
+    let capturedDefaults = null
+    frappe.ui.form.make_quick_entry.mockImplementation((_dt, _cb, _init, doc) => {
+      capturedDefaults = { ...doc }
+      return Promise.resolve({})
+    })
+
+    await store.dispatch('startCreateCard', {
+      columnIndex: 0,
+      column: store.state.columns[0],
+      childScopeId: '0::PARENT',
+    })
+
+    expect(frappe.db.get_value).toHaveBeenCalledWith(
+      'Task',
+      'PARENT',
+      expect.arrayContaining(['project']),
+    )
+    expect(capturedDefaults).toMatchObject({
+      status: 'Open',
+      parent_task: 'PARENT',
+      project: 'PROJ-FETCHED',
     })
   })
 
