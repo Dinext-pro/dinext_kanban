@@ -37,6 +37,8 @@ import {
   showMoveFailureAlert,
 } from './moveFailure'
 import {
+  buildParentCreateDefaults,
+  listParentCreateCandidateFields,
   openCreateForm,
   resolveCreateFormMode,
   showCreateBlockedMessage,
@@ -1188,6 +1190,17 @@ export function createKanbanStore() {
           apply(state.columns)
         }
         forEachChildPanel(state, (panel) => apply(panel.columns))
+      },
+      ADJUST_CHILD_COUNT(state, { cardName, delta = 0 } = {}) {
+        const name = String(cardName || '').trim()
+        if (!name || !Number.isFinite(delta) || delta === 0) {
+          return
+        }
+        const card = findCard(state, name)
+        if (!card) {
+          return
+        }
+        card._child_count = Math.max(0, (Number(card._child_count) || 0) + delta)
       },
       SET_DATA_REQUEST_ID(state, requestId) {
         state.dataRequestId = requestId
@@ -3198,7 +3211,7 @@ export function createKanbanStore() {
           commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
         }
       },
-      startCreateCard(
+      async startCreateCard(
         { commit, dispatch, state },
         { columnIndex, column, laneKey = null, childScopeId = null },
       ) {
@@ -3221,9 +3234,42 @@ export function createKanbanStore() {
         const parentName = panel?.parentName ? String(panel.parentName) : null
         const parentField = state.config?.parent_field
 
+        let parentDefaults = {}
+        if (scopeId && parentName && state.config?.ref_doctype) {
+          const card = findCard(state, parentName) || { name: parentName }
+          const candidates = listParentCreateCandidateFields(state.config)
+          const missing = candidates.filter((fieldname) => {
+            const value = card[fieldname]
+            return value == null || value === ''
+          })
+          let fetched = {}
+          if (missing.length && typeof frappe?.db?.get_value === 'function') {
+            try {
+              if (typeof frappe?.model?.with_doctype === 'function') {
+                await frappe.model.with_doctype(state.config.ref_doctype)
+              }
+              const response = await frappe.db.get_value(
+                state.config.ref_doctype,
+                parentName,
+                missing,
+              )
+              fetched = response?.message && typeof response.message === 'object'
+                ? response.message
+                : {}
+            } catch {
+              fetched = {}
+            }
+          }
+          parentDefaults = buildParentCreateDefaults(
+            { ...card, ...fetched },
+            state.config,
+          )
+        }
+
         const swimlanePlan = buildSwimlaneCreateDefaults(state.config, laneKey)
         const defaults = {
           [state.config.field_name]: column.column_name,
+          ...parentDefaults,
           ...swimlanePlan.defaults,
         }
         if (scopeId && parentName && parentField) {
@@ -3354,6 +3400,15 @@ export function createKanbanStore() {
           childScopeId,
         })
         commit('CLEAR_PENDING_CREATE')
+        if (childScopeId) {
+          const parentName = String(
+            state.childPanels[childScopeId]?.parentName || '',
+          ).trim()
+          if (parentName) {
+            commit('ADJUST_CHILD_COUNT', { cardName: parentName, delta: 1 })
+            dispatch('hydrateChildCounts', { cards: [{ name: parentName }] })
+          }
+        }
         dispatch('scheduleMoveOptionsRefresh')
         dispatch('hydrateCardLinkTitles', {
           cards: [card],
@@ -3481,6 +3536,10 @@ export function createKanbanStore() {
         if (!card) {
           return false
         }
+        const parentField = state.config?.parent_field
+        const parentName = parentField
+          ? String(card[parentField] || '').trim()
+          : ''
         const expectedModified = card.modified
         const boardGeneration = state.boardGeneration
         const removal = { cardName }
@@ -3516,6 +3575,10 @@ export function createKanbanStore() {
                 delta: -1,
               })
             }
+          }
+          if (parentName) {
+            commit('ADJUST_CHILD_COUNT', { cardName: parentName, delta: -1 })
+            dispatch('hydrateChildCounts', { cards: [{ name: parentName }] })
           }
           if (typeof frappe.show_alert === 'function') {
             frappe.show_alert({

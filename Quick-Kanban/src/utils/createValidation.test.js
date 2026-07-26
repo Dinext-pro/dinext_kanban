@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   applyCreateDefaults,
   buildCreatePreviewDoc,
+  buildParentCreateDefaults,
   frappeAllowsQuickEntry,
   getQuickEntryFieldnames,
+  listParentCreateCandidateFields,
   openCreateForm,
   resolveCreateFormMode,
   routeOptionsFromDefaults,
@@ -222,5 +224,58 @@ describe('createValidation', () => {
     expect(typeof frappe.route_hooks.after_save).toBe('function')
     frappe.route_hooks.after_save({ doc: { name: 'TASK-1', status: 'Overdue' } })
     expect(onCreated).toHaveBeenCalledWith({ name: 'TASK-1', status: 'Overdue' })
+  })
+
+  test('listParentCreateCandidateFields includes board fields and swimlane field', () => {
+    expect(listParentCreateCandidateFields({
+      fields: ['name', 'subject', 'project'],
+      swimlane_mode: 'field',
+      swimlane_field: 'priority',
+    })).toEqual(['name', 'subject', 'project', 'priority'])
+  })
+
+  test('buildParentCreateDefaults copies project and skips status parent title no_copy set_only_once table', () => {
+    const config = {
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      title_field: 'subject',
+      fields: [
+        'name',
+        'subject',
+        'status',
+        'project',
+        'parent_task',
+        'depends_on',
+        'secret',
+        'locked_once',
+      ],
+    }
+    const parentDoc = {
+      name: 'PARENT',
+      subject: 'Parent subject',
+      status: 'Open',
+      project: 'PROJ-1',
+      parent_task: 'GRANDPARENT',
+      depends_on: [{ task: 'X' }],
+      secret: 'hidden',
+      locked_once: 'ONCE',
+      _assign: { 'a@example.com': 'a@example.com' },
+    }
+    const defaults = buildParentCreateDefaults(parentDoc, config, {
+      getMeta: () => ({
+        fields: [
+          { fieldname: 'project', fieldtype: 'Link' },
+          { fieldname: 'subject', fieldtype: 'Data' },
+          { fieldname: 'status', fieldtype: 'Select' },
+          { fieldname: 'parent_task', fieldtype: 'Link' },
+          { fieldname: 'depends_on', fieldtype: 'Table' },
+          { fieldname: 'secret', fieldtype: 'Data', no_copy: 1 },
+          { fieldname: 'locked_once', fieldtype: 'Data', set_only_once: 1 },
+        ],
+      }),
+    })
+
+    expect(defaults).toEqual({ project: 'PROJ-1' })
   })
 })
