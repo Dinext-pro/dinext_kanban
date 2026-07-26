@@ -1,4 +1,9 @@
 import { encodeCellListId, decodeCellListId } from './swimlaneBoard'
+import {
+  encodeChildListId,
+  isChildListId,
+  resolveChildPanelDropTarget,
+} from './childPanelBoard'
 
 /** Floating Sortable ghosts that sit above real drop targets. */
 export const CARD_DRAG_SKIP_HIT_SELECTOR =
@@ -7,8 +12,10 @@ export const CARD_DRAG_SKIP_HIT_SELECTOR =
 const APPEND_TARGET_SELECTOR =
   '.column-stick-room-dropzone, .empty-column--drop-target'
 
-const COLUMN_HOVER_SELECTOR =
+const COLUMN_HOST_SELECTOR =
   '.kanban-column--cell, .kanban-column:not(.kanban-column--header-only):not(.kanban-column--swimlane-shell)'
+
+const COLUMN_HOVER_SELECTOR = COLUMN_HOST_SELECTOR
 
 export const CARD_DRAG_ACTIVE_CLASS = 'kanban-card-drag-active'
 export const CARD_DRAG_FORBIDDEN_CLASS = 'kanban-card-drag-forbidden'
@@ -32,8 +39,22 @@ function elementsFromPointStack(x, y, doc = document) {
   }
 }
 
+function resolveColumnHost(target) {
+  if (!target?.closest) {
+    return null
+  }
+  return (
+    target.closest('.kanban-column--cell.kanban-column--external-scroller')
+    || target.closest('.kanban-column--cell')
+    || target.closest(
+      '.kanban-column:not(.kanban-column--header-only):not(.kanban-column--swimlane-shell)',
+    )
+  )
+}
+
 /**
- * Find swimlane append drop target under the pointer, skipping drag ghosts.
+ * Find append drop target under the pointer, skipping drag ghosts.
+ * Works for swimlane cells, classic columns, and child-panel columns.
  * @param {number} x
  * @param {number} y
  * @param {Document} [doc=document]
@@ -53,10 +74,14 @@ export function findAppendDropTarget(x, y, doc = document) {
     if (!target) {
       continue
     }
-    const cell =
-      target.closest('.kanban-column--cell.kanban-column--external-scroller')
-      || target.closest('.kanban-column--cell')
+    const cell = resolveColumnHost(target)
     if (!cell) {
+      continue
+    }
+    if (
+      cell.classList.contains('kanban-column--header-only')
+      || cell.classList.contains('kanban-column--swimlane-shell')
+    ) {
       continue
     }
     const list = cell.querySelector('.kanban-card-list')
@@ -262,4 +287,157 @@ export function completeCellAppendDrop({ store, drag, listId, laneKey = null }) 
       },
     },
   }
+}
+
+function completeClassicAppendDrop({ store, drag, listId }) {
+  if (!store || !drag?.cardName) {
+    return null
+  }
+  const toColumn = Number(listId)
+  const fromColumn = Number(drag.fromColumn)
+  if (!Number.isFinite(toColumn) || !Number.isFinite(fromColumn)) {
+    return null
+  }
+  if (fromColumn === toColumn) {
+    return null
+  }
+  if (!store.state.columns?.[toColumn]) {
+    return null
+  }
+
+  if (globalThis.__quickKanbanPermissiveMoves !== true) {
+    const allowed = store.getters.isDropAllowed({
+      cardName: drag.cardName,
+      columnIndex: toColumn,
+    })
+    if (!allowed) {
+      return null
+    }
+  }
+
+  const toIndex = 0
+  store.commit('MOVE_CARD', {
+    cardName: drag.cardName,
+    fromColumn,
+    toColumn,
+    fromIndex: drag.fromIndex,
+    toIndex,
+  })
+
+  return {
+    mode: 'board',
+    toColumn,
+    toIndex,
+    payload: {
+      key: drag.cardName,
+      newIndex: toIndex,
+      event: {
+        from: { id: String(fromColumn) },
+        to: { id: String(toColumn) },
+      },
+    },
+  }
+}
+
+function completeChildAppendDrop({ store, drag, listId }) {
+  if (!store || !drag?.cardName) {
+    return null
+  }
+
+  let fromId = drag.fromColumn
+  if (drag.childScopeId && store.state.childPanels?.[drag.childScopeId]) {
+    const ordinal = store.state.childPanels[drag.childScopeId].ordinal
+    if (Number.isFinite(ordinal)) {
+      fromId = encodeChildListId(ordinal, drag.fromColumn)
+    }
+  }
+
+  const resolved = resolveChildPanelDropTarget({
+    toId: listId,
+    fromId,
+    contextChildScopeId: drag.childScopeId || null,
+    contextFromColumn: drag.fromColumn,
+    childPanels: store.state.childPanels,
+  })
+  if (!resolved.ok || resolved.sameColumn) {
+    return null
+  }
+
+  if (globalThis.__quickKanbanPermissiveMoves !== true) {
+    const allowed = store.getters.isDropAllowed({
+      cardName: drag.cardName,
+      columnIndex: resolved.toColumn,
+    })
+    if (!allowed) {
+      return null
+    }
+  }
+
+  const toIndex = 0
+  store.commit('MOVE_CARD', {
+    cardName: drag.cardName,
+    fromColumn: resolved.fromColumn,
+    toColumn: resolved.toColumn,
+    fromIndex: drag.fromIndex,
+    toIndex,
+    childScopeId: resolved.childScopeId,
+  })
+
+  const panelOrdinal = store.state.childPanels[resolved.childScopeId]?.ordinal
+  const fromListId = Number.isFinite(panelOrdinal)
+    ? encodeChildListId(panelOrdinal, resolved.fromColumn)
+    : resolved.fromColumn
+
+  return {
+    mode: 'board',
+    toColumn: resolved.toColumn,
+    toIndex,
+    payload: {
+      key: drag.cardName,
+      newIndex: toIndex,
+      event: {
+        from: { id: String(fromListId) },
+        to: { id: String(listId) },
+      },
+    },
+  }
+}
+
+/**
+ * Optimistic append onto «No data» / stick-room for swimlane, classic, or child.
+ * @returns {{ mode: 'swimlane'|'board', payload: object, toColumn?: number, toIndex?: number } | null}
+ */
+export function completeAppendDrop({ store, drag, listId, laneKey = null }) {
+  if (!store || !drag?.cardName || listId == null || listId === '') {
+    return null
+  }
+
+  if (isChildListId(listId)) {
+    return completeChildAppendDrop({ store, drag, listId })
+  }
+
+  const swimlaneLikely = (
+    (laneKey != null && laneKey !== '')
+    || (
+      Number.isFinite(drag.fromLaneIndex)
+      && Boolean(store.getters?.swimlanesEnabled)
+    )
+  )
+  if (swimlaneLikely && store.state.lanes?.length) {
+    const cellResult = completeCellAppendDrop({
+      store,
+      drag,
+      listId,
+      laneKey,
+    })
+    if (!cellResult) {
+      return null
+    }
+    return {
+      mode: 'swimlane',
+      ...cellResult,
+    }
+  }
+
+  return completeClassicAppendDrop({ store, drag, listId })
 }

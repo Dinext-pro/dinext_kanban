@@ -22,6 +22,123 @@ export function isChildListId(id) {
   return Number.isFinite(numeric) && numeric >= CHILD_LIST_ID_BASE
 }
 
+/**
+ * Sortable group name: isolate child panels from the main board.
+ * Uses panel ordinal (not scopeId) so the name stays free of `::` / spaces.
+ * Note: Number(null) === 0 — treat null/undefined/'' as board group explicitly.
+ */
+export function childPanelDragGroupName(scopeOrdinal = null) {
+  if (scopeOrdinal == null || scopeOrdinal === '') {
+    return 'kanban'
+  }
+  const ordinal = Number(scopeOrdinal)
+  if (!Number.isFinite(ordinal)) {
+    return 'kanban'
+  }
+  return `kanban-child-${ordinal}`
+}
+
+/** Resolve sortable-dnd instance hung on a VirtualList root element. */
+export function getSortableDndInstance(el) {
+  if (!el || typeof el !== 'object') {
+    return null
+  }
+  for (const key of Object.keys(el)) {
+    if (key.startsWith('Sortable') && typeof el[key]?.option === 'function') {
+      return el[key]
+    }
+  }
+  return null
+}
+
+/**
+ * Toggle participation in sortable-dnd `_nearestSortable` hit-testing.
+ * When disabled, sets emptyInsertThreshold to null so overlapping board lists
+ * do not steal drops from teleported child-panel lists.
+ */
+export function setSortableNearestParticipation(el, enabled) {
+  const dnd = getSortableDndInstance(el)
+  if (!dnd) {
+    return false
+  }
+  dnd.option('emptyInsertThreshold', enabled ? 0 : null)
+  return true
+}
+
+/**
+ * Resolve a child-panel drop target from Sortable list ids + drag context.
+ * Rejects board list ids and cross-scope child drops.
+ */
+export function resolveChildPanelDropTarget({
+  toId,
+  fromId,
+  contextChildScopeId = null,
+  contextFromColumn = null,
+  childPanels = {},
+} = {}) {
+  const toDecoded = decodeChildListId(toId)
+  const fromDecoded = isChildListId(fromId)
+    ? decodeChildListId(fromId)
+    : { scopeOrdinal: null, columnIndex: Number(fromId) }
+
+  const fromColumn = Number.isFinite(fromDecoded.columnIndex)
+    ? fromDecoded.columnIndex
+    : Number(contextFromColumn)
+
+  let childScopeId = contextChildScopeId || null
+  const preferredOrdinal = Number.isFinite(toDecoded.scopeOrdinal)
+    ? toDecoded.scopeOrdinal
+    : fromDecoded.scopeOrdinal
+  if (!childScopeId && Number.isFinite(preferredOrdinal)) {
+    childScopeId = Object.keys(childPanels || {}).find(
+      (scopeId) => childPanels[scopeId]?.ordinal === preferredOrdinal,
+    ) || null
+  }
+
+  if (!childScopeId || !Number.isFinite(fromColumn)) {
+    return { ok: false, reason: 'missing_scope_or_from' }
+  }
+
+  const panelOrdinal = childPanels?.[childScopeId]?.ordinal
+  if (!isChildListId(toId)) {
+    return {
+      ok: false,
+      reason: 'non_child_target',
+      childScopeId,
+      fromColumn,
+    }
+  }
+  if (
+    Number.isFinite(panelOrdinal)
+    && Number.isFinite(toDecoded.scopeOrdinal)
+    && toDecoded.scopeOrdinal !== panelOrdinal
+  ) {
+    return {
+      ok: false,
+      reason: 'scope_mismatch',
+      childScopeId,
+      fromColumn,
+      toColumn: toDecoded.columnIndex,
+    }
+  }
+  if (!Number.isFinite(toDecoded.columnIndex)) {
+    return {
+      ok: false,
+      reason: 'invalid_to_column',
+      childScopeId,
+      fromColumn,
+    }
+  }
+
+  return {
+    ok: true,
+    childScopeId,
+    fromColumn,
+    toColumn: toDecoded.columnIndex,
+    sameColumn: fromColumn === toDecoded.columnIndex,
+  }
+}
+
 export function childPanelKey(parentName, depth) {
   return `${depth}::${String(parentName || '')}`
 }

@@ -449,7 +449,7 @@ test('keeps append drop marker classes without local mouseup handlers', async ()
   expect(wrapper.find('.column-stick-room-dropzone').element.onmouseup).toBeFalsy()
 })
 
-test('marks empty-column as drop target only with external scroller', async () => {
+test('marks empty-column as drop target on classic columns without external scroller', async () => {
   const { wrapper } = mountColumn({
     name: 'open',
     column_name: 'Open',
@@ -459,10 +459,6 @@ test('marks empty-column as drop target only with external scroller', async () =
   })
   await wrapper.vm.$nextTick()
   expect(wrapper.find('.empty-column').exists()).toBe(true)
-  expect(wrapper.find('.empty-column--drop-target').exists()).toBe(false)
-
-  const scroller = document.createElement('div')
-  await wrapper.setProps({ externalScroller: scroller })
   expect(wrapper.find('.empty-column--drop-target').exists()).toBe(true)
 })
 
@@ -1229,4 +1225,89 @@ test('keeps Add enabled inside the deepest child panel columns', async () => {
 
   expect(wrapper.get('.addcard button').attributes('disabled')).toBeUndefined()
   wrapper.unmount()
+})
+
+test('uses board Sortable group on main columns and scoped group in child panels', () => {
+  const previousPermissive = globalThis.__quickKanbanPermissiveMoves
+  globalThis.__quickKanbanPermissiveMoves = false
+
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'gray',
+    cards: [{ name: 'TASK-1', status: 'Open' }],
+  }
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    status_field_meta: { fieldname: 'status', fieldtype: 'Select', parent: 'Task' },
+    fields: ['name'],
+    highlighted_field: '',
+    highlight_table: [],
+    show_labels: false,
+  })
+  store.commit('SET_COLUMNS', [column])
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 3,
+    columns: [column],
+    columnPagination: {},
+    columnTotals: {},
+  })
+
+  const boardWrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['group'],
+          template: '<div class="kanban-card-list" />',
+        },
+      },
+    },
+  })
+  expect(boardWrapper.findComponent({ name: 'VirtualList' }).props('group')).toEqual(
+    expect.objectContaining({ name: 'kanban', put: true }),
+  )
+  boardWrapper.unmount()
+
+  const childWrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      childScopeId: '0::PARENT',
+      childDepth: 1,
+      hideHeader: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['group'],
+          template: '<div class="kanban-card-list" />',
+        },
+      },
+    },
+  })
+  expect(childWrapper.findComponent({ name: 'VirtualList' }).props('group')).toEqual(
+    expect.objectContaining({ name: 'kanban-child-3', put: true }),
+  )
+  childWrapper.unmount()
+
+  globalThis.__quickKanbanPermissiveMoves = previousPermissive
 })

@@ -4,14 +4,18 @@ import {
   buildEmptyChildColumns,
   childPanelColumnTintStrength,
   childPanelColumnTintValue,
+  childPanelDragGroupName,
   childPanelKey,
   createChildColumnPagination,
   decodeChildListId,
   encodeChildListId,
+  getSortableDndInstance,
   isChildListId,
+  resolveChildPanelDropTarget,
   resolveChildPanelSpacerHeight,
   resolvePanelHostCard,
   resolvePanelHostSpacer,
+  setSortableNearestParticipation,
 } from './childPanelBoard.js'
 
 function buildDuplicateHostDom() {
@@ -46,6 +50,94 @@ describe('childPanelBoard', () => {
     expect(decodeChildListId(id)).toEqual({
       scopeOrdinal: 2,
       columnIndex: 5,
+    })
+  })
+
+  test('childPanelDragGroupName isolates child scopes from the board by ordinal', () => {
+    expect(childPanelDragGroupName(null)).toBe('kanban')
+    expect(childPanelDragGroupName('')).toBe('kanban')
+    expect(childPanelDragGroupName('0::TASK-1')).toBe('kanban')
+    expect(childPanelDragGroupName(0)).toBe('kanban-child-0')
+    expect(childPanelDragGroupName(2)).toBe('kanban-child-2')
+    expect(childPanelDragGroupName(-1)).toBe('kanban-child--1')
+  })
+
+  test('setSortableNearestParticipation toggles emptyInsertThreshold', () => {
+    const option = vi.fn()
+    const el = { Sortable123: { option } }
+    expect(getSortableDndInstance(el)).toBe(el.Sortable123)
+    expect(setSortableNearestParticipation(el, false)).toBe(true)
+    expect(option).toHaveBeenCalledWith('emptyInsertThreshold', null)
+    expect(setSortableNearestParticipation(el, true)).toBe(true)
+    expect(option).toHaveBeenCalledWith('emptyInsertThreshold', 0)
+    expect(setSortableNearestParticipation({}, true)).toBe(false)
+  })
+
+  test('resolveChildPanelDropTarget accepts same-scope child list drops', () => {
+    const scopeId = '0::PARENT'
+    const childPanels = { [scopeId]: { ordinal: 1, columns: [{}, {}] } }
+    const fromId = encodeChildListId(1, 0)
+    const toId = encodeChildListId(1, 1)
+    expect(resolveChildPanelDropTarget({
+      toId,
+      fromId,
+      contextChildScopeId: scopeId,
+      childPanels,
+    })).toEqual({
+      ok: true,
+      childScopeId: scopeId,
+      fromColumn: 0,
+      toColumn: 1,
+      sameColumn: false,
+    })
+  })
+
+  test('resolveChildPanelDropTarget rejects board list targets', () => {
+    const scopeId = '0::PARENT'
+    const childPanels = { [scopeId]: { ordinal: 1, columns: [{}, {}] } }
+    const result = resolveChildPanelDropTarget({
+      toId: 1,
+      fromId: encodeChildListId(1, 0),
+      contextChildScopeId: scopeId,
+      contextFromColumn: 0,
+      childPanels,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('non_child_target')
+    expect(result.childScopeId).toBe(scopeId)
+    expect(result.fromColumn).toBe(0)
+  })
+
+  test('resolveChildPanelDropTarget rejects cross-scope child drops', () => {
+    const scopeId = '0::PARENT'
+    const childPanels = {
+      [scopeId]: { ordinal: 1, columns: [{}, {}] },
+      '1::NESTED': { ordinal: 2, columns: [{}, {}] },
+    }
+    const result = resolveChildPanelDropTarget({
+      toId: encodeChildListId(2, 1),
+      fromId: encodeChildListId(1, 0),
+      contextChildScopeId: scopeId,
+      childPanels,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('scope_mismatch')
+  })
+
+  test('resolveChildPanelDropTarget marks same-column drops', () => {
+    const scopeId = '0::PARENT'
+    const childPanels = { [scopeId]: { ordinal: 0, columns: [{}] } }
+    const id = encodeChildListId(0, 0)
+    expect(resolveChildPanelDropTarget({
+      toId: id,
+      fromId: id,
+      contextChildScopeId: scopeId,
+      childPanels,
+    })).toMatchObject({
+      ok: true,
+      sameColumn: true,
+      fromColumn: 0,
+      toColumn: 0,
     })
   })
 

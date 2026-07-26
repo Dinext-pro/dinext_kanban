@@ -193,15 +193,15 @@ import {
   encodeCellListId,
 } from "../../utils/swimlaneBoard";
 import {
-  decodeChildListId,
   isChildListId,
+  resolveChildPanelDropTarget,
   resolveChildPanelSpacerHeight,
   resolvePanelHostCard,
   resolvePanelHostSpacer,
 } from "../../utils/childPanelBoard";
 import {
   clearCardDropHoverElement,
-  completeCellAppendDrop,
+  completeAppendDrop,
   findAppendDropTarget,
   findCardDropHoverTarget,
   isForbiddenDropHoverTarget,
@@ -1698,12 +1698,10 @@ function handleCardDropHoverPointerMove(event) {
 /**
  * Capture-phase append drop onto stick-room / «No data» before bubble
  * clearActiveDrag and before Sortable mouseup reverts the drag.
+ * Covers swimlane, classic flat board, and child-panel empty columns.
  */
 function handleAppendDropPointerUpCapture(event) {
   if (event.button != null && event.button !== 0) {
-    return
-  }
-  if (!store.getters.swimlanesEnabled) {
     return
   }
   const drag = store.state.activeDrag || dragContext
@@ -1714,7 +1712,7 @@ function handleAppendDropPointerUpCapture(event) {
   if (!hit) {
     return
   }
-  const completed = completeCellAppendDrop({
+  const completed = completeAppendDrop({
     store,
     drag,
     listId: hit.listId,
@@ -1727,8 +1725,12 @@ function handleAppendDropPointerUpCapture(event) {
   event.stopImmediatePropagation()
   suppressSortableMouseUp = true
   clearDropHover()
-  // Persist via the same path as Sortable cell drops.
-  dropSwimlane(completed.payload)
+  if (completed.mode === 'swimlane') {
+    dropSwimlane(completed.payload)
+    return
+  }
+  // Classic + child: drop() routes child list ids to dropChildPanel.
+  drop(completed.payload)
 }
 
 function handleAppendDropMouseUpCapture(event) {
@@ -2176,31 +2178,31 @@ async function drop(event) {
 }
 
 async function dropChildPanel({ event, context, toId, fromId }) {
-  const toDecoded = decodeChildListId(toId)
-  const fromDecoded = isChildListId(fromId)
-    ? decodeChildListId(fromId)
-    : { scopeOrdinal: null, columnIndex: Number(fromId) }
-  const toColumn = toDecoded.columnIndex
-  const fromColumn = Number.isFinite(fromDecoded.columnIndex)
-    ? fromDecoded.columnIndex
-    : context.fromColumn
-  const scopeOrdinal = Number.isFinite(toDecoded.scopeOrdinal)
-    ? toDecoded.scopeOrdinal
-    : context.childScopeId
-      ? store.state.childPanels[context.childScopeId]?.ordinal
-      : fromDecoded.scopeOrdinal
+  const resolved = resolveChildPanelDropTarget({
+    toId,
+    fromId,
+    contextChildScopeId: context.childScopeId || null,
+    contextFromColumn: context.fromColumn,
+    childPanels: store.state.childPanels,
+  })
 
-  let childScopeId = context.childScopeId || null
-  if (!childScopeId && Number.isFinite(scopeOrdinal)) {
-    childScopeId = Object.keys(store.state.childPanels).find(
-      (scopeId) => store.state.childPanels[scopeId]?.ordinal === scopeOrdinal,
-    ) || null
-  }
-
-  if (!childScopeId || !Number.isFinite(toColumn) || fromColumn === toColumn) {
+  if (!resolved.ok) {
+    if (resolved.childScopeId && context?.cardName != null) {
+      store.commit('RECOVER_CHILD_PANEL_DRAG', {
+        cardName: context.cardName,
+        fromColumn: resolved.fromColumn ?? context.fromColumn,
+        fromIndex: context.fromIndex,
+        childScopeId: resolved.childScopeId,
+      })
+    }
     return
   }
 
+  if (resolved.sameColumn) {
+    return
+  }
+
+  const { childScopeId, fromColumn, toColumn } = resolved
   const destinationRect = captureCardRect(
     context.cardName,
     kanbanBoard.value || document,

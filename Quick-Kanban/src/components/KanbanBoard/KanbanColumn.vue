@@ -172,6 +172,7 @@
             :laneIndex="laneIndex"
             :laneKey="laneKey"
             :childDepth="childDepth"
+            :childScopeId="childScopeId"
           />
           <div
             v-if="isPanelHost(record.name)"
@@ -190,8 +191,7 @@
         </p>
         <p
           v-if="column.cards.length === 0"
-          class="empty-column"
-          :class="{ 'empty-column--drop-target': Boolean(externalScroller) }"
+          class="empty-column empty-column--drop-target"
         >
           {{ __('No data') }}
         </p>
@@ -280,6 +280,10 @@ import {
 import { openColumnListView } from "../../utils/listNavigation";
 import { useDismissibleMenu } from "../../utils/menu";
 import { getLaneStickyBottom } from "../../utils/menuMoveScroll";
+import {
+  childPanelDragGroupName,
+  setSortableNearestParticipation,
+} from "../../utils/childPanelBoard";
 import KanbanCard from "./KanbanCard.vue";
 import IndicatorPill from "../IndicatorPill.vue";
 
@@ -399,24 +403,46 @@ function isTargetDropAllowed(cardName) {
     columnIndex: flatColumnIndexForPolicy(),
   })
 }
+const childPanelOrdinal = computed(() => {
+  if (!props.childScopeId) {
+    return null
+  }
+  const ordinal = store.state.childPanels?.[props.childScopeId]?.ordinal
+  return Number.isFinite(ordinal) ? ordinal : null
+})
+/** Only deepest open child panel (or board when none open) joins Sortable nearest. */
+const participateInSortableNearest = computed(() => {
+  const maxDepth = store.getters.maxOpenChildPanelDepth
+  if (maxDepth == null) {
+    return true
+  }
+  return Number(props.childDepth) === maxDepth + 1
+})
 const dragGroup = computed(() => {
+  // sortable-dnd ignores put as a function; scoped name + put:true is enough.
+  // Never fall back to board group while childScopeId is set (ordinal may lag).
+  const groupName = props.childScopeId
+    ? childPanelDragGroupName(
+      Number.isFinite(childPanelOrdinal.value) ? childPanelOrdinal.value : -1,
+    )
+    : childPanelDragGroupName(null)
   if (globalThis.__quickKanbanPermissiveMoves) {
-    return 'kanban'
+    return groupName
   }
   return {
-    name: 'kanban',
+    name: groupName,
     pull: true,
-    put: (to, from, dragEl) => {
-      const cardName = dragEl?.dataset?.key
-        || dragEl?.getAttribute?.('data-key')
-        || dragEl?.closest?.('[data-key]')?.getAttribute?.('data-key')
-      if (!cardName) {
-        return false
-      }
-      return isTargetDropAllowed(cardName)
-    },
+    put: true,
   }
 })
+
+function syncSortableNearestParticipation() {
+  const root = virtualListRef.value?.$el
+  if (!root) {
+    return
+  }
+  setSortableNearestParticipation(root, participateInSortableNearest.value)
+}
 const columnKey = computed(() => getColumnKey(props.column))
 const collapsed = computed(
   () => store.getters.isColumnCollapsed(columnKey.value),
@@ -797,7 +823,10 @@ function onResizePointerDown(event) {
 }
 
 onMounted(() => {
-  nextTick(() => bindScrollTopListeners())
+  nextTick(() => {
+    bindScrollTopListeners()
+    syncSortableNearestParticipation()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -1017,9 +1046,19 @@ watch(
     dragSyncGeneration.value,
   ],
   () => {
-    nextTick(() => bindScrollTopListeners())
+    nextTick(() => {
+      bindScrollTopListeners()
+      syncSortableNearestParticipation()
+    })
   },
   { immediate: true },
+)
+
+watch(
+  participateInSortableNearest,
+  () => {
+    nextTick(() => syncSortableNearestParticipation())
+  },
 )
 
 watch(
