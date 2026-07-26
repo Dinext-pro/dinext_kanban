@@ -37,6 +37,8 @@ function set_swimlane_field_options(frm) {
         method: "quick_kanban.api.get_swimlane_field_options",
         args: {
             doctype: frm.doc.reference_doctype,
+            board_name: frm.doc.name || "",
+            column_field: frm.doc.field_name || "",
             include_deadlines: Boolean(frm.doc.custom_deadline_field),
         },
         callback(r) {
@@ -253,7 +255,14 @@ frappe.ui.form.on("Kanban Board", {
         render_deadline_columns_multicheck(frm);
     },
     field_name(frm) {
+        set_swimlane_field_options(frm);
         render_deadline_columns_multicheck(frm);
+        if (
+            frm.doc.field_name
+            && frm.doc.custom_swimlane_field === frm.doc.field_name
+        ) {
+            frm.set_value("custom_swimlane_field", "");
+        }
     },
     custom_deadline_field(frm) {
         set_swimlane_field_options(frm);

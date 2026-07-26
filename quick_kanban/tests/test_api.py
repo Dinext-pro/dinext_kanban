@@ -932,6 +932,31 @@ class TestSwimlaneApi(FrappeTestCase):
         explicit = get_swimlane_field_options("ToDo", include_deadlines=1)
         self.assertIn("__deadlines", {row["value"] for row in explicit})
 
+    def test_get_swimlane_field_options_excludes_column_field(self):
+        from quick_kanban.api import get_swimlane_field_options
+
+        board_name = ensure_todo_kanban_board()
+        self.assertEqual(
+            frappe.db.get_value("Kanban Board", board_name, "field_name"),
+            "status",
+        )
+
+        without_context = get_swimlane_field_options("ToDo")
+        self.assertIn("status", {row["value"] for row in without_context})
+
+        by_board = get_swimlane_field_options("ToDo", board_name=board_name)
+        self.assertNotIn("status", {row["value"] for row in by_board})
+
+        by_explicit = get_swimlane_field_options("ToDo", column_field="status")
+        self.assertNotIn("status", {row["value"] for row in by_explicit})
+
+    def test_set_swimlane_field_rejects_column_field(self):
+        from quick_kanban.api import set_swimlane_field
+
+        board_name = ensure_todo_kanban_board()
+        with self.assertRaises(frappe.ValidationError):
+            set_swimlane_field(board_name, "status")
+
     def test_set_swimlane_field_sets_and_clears(self):
         from quick_kanban.api import set_swimlane_field
 
