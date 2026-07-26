@@ -2650,8 +2650,8 @@ html.kanban-tag-drag-move * {
   text-align: center;
 }
 
-/* Larger hit-area for append drop onto «No data» in swimlane cells. */
-#kanbanapp .kanban-card-list--external-scroller .empty-column--drop-target {
+/* Larger hit-area for append drop onto «No data» (flat, child panel, swimlane). */
+#kanbanapp .empty-column--drop-target {
   min-height: 48px;
   padding-block: 16px;
   box-sizing: border-box;

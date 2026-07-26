@@ -397,6 +397,9 @@ function collectVisibleCardNames(state) {
   } else {
     visit(state.columns)
   }
+  for (const panel of Object.values(state.childPanels || {})) {
+    visit(panel?.columns)
+  }
   return [...names]
 }
 
@@ -1319,6 +1322,82 @@ export function createKanbanStore() {
         columns[fromColumn].cards.splice(fromIndex, 0, card)
         columns[fromColumn].cards = [...columns[fromColumn].cards]
         columns[destinationColumnIndex].cards = [...destination]
+        state.dragSyncGeneration += 1
+      },
+      /**
+       * Restore a child-panel card after an invalid Sortable drop
+       * (e.g. leaked onto the main board under an overlapping list).
+       */
+      RECOVER_CHILD_PANEL_DRAG(state, {
+        cardName,
+        fromColumn,
+        fromIndex,
+        childScopeId,
+      }) {
+        const panel = childScopeId ? state.childPanels[childScopeId] : null
+        if (!panel?.columns?.[fromColumn] || !cardName) {
+          return
+        }
+
+        const alreadyAt = panel.columns[fromColumn].cards.findIndex(
+          ({ name }) => name === cardName,
+        )
+        if (alreadyAt >= 0) {
+          state.dragSyncGeneration += 1
+          return
+        }
+
+        let card = null
+        for (let columnIndex = 0; columnIndex < panel.columns.length; columnIndex += 1) {
+          const cards = panel.columns[columnIndex].cards || []
+          const index = cards.findIndex(({ name }) => name === cardName)
+          if (index >= 0) {
+            ;[card] = cards.splice(index, 1)
+            panel.columns[columnIndex].cards = [...cards]
+            break
+          }
+        }
+
+        if (!card) {
+          for (const column of state.columns || []) {
+            const cards = column.cards || []
+            const index = cards.findIndex(({ name }) => name === cardName)
+            if (index >= 0) {
+              ;[card] = cards.splice(index, 1)
+              column.cards = [...cards]
+              break
+            }
+          }
+        }
+
+        if (!card && state.lanes?.length) {
+          for (const lane of state.lanes) {
+            for (const column of lane.columns || []) {
+              const cards = column.cards || []
+              const index = cards.findIndex(({ name }) => name === cardName)
+              if (index >= 0) {
+                ;[card] = cards.splice(index, 1)
+                column.cards = [...cards]
+                break
+              }
+            }
+            if (card) {
+              break
+            }
+          }
+        }
+
+        if (!card) {
+          state.dragSyncGeneration += 1
+          return
+        }
+
+        const insertAt = Number.isFinite(fromIndex)
+          ? Math.max(0, Math.min(fromIndex, panel.columns[fromColumn].cards.length))
+          : panel.columns[fromColumn].cards.length
+        card[state.config.field_name] = panel.columns[fromColumn].column_name
+        panel.columns[fromColumn].cards.splice(insertAt, 0, card)
+        panel.columns[fromColumn].cards = [...panel.columns[fromColumn].cards]
         state.dragSyncGeneration += 1
       },
       UPDATE_COLUMN_INDICATOR(state, { columnIndex, indicator }) {

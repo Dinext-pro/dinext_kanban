@@ -294,6 +294,7 @@ const props = defineProps({
   laneIndex: { type: Number, default: null },
   laneKey: { type: [String, Number], default: null },
   childDepth: { type: Number, default: 0 },
+  childScopeId: { type: String, default: null },
 })
 const store = useStore()
 const scrollToMovedCard = inject('scrollToMovedCard', null)
@@ -953,7 +954,11 @@ async function moveCard(toColumn) {
   let fromIndex = -1
   // Always insert at top so reveal works in paginated columns.
   const toIndex = 0
-  if (props.laneIndex != null && store.getters.swimlanesEnabled) {
+  const childScopeId = props.childScopeId || null
+  if (childScopeId && store.state.childPanels[childScopeId]) {
+    fromIndex = store.state.childPanels[childScopeId].columns?.[props.columnIndex]
+      ?.cards?.findIndex(({ name }) => name === props.card.name) ?? -1
+  } else if (props.laneIndex != null && store.getters.swimlanesEnabled) {
     const lane = store.state.lanes[props.laneIndex]
     fromIndex = lane?.columns?.[props.columnIndex]?.cards?.findIndex(
       ({ name }) => name === props.card.name,
@@ -974,8 +979,9 @@ async function moveCard(toColumn) {
       fromIndex,
       toIndex,
       fromLaneIndex: props.laneIndex,
+      childScopeId,
     })
-    if (moved && scrollToMovedCard) {
+    if (moved && scrollToMovedCard && !childScopeId) {
       try {
         await scrollToMovedCard({
           columnIndex: toColumn,

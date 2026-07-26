@@ -1034,6 +1034,67 @@ test('offers a keyboard-operable move control', async () => {
   expect(trigger.attributes('aria-expanded')).toBe('false')
 })
 
+test('menu move inside a child panel passes childScopeId and panel fromIndex', async () => {
+  const store = createStore()
+  const scopeId = '0::PARENT-A'
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId,
+    parentName: 'PARENT-A',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'TASK-1',
+          subject: 'First task',
+          status: 'Open',
+          priority: 'High',
+          _assign: {},
+        }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  store.commit('SET_COLUMNS', [
+    { name: 'open', column_name: 'Open', display_name: 'Open', cards: [] },
+    { name: 'done', column_name: 'Done', display_name: 'Done', cards: [] },
+  ])
+  seedMoveOptions(store)
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  const wrapper = mount(KanbanCard, {
+    props: {
+      card: {
+        name: 'TASK-1',
+        subject: 'First task',
+        status: 'Open',
+        priority: 'High',
+        _assign: {},
+      },
+      config: store.state.config,
+      columnIndex: 0,
+      childDepth: 1,
+      childScopeId: scopeId,
+    },
+    global: { plugins: [store], stubs: { Teleport: true } },
+  })
+
+  await wrapper.get('[aria-label="Move First task"]').trigger('click')
+  await wrapper.get('[aria-label="Move First task to Done"]').trigger('click')
+
+  expect(dispatch).toHaveBeenCalledWith('moveCard', expect.objectContaining({
+    cardName: 'TASK-1',
+    fromColumn: 0,
+    toColumn: 1,
+    fromIndex: 0,
+    childScopeId: scopeId,
+  }))
+})
+
 test('flashes the card after a successful menu move', async () => {
   const store = createStore()
   const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue(true)

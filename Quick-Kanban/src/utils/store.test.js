@@ -5416,4 +5416,99 @@ describe('deadline swimlane relocate on date change', () => {
     expect(store.state.revealCreatedCard).toBeNull()
     expect(store.state.lanes[0].columns[0].cards[0]?.name).toBe('TASK-D')
   })
+
+  test('scheduleMoveOptionsRefresh includes child panel card names', async () => {
+    vi.useFakeTimers()
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [{ name: 'BOARD-1', status: 'Open' }] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT-A',
+      parentName: 'PARENT-A',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        {
+          name: 'open',
+          column_name: 'Open',
+          cards: [{ name: 'CHILD-ONLY-1', status: 'Open' }],
+        },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: {},
+    })
+
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    store.dispatch('scheduleMoveOptionsRefresh')
+    await vi.advanceTimersByTimeAsync(60)
+
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'quick_kanban.api.get_move_options',
+      args: expect.objectContaining({
+        names: expect.arrayContaining(['BOARD-1', 'CHILD-ONLY-1']),
+      }),
+    }))
+    vi.useRealTimers()
+  })
+
+  test('RECOVER_CHILD_PANEL_DRAG restores a card leaked onto the board', () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [{ name: 'CHILD-1', status: 'Done' }] },
+    ])
+    const scopeId = '0::PARENT-A'
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId,
+      parentName: 'PARENT-A',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [] },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: {},
+    })
+
+    const syncBefore = store.state.dragSyncGeneration
+    store.commit('RECOVER_CHILD_PANEL_DRAG', {
+      cardName: 'CHILD-1',
+      fromColumn: 0,
+      fromIndex: 0,
+      childScopeId: scopeId,
+    })
+
+    expect(store.state.columns[1].cards.map((card) => card.name)).not.toContain('CHILD-1')
+    expect(store.state.childPanels[scopeId].columns[0].cards[0]).toMatchObject({
+      name: 'CHILD-1',
+      status: 'Open',
+    })
+    expect(store.state.dragSyncGeneration).toBe(syncBefore + 1)
+  })
 })
