@@ -342,16 +342,35 @@ const boardHostedChildPanels = computed(() => {
       if (!panel) {
         return null
       }
+      const hostLaneKey = panel.hostLaneKey != null && String(panel.hostLaneKey).trim() !== ''
+        ? String(panel.hostLaneKey)
+        : null
       return {
         scopeId,
         parentName: panel.parentName,
         depth: panel.depth ?? depth,
+        hostLaneKey,
       }
     })
     .filter(Boolean)
 })
 /** Store panels plus short-lived exiting shells for leave animation. */
 const renderedChildPanels = ref([])
+/** parentName → hostLaneKey for open/exiting spacers (null = any/flat lane). */
+const childPanelSpacerHostLanes = computed(() => {
+  const map = {}
+  for (const panel of renderedChildPanels.value || []) {
+    const parent = String(panel?.parentName || '').trim()
+    if (!parent) {
+      continue
+    }
+    map[parent] = panel.hostLaneKey != null && String(panel.hostLaneKey).trim() !== ''
+      ? String(panel.hostLaneKey)
+      : null
+  }
+  return map
+})
+provide('childPanelSpacerHostLanes', childPanelSpacerHostLanes)
 const childPanelChromeOpen = computed(() => renderedChildPanels.value.length > 0)
 const exitPanelTimers = new Map()
 let pinScrollCancel = null
@@ -399,7 +418,7 @@ function pruneNestedPinListLocks() {
     if (!parent || !board) {
       continue
     }
-    const host = resolvePanelHostCard(board, parent, depth)
+    const host = resolvePanelHostCard(board, parent, depth, panel.hostLaneKey)
     const list = host?.closest?.('.kanban-card-list')
     if (list?.closest?.('.child-panel')) {
       needed.add(list)
@@ -431,7 +450,12 @@ function ensureNestedPinLocks() {
     if (host.depth < 1) {
       continue
     }
-    const card = resolvePanelHostCard(board, host.parentName, host.depth)
+    const card = resolvePanelHostCard(
+      board,
+      host.parentName,
+      host.depth,
+      host.hostLaneKey,
+    )
     const list = card?.closest?.('.kanban-card-list')
     if (list?.closest?.('.child-panel')) {
       lockNestedPinListScroller(list)
@@ -467,7 +491,12 @@ function captureHostPinScrolls({ excludeParentName = '' } = {}) {
     if (excludeParentName && host.parentName === excludeParentName) {
       continue
     }
-    const card = resolvePanelHostCard(board, host.parentName, host.depth)
+    const card = resolvePanelHostCard(
+      board,
+      host.parentName,
+      host.depth,
+      host.hostLaneKey,
+    )
     const scroller = resolveHostPinScroller(card)
     if (!scroller) {
       continue
@@ -475,6 +504,7 @@ function captureHostPinScrolls({ excludeParentName = '' } = {}) {
     saved.push({
       parentName: host.parentName,
       depth: host.depth,
+      hostLaneKey: host.hostLaneKey,
       scrollTop: scroller.scrollTop || 0,
     })
   }
@@ -490,7 +520,12 @@ function restoreHostPinScrolls(saved) {
     if (!entry || !(entry.scrollTop > 0)) {
       continue
     }
-    const card = resolvePanelHostCard(board, entry.parentName, entry.depth)
+    const card = resolvePanelHostCard(
+      board,
+      entry.parentName,
+      entry.depth,
+      entry.hostLaneKey ?? hostLaneKeyForPanel(entry.parentName, entry.depth),
+    )
     const scroller = resolveHostPinScroller(card)
     if (scroller && scroller.scrollTop !== entry.scrollTop) {
       scroller.scrollTop = entry.scrollTop
@@ -683,6 +718,7 @@ function syncRenderedChildPanels(storePanels) {
         scopeId: live.scopeId,
         parentName: live.parentName,
         depth: live.depth,
+        hostLaneKey: live.hostLaneKey ?? null,
         exiting: false,
       })
       seen.add(prev.scopeId)
@@ -706,6 +742,7 @@ function syncRenderedChildPanels(storePanels) {
       scopeId: panel.scopeId,
       parentName: panel.parentName,
       depth: panel.depth,
+      hostLaneKey: panel.hostLaneKey ?? null,
       exiting: false,
     })
   }
@@ -725,6 +762,7 @@ function syncRenderedChildPanels(storePanels) {
       && Boolean(panel.exiting) === Boolean(nextRendered[index].exiting)
       && panel.parentName === nextRendered[index].parentName
       && Number(panel.depth) === Number(nextRendered[index].depth)
+      && (panel.hostLaneKey ?? null) === (nextRendered[index].hostLaneKey ?? null)
     ))
   if (same) {
     return
@@ -832,9 +870,33 @@ function resolveOpenPanelHosts(panels = boardHostedChildPanels.value) {
     .map((panel) => ({
       parentName: String(panel?.parentName || '').trim(),
       depth: Number(panel?.depth) || 0,
+      hostLaneKey: panel?.hostLaneKey != null && String(panel.hostLaneKey).trim() !== ''
+        ? String(panel.hostLaneKey)
+        : null,
     }))
     .filter((panel) => panel.parentName)
     .sort((a, b) => a.depth - b.depth)
+}
+
+function hostLaneKeyForPanel(parentName, depth = 0) {
+  const parent = String(parentName || '').trim()
+  const level = Number(depth) || 0
+  const fromOpen = (boardHostedChildPanels.value || []).find(
+    (panel) => (
+      String(panel.parentName || '').trim() === parent
+      && (Number(panel.depth) || 0) === level
+    ),
+  )
+  if (fromOpen) {
+    return fromOpen.hostLaneKey ?? null
+  }
+  const fromRendered = (renderedChildPanels.value || []).find(
+    (panel) => (
+      String(panel.parentName || '').trim() === parent
+      && (Number(panel.depth) || 0) === level
+    ),
+  )
+  return fromRendered?.hostLaneKey ?? null
 }
 
 function isPanelHostNearTop(parentName, depth = 0) {
@@ -843,7 +905,12 @@ function isPanelHostNearTop(parentName, depth = 0) {
   if (!board || !parent) {
     return true
   }
-  const hostCard = resolvePanelHostCard(board, parent, depth)
+  const hostCard = resolvePanelHostCard(
+    board,
+    parent,
+    depth,
+    hostLaneKeyForPanel(parent, depth),
+  )
   if (!hostCard) {
     return true
   }
@@ -914,9 +981,16 @@ async function onBoardHostedPanelHeight(parentName, height) {
   await flushGeometryThenPin(newest, { animateOpen: false })
 }
 
-function resolvePanelHostTop(board, boardRect, parentName, previousTop, depth = 0) {
-  const spacer = resolvePanelHostSpacer(board, parentName, depth)
-  const hostCard = resolvePanelHostCard(board, parentName, depth)
+function resolvePanelHostTop(
+  board,
+  boardRect,
+  parentName,
+  previousTop,
+  depth = 0,
+  hostLaneKey = null,
+) {
+  const spacer = resolvePanelHostSpacer(board, parentName, depth, hostLaneKey)
+  const hostCard = resolvePanelHostCard(board, parentName, depth, hostLaneKey)
   if (spacer) {
     const spacerRect = spacer.getBoundingClientRect()
     return spacerRect.top - boardRect.top + board.scrollTop
@@ -964,6 +1038,7 @@ function applyBoardHostedPanelGeometry() {
         panel.parentName,
         previousRects[panel.scopeId]?.top,
         depth,
+        panel.hostLaneKey,
       )
       if (top == null) {
         continue
@@ -976,7 +1051,12 @@ function applyBoardHostedPanelGeometry() {
       // Keep spacer + panel height for every open host (not only maxDepth).
       // Nested open must not drop the board pad under a mid-column depth-0 host
       // or scrollTop clamps and the parent panel jerks.
-      const hostCard = resolvePanelHostCard(board, panel.parentName, depth)
+      const hostCard = resolvePanelHostCard(
+        board,
+        panel.parentName,
+        depth,
+        panel.hostLaneKey,
+      )
       const columnEl = hostCard?.closest?.('.kanban-column')
       const listEl = hostCard?.closest?.('.kanban-card-list')
       // Pin target is list top (under column/lane chrome), not board top — flat headers ~52px.
@@ -1078,6 +1158,7 @@ function flushGeometryThenPin(parentName, { animateOpen = false } = {}) {
           hosts.push({
             parentName: parent,
             depth: Number(queuedDepth?.depth) || 0,
+            hostLaneKey: queuedDepth?.hostLaneKey ?? null,
           })
         }
         return hosts
@@ -1130,7 +1211,12 @@ function flushGeometryThenPin(parentName, { animateOpen = false } = {}) {
         const board = kanbanBoard.value
         const target = resolvePinTarget()
         const spacer = target
-          ? resolvePanelHostSpacer(board, target.parentName, target.depth)
+          ? resolvePanelHostSpacer(
+            board,
+            target.parentName,
+            target.depth,
+            target.hostLaneKey ?? hostLaneKeyForPanel(target.parentName, target.depth),
+          )
           : null
         if (spacer && (spacer.getBoundingClientRect().height || 0) > 1) {
           break
@@ -1223,6 +1309,7 @@ async function ensureBoardHostedPanelAnchorVisible(
     return
   }
   const hostDepth = Number(depth) || 0
+  const hostLaneKey = hostLaneKeyForPanel(parentName, hostDepth)
   const useTween = behavior === 'tween' && !prefersReducedMotion()
 
   const resolveAlignContext = (hostCard) => {
@@ -1269,7 +1356,7 @@ async function ensureBoardHostedPanelAnchorVisible(
   }
 
   const alignHostInstant = async () => {
-    const hostCard = resolvePanelHostCard(board, parentName, hostDepth)
+    const hostCard = resolvePanelHostCard(board, parentName, hostDepth, hostLaneKey)
     if (!hostCard) {
       return false
     }
@@ -1283,7 +1370,7 @@ async function ensureBoardHostedPanelAnchorVisible(
   }
 
   const alignHostTween = async () => {
-    const hostCard = resolvePanelHostCard(board, parentName, hostDepth)
+    const hostCard = resolvePanelHostCard(board, parentName, hostDepth, hostLaneKey)
     if (!hostCard) {
       return false
     }
@@ -1311,7 +1398,7 @@ async function ensureBoardHostedPanelAnchorVisible(
   }
 
   const hostNearTop = () => {
-    const hostCard = resolvePanelHostCard(board, parentName, hostDepth)
+    const hostCard = resolvePanelHostCard(board, parentName, hostDepth, hostLaneKey)
     if (!hostCard) {
       return true
     }
@@ -1323,7 +1410,7 @@ async function ensureBoardHostedPanelAnchorVisible(
   }
 
   const spacerLaidOut = () => {
-    const spacer = resolvePanelHostSpacer(board, parentName, hostDepth)
+    const spacer = resolvePanelHostSpacer(board, parentName, hostDepth, hostLaneKey)
     return Boolean(spacer && (spacer.getBoundingClientRect().height || 0) > 1)
   }
 

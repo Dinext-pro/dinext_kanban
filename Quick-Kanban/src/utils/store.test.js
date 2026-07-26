@@ -3695,6 +3695,90 @@ describe('swimlane expand state', () => {
     expect(Object.keys(store.state.childPanels)).toEqual([])
   })
 
+  test('toggleLaneExpanded collapse uses hostLaneKey for multi-lane duplicates', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      swimlane_field: '__assign',
+      swimlane_mode: 'assign',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'alice',
+        label: 'Alice',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'PARENT-A', subject: 'Parent A' }] },
+        ],
+      },
+      {
+        key: 'bob',
+        label: 'Bob',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'PARENT-A', subject: 'Parent A' }] },
+        ],
+      },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alice', 'bob'])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 1, Done: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', {
+      parentName: 'PARENT-A',
+      depth: 0,
+      laneKey: 'bob',
+    })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A-CHILD', depth: 1 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(true)
+
+    // First lane in state is alice — must not close host-on-bob panel.
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'alice' })
+    expect(store.state.expandedLaneKeys).toEqual(['bob'])
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(true)
+
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'bob' })
+    expect(store.state.expandedLaneKeys).toEqual([])
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(false)
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(false)
+    expect(Object.keys(store.state.childPanels)).toEqual([])
+  })
+
   test('toggleLaneExpanded expand keeps open ChildPanel for host lane', async () => {
     const store = createStore()
     store.commit('SET_KANBAN_CONFIG', {
@@ -5118,6 +5202,62 @@ describe('show child tasks visibility', () => {
     expect(store.getters.getCardChildPanelMode('SIBLING-IN-DEPTH0', 1)).toBe('inert')
     expect(store.getters.getCardChildPanelMode('BOARD-OTHER', 0)).toBe('inert')
     expect(store.getters.getCardChildPanelMode('NESTED-CHILD', 2)).toBe('active')
+  })
+
+  test('getCardChildPanelMode: swimlane non-host duplicates are inert', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      swimlane_mode: 'assign',
+      swimlane_field: '__assign',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', {
+      parentName: 'PARENT-A',
+      depth: 0,
+      laneKey: 'alice',
+    })
+    expect(store.getters.isChildPanelHostFor('PARENT-A', 0, 'alice')).toBe(true)
+    expect(store.getters.isChildPanelHostFor('PARENT-A', 0, 'bob')).toBe(false)
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0, 'alice')).toBe('ancestor')
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0, 'bob')).toBe('inert')
+    // Without laneKey, keep ancestor (flat / legacy callers).
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0)).toBe('ancestor')
   })
 })
 

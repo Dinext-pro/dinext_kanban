@@ -494,6 +494,7 @@ const columnTotal = computed(() => {
 })
 
 const childPanelSpacerHeights = inject('childPanelSpacerHeights', ref({}))
+const childPanelSpacerHostLanes = inject('childPanelSpacerHostLanes', ref({}))
 const childPanelSpacerAnimatingParents = inject('childPanelSpacerAnimatingParents', ref({}))
 const syncChildPanelGeometry = inject('syncChildPanelGeometry', () => {})
 let panelSpacerEl = null
@@ -503,15 +504,29 @@ let onGeometryColumnScroll = null
 /** Every panel host reserves vertical space; panels themselves are board-hosted. */
 const hostPanelDepth = computed(() => props.childDepth)
 
+function matchesSpacerHostLane(cardName) {
+  const hostLane = childPanelSpacerHostLanes.value?.[cardName]
+  if (hostLane == null || hostLane === '') {
+    return true
+  }
+  if (props.laneKey == null || String(props.laneKey).trim() === '') {
+    return false
+  }
+  return String(props.laneKey) === String(hostLane)
+}
+
 function isPanelHost(cardName) {
-  if (store.getters.isChildPanelOpenFor(cardName, hostPanelDepth.value)) {
+  if (store.getters.isChildPanelHostFor(cardName, hostPanelDepth.value, props.laneKey)) {
     return true
   }
   // Keep spacer DOM during leave (height → 0) while exit buffer holds the key.
-  return Object.prototype.hasOwnProperty.call(
+  if (!Object.prototype.hasOwnProperty.call(
     childPanelSpacerHeights.value || {},
     cardName,
-  )
+  )) {
+    return false
+  }
+  return matchesSpacerHostLane(cardName)
 }
 
 function spacerHeightFor(cardName) {
@@ -854,12 +869,24 @@ const columnCreateOptions = computed(
 )
 /** Hide when server policy explicitly denies create for this column. */
 const createAllowed = computed(() => columnCreateOptions.value?.allowed !== false)
+/** Create only inside the deepest open child panel (or anywhere when none open). */
+const createOutsideActiveChildArea = computed(() => {
+  const maxDepth = store.getters.maxOpenChildPanelDepth
+  if (maxDepth == null) {
+    return false
+  }
+  return Number(props.childDepth) !== maxDepth + 1
+})
 /** Keep clickable while options still loading (blocked message on click). */
 const createBlocked = computed(() => (
   Boolean(columnCreateOptions.value && columnCreateOptions.value.allowed === false)
+  || createOutsideActiveChildArea.value
 ))
 
 function startCreate(_columnName) {
+  if (createBlocked.value) {
+    return
+  }
   store.dispatch('startCreateCard', {
     columnIndex: props.columnIndex,
     column: props.column,

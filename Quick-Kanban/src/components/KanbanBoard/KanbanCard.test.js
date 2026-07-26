@@ -460,6 +460,7 @@ test('child count click toggles child panel at card depth', async () => {
   expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
     parentName: 'TASK-1',
     depth: 1,
+    laneKey: null,
   })
   expect(wrapper.get('.kanban-child-count').attributes('aria-expanded')).toBe('false')
 })
@@ -589,6 +590,7 @@ test('ancestor host keeps badge clickable while panel is open', async () => {
   expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
     parentName: 'TASK-1',
     depth: 0,
+    laneKey: null,
   })
 })
 
@@ -624,6 +626,7 @@ test('ancestor host card click closes child panel from card depth', async () => 
   expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
     parentName: 'TASK-1',
     depth: 0,
+    laneKey: null,
   })
 })
 
@@ -659,6 +662,7 @@ test('nested ancestor root click closes from depth 0', async () => {
   expect(dispatch).toHaveBeenCalledWith('toggleChildPanel', {
     parentName: 'TASK-ROOT',
     depth: 0,
+    laneKey: null,
   })
 })
 
