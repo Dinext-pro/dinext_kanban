@@ -1,6 +1,5 @@
 <template>
   <section
-    v-show="!teleported || Boolean(hostRect)"
     ref="panelRoot"
     class="child-panel"
     :class="{
@@ -184,14 +183,6 @@ onMounted(async () => {
 
 watch(
   () => panel.value?.columns?.map((column) => column.cards?.length).join(','),
-  async () => {
-    await nextTick()
-    emitHeight()
-  },
-)
-
-watch(
-  () => props.hostRect,
   async () => {
     await nextTick()
     emitHeight()

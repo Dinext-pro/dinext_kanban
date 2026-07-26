@@ -83,3 +83,77 @@ export function resolveChildPanelSpacerHeight({
   const host = Math.max(0, Number(hostHeight) || 0)
   return Math.max(0, client - inset - host)
 }
+
+/** CSS.escape for data-card-name / data-panel-parent selectors. */
+export function escapePanelParentName(parentName) {
+  if (typeof CSS !== 'undefined' && CSS.escape) {
+    return CSS.escape(String(parentName ?? ''))
+  }
+  return String(parentName ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function panelHostCandidates(root, parentName) {
+  if (!root?.querySelectorAll || !parentName) {
+    return []
+  }
+  const escaped = escapePanelParentName(parentName)
+  return [...root.querySelectorAll(`.kanban-card[data-card-name="${escaped}"]`)]
+}
+
+function panelSpacerCandidates(root, parentName) {
+  if (!root?.querySelectorAll || !parentName) {
+    return []
+  }
+  const escaped = escapePanelParentName(parentName)
+  return [...root.querySelectorAll(`.child-panel-spacer[data-panel-parent="${escaped}"]`)]
+}
+
+/**
+ * Resolve the DOM host card for a board-hosted child panel by depth.
+ * Depth 0: main-board instance only (not inside .child-panel).
+ * Depth >= 1: instance inside parent panel depth-1; never prefer a board duplicate.
+ */
+export function resolvePanelHostCard(root, parentName, depth = 0) {
+  const cards = panelHostCandidates(root, parentName)
+  if (!cards.length) {
+    return null
+  }
+  const level = Math.max(0, Number(depth) || 0)
+  if (level <= 0) {
+    return cards.find((card) => !card.closest?.('.child-panel')) || null
+  }
+  const parentPanel = root?.querySelector?.(
+    `.child-panel[data-child-depth="${level - 1}"]`,
+  )
+  if (parentPanel) {
+    const inParent = cards.find((card) => parentPanel.contains(card))
+    if (inParent) {
+      return inParent
+    }
+  }
+  return cards.find((card) => card.closest?.('.child-panel')) || null
+}
+
+/**
+ * Resolve the spacer under a panel host, scoped the same way as resolvePanelHostCard.
+ */
+export function resolvePanelHostSpacer(root, parentName, depth = 0) {
+  const spacers = panelSpacerCandidates(root, parentName)
+  if (!spacers.length) {
+    return null
+  }
+  const level = Math.max(0, Number(depth) || 0)
+  if (level <= 0) {
+    return spacers.find((el) => !el.closest?.('.child-panel')) || null
+  }
+  const parentPanel = root?.querySelector?.(
+    `.child-panel[data-child-depth="${level - 1}"]`,
+  )
+  if (parentPanel) {
+    const inParent = spacers.find((el) => parentPanel.contains(el))
+    if (inParent) {
+      return inParent
+    }
+  }
+  return spacers.find((el) => el.closest?.('.child-panel')) || null
+}

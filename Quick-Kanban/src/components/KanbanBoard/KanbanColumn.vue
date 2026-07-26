@@ -177,6 +177,7 @@
             v-if="isPanelHost(record.name)"
             :ref="setPanelSpacerRef"
             class="child-panel-spacer"
+            :class="{ 'child-panel-spacer--animate': isSpacerAnimating(record.name) }"
             :style="{ height: `${spacerHeightFor(record.name)}px` }"
             :data-panel-parent="record.name"
           />
@@ -493,6 +494,7 @@ const columnTotal = computed(() => {
 })
 
 const childPanelSpacerHeights = inject('childPanelSpacerHeights', ref({}))
+const childPanelSpacerAnimatingParents = inject('childPanelSpacerAnimatingParents', ref({}))
 const syncChildPanelGeometry = inject('syncChildPanelGeometry', () => {})
 let panelSpacerEl = null
 let geometryColumnScrollEl = null
@@ -502,11 +504,22 @@ let onGeometryColumnScroll = null
 const hostPanelDepth = computed(() => props.childDepth)
 
 function isPanelHost(cardName) {
-  return store.getters.isChildPanelOpenFor(cardName, hostPanelDepth.value)
+  if (store.getters.isChildPanelOpenFor(cardName, hostPanelDepth.value)) {
+    return true
+  }
+  // Keep spacer DOM during leave (height → 0) while exit buffer holds the key.
+  return Object.prototype.hasOwnProperty.call(
+    childPanelSpacerHeights.value || {},
+    cardName,
+  )
 }
 
 function spacerHeightFor(cardName) {
   return Math.max(0, Number(childPanelSpacerHeights.value?.[cardName]) || 0)
+}
+
+function isSpacerAnimating(cardName) {
+  return Boolean(childPanelSpacerAnimatingParents.value?.[cardName])
 }
 
 function setPanelSpacerRef(el) {

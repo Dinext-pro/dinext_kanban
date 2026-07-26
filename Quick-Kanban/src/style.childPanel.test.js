@@ -107,10 +107,33 @@ describe('child panel geometry CSS', () => {
       /\.kanban-card--panel-ancestor\s+\.kanban-child-count\s*\{[^}]*pointer-events:\s*auto/s,
     )
     expect(styleCss).toMatch(
-      /\.kanban-card--panel-ancestor\s+\.kanban-card-meta\s*\{[^}]*display:\s*none/s,
+      /\.kanban-card--panel-ancestor\s+\.kanban-card-meta\s*\{[^}]*max-height:\s*0/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-card--panel-ancestor\s+\.kanban-card-meta\s*\{[^}]*opacity:\s*0/s,
     )
   })
 
+  test('child panel open/close uses animation tokens and transitions', () => {
+    expect(styleCss).toMatch(/--kanban-child-panel-anim-ms:\s*200ms/)
+    expect(styleCss).toMatch(/--kanban-child-panel-pin-ms:\s*300ms/)
+    expect(styleCss).toMatch(
+      /\.child-panel-spacer--animate\s*\{[^}]*transition:\s*height\s+var\(--kanban-child-panel-anim-ms/s,
+    )
+    expect(styleCss).not.toMatch(
+      /\.child-panel-spacer\s*\{[^}]*transition:\s*height/s,
+    )
+    expect(styleCss).toMatch(/\.child-panel-enter-active/)
+    expect(styleCss).toMatch(/\.child-panel-leave-active/)
+    expect(styleCss).toMatch(/\.child-panel-enter-from/)
+    expect(styleCss).toMatch(/\.child-panel-leave-to/)
+    expect(styleCss).toMatch(
+      /\.child-panel-move\s*\{[^}]*transition:\s*none/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-card--panel-ancestor\s*\{[^}]*transition:/s,
+    )
+  })
   test('child panel has full inset outline including top', () => {
     expect(styleCss).toMatch(
       /\.child-panel\s*\{[^}]*box-shadow:\s*inset\s+0\s+0\s+0\s+1px\s+var\(--child-panel-border\)/s,

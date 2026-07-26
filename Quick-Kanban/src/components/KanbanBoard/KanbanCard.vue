@@ -684,6 +684,18 @@ watch(isDense, (dense) => {
   animateDetailsSlot(dense)
 }, { flush: 'post' })
 
+// Panel host densifies even when Minimize is off; isDense already includes
+// childPanelOpen. Re-run slot animation when entering/leaving host mode so
+// fields collapse/expand in sync with ancestor chrome (meta uses CSS).
+watch(childPanelOpen, (open, wasOpen) => {
+  if (!densityReady || open === wasOpen) {
+    return
+  }
+  if (open || !minimizeCards.value) {
+    animateDetailsSlot(isDense.value)
+  }
+}, { flush: 'post' })
+
 watch(showDetailsSlot, async (show) => {
   if (!show || !densityReady) {
     return

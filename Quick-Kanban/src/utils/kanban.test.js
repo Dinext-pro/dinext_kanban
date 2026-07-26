@@ -40,6 +40,8 @@ import {
   writeMinimizeCardsPreference,
   writeShowChildTasksPreference,
   CARD_DENSITY_ANIMATION_MS,
+  CHILD_PANEL_ANIMATION_MS,
+  CHILD_PANEL_PIN_MS,
   collapsedColumnsStorageKey,
   readCollapsedColumnsPreference,
   writeCollapsedColumnsPreference,
@@ -964,6 +966,8 @@ describe('link title hydration', () => {
 describe('minimize cards preference', () => {
   test('exports density animation duration for CSS transitions', () => {
     expect(CARD_DENSITY_ANIMATION_MS).toBe(200)
+    expect(CHILD_PANEL_ANIMATION_MS).toBe(200)
+    expect(CHILD_PANEL_PIN_MS).toBe(300)
   })
 
   test('reads and writes board-scoped localStorage preference', () => {
