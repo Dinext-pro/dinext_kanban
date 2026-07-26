@@ -2544,6 +2544,94 @@ describe('card creation', () => {
     expect(store.state.columns[0].cards[0]._child_count).toBe(1)
   })
 
+  test('deleteCard removes a card that exists only in a child panel', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [
+          {
+            name: 'PARENT',
+            subject: 'Parent task',
+            status: 'Open',
+            _child_count: 2,
+          },
+        ],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        {
+          name: 'open',
+          column_name: 'Open',
+          cards: [
+            {
+              name: 'CHILD-1',
+              subject: 'Child task',
+              status: 'Open',
+              parent_task: 'PARENT',
+              modified: '2026-07-12 12:00:00',
+            },
+            {
+              name: 'CHILD-2',
+              subject: 'Other child',
+              status: 'Open',
+              parent_task: 'PARENT',
+            },
+          ],
+        },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {
+        Open: { offset: 2, hasMore: false, loading: false },
+      },
+      columnTotals: { Open: 2, Done: 0 },
+    })
+    frappe.get_meta.mockReturnValue({
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [],
+    })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.delete_card') {
+        return { message: { ok: true } }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: { PARENT: 1 } }
+      }
+      return { message: {} }
+    })
+
+    const deleted = await store.dispatch('deleteCard', { cardName: 'CHILD-1' })
+
+    expect(deleted).toBe(true)
+    expect(frappe.call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'quick_kanban.api.delete_card',
+        args: expect.objectContaining({ name: 'CHILD-1' }),
+      }),
+    )
+    expect(store.state.columns[0].cards.map((card) => card.name)).toEqual(['PARENT'])
+    expect(store.state.childPanels['0::PARENT'].columns[0].cards.map((card) => card.name)).toEqual([
+      'CHILD-2',
+    ])
+    expect(store.state.childPanels['0::PARENT'].columnTotals.Open).toBe(1)
+    expect(store.state.childPanels['0::PARENT'].columnPagination.Open.offset).toBe(1)
+    expect(store.state.columns[0].cards[0]._child_count).toBe(1)
+  })
+
   test('startCreateCard fetches missing parent fields via get_value for child create', async () => {
     const store = hydratedStore()
     store.commit('SET_KANBAN_CONFIG', {
