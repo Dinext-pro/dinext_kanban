@@ -120,10 +120,10 @@ function removeCardFromColumn(column, cardName) {
 }
 
 /**
- * Remove every hydrated copy of a card from lanes and/or flat columns.
+ * Remove every hydrated copy of a card from lanes, flat columns, and/or child panels.
  * Returns a restore snapshot, or null when the card was not found.
  */
-export function removeAllCardInstances(lanes, columns, cardName) {
+export function removeAllCardInstances(lanes, columns, cardName, childPanels = null) {
   if (!cardName) {
     return null
   }
@@ -152,6 +152,11 @@ export function removeAllCardInstances(lanes, columns, cardName) {
   for (let columnIndex = 0; columnIndex < (columns || []).length; columnIndex += 1) {
     visit(columns[columnIndex], { type: 'column', columnIndex })
   }
+  for (const [scopeId, panel] of Object.entries(childPanels || {})) {
+    for (let columnIndex = 0; columnIndex < (panel?.columns || []).length; columnIndex += 1) {
+      visit(panel.columns[columnIndex], { type: 'child', scopeId, columnIndex })
+    }
+  }
 
   if (!cardTemplate || !placements.length) {
     return null
@@ -162,10 +167,11 @@ export function removeAllCardInstances(lanes, columns, cardName) {
 /**
  * Restore card instances from a snapshot produced by removeAllCardInstances.
  */
-export function restoreCardInstances(lanes, columns, snapshot) {
+export function restoreCardInstances(lanes, columns, snapshot, childPanels = null) {
   if (!snapshot?.card || !snapshot.placements?.length) {
     return false
   }
+  let restored = false
   for (const placement of snapshot.placements) {
     const card = { ...snapshot.card }
     if (placement.type === 'lane') {
@@ -175,6 +181,7 @@ export function restoreCardInstances(lanes, columns, snapshot) {
       const index = Math.min(placement.cardIndex ?? 0, cards.length)
       cards.splice(index, 0, card)
       column.cards = cards
+      restored = true
     } else if (placement.type === 'column') {
       const column = columns?.[placement.columnIndex]
       if (!column) continue
@@ -182,9 +189,18 @@ export function restoreCardInstances(lanes, columns, snapshot) {
       const index = Math.min(placement.cardIndex ?? 0, cards.length)
       cards.splice(index, 0, card)
       column.cards = cards
+      restored = true
+    } else if (placement.type === 'child') {
+      const column = childPanels?.[placement.scopeId]?.columns?.[placement.columnIndex]
+      if (!column) continue
+      const cards = [...(column.cards || [])]
+      const index = Math.min(placement.cardIndex ?? 0, cards.length)
+      cards.splice(index, 0, card)
+      column.cards = cards
+      restored = true
     }
   }
-  return true
+  return restored
 }
 
 /**

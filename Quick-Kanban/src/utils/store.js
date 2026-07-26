@@ -1464,7 +1464,12 @@ export function createKanbanStore() {
       },
       REMOVE_CARD(state, payload) {
         const cardName = typeof payload === 'string' ? payload : payload?.cardName
-        const snapshot = removeAllCardInstances(state.lanes, state.columns, cardName)
+        const snapshot = removeAllCardInstances(
+          state.lanes,
+          state.columns,
+          cardName,
+          state.childPanels,
+        )
         if (snapshot && payload && typeof payload === 'object') {
           payload.snapshot = snapshot
         }
@@ -1473,7 +1478,12 @@ export function createKanbanStore() {
         }
       },
       RESTORE_CARD(state, snapshot) {
-        if (restoreCardInstances(state.lanes, state.columns, snapshot)) {
+        if (restoreCardInstances(
+          state.lanes,
+          state.columns,
+          snapshot,
+          state.childPanels,
+        )) {
           state.dragSyncGeneration += 1
         }
       },
@@ -3574,6 +3584,31 @@ export function createKanbanStore() {
                 columnIndex: placement.columnIndex,
                 delta: -1,
               })
+            } else if (placement.type === 'child') {
+              const panel = state.childPanels?.[placement.scopeId]
+              const column = panel?.columns?.[placement.columnIndex]
+              const columnName = column?.column_name
+              if (panel && columnName) {
+                if (Number.isFinite(panel.columnTotals?.[columnName])) {
+                  commit('SET_CHILD_COLUMN_TOTALS', {
+                    scopeId: placement.scopeId,
+                    totals: {
+                      ...panel.columnTotals,
+                      [columnName]: Math.max(0, panel.columnTotals[columnName] - 1),
+                    },
+                  })
+                }
+                const pagination = panel.columnPagination?.[columnName]
+                if (pagination && Number.isFinite(pagination.offset)) {
+                  commit('SET_CHILD_COLUMN_PAGE_STATE', {
+                    scopeId: placement.scopeId,
+                    columnName,
+                    changes: {
+                      offset: Math.max(0, pagination.offset - 1),
+                    },
+                  })
+                }
+              }
             }
           }
           if (parentName) {
