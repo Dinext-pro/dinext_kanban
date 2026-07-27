@@ -34,28 +34,57 @@
         >
           {{ totalDisplay }}
         </span>
+        <!--
+          In-flow title stays for layout + Sortable handle. When a child panel is
+          open, a transparent Teleport copy paints above the panel (z>50) without
+          raising column z-index or pulling the strip background.
+        -->
         <h2
           :id="headingId"
+          ref="titleInFlowRef"
           class="column-title"
-          :class="{ 'column-title--draggable': canEditBoard && !hasCustomBody }"
+          :class="{
+            'column-title--draggable': canEditBoard && !hasCustomBody,
+            'kanban-collapsed-chrome--placeholder': floatCollapsedChrome,
+          }"
           :title="canEditBoard && !hasCustomBody ? __('Drag to reorder column') : undefined"
+          :aria-hidden="floatCollapsedChrome ? 'true' : undefined"
         >
           {{ columnLabel }}
         </h2>
+        <Teleport to="body">
+          <h2
+            v-if="floatCollapsedChrome"
+            class="column-title kanban-collapsed-chrome--floating"
+            :class="{ 'column-title--draggable': canEditBoard && !hasCustomBody }"
+            :style="floatTitleStyle"
+            :title="canEditBoard && !hasCustomBody ? __('Drag to reorder column') : undefined"
+            @pointerdown="onFloatingTitlePointerDown"
+            @dblclick.stop="onFloatingTitleDblclick"
+          >
+            {{ columnLabel }}
+          </h2>
+        </Teleport>
       </div>
 
-      <div class="column-header-actions">
+      <div
+        class="column-header-actions"
+        :class="{ 'kanban-collapsed-chrome--placeholder': floatCollapsedChrome }"
+        :aria-hidden="floatCollapsedChrome ? 'true' : undefined"
+      >
         <div
           class="quick-kanban-column-menu"
           @keydown.esc.prevent="closeColorMenu"
           @dblclick.stop
         >
           <button
-            ref="colorMenuButton"
+            ref="colorMenuButtonInFlow"
             type="button"
             class="header-item"
+            :tabindex="floatCollapsedChrome ? -1 : undefined"
             :aria-label="__('Change {0} column color', [columnLabel])"
             :aria-expanded="String(colorMenuOpen)"
+            :aria-hidden="floatCollapsedChrome ? 'true' : undefined"
             @click="toggleColorMenu"
           >
             <svg class="icon icon-sm" aria-hidden="true">
@@ -136,6 +165,34 @@
           </svg>
         </button>
       </div>
+
+      <Teleport to="body">
+        <div
+          v-if="floatCollapsedChrome"
+          class="column-header-actions kanban-collapsed-chrome--floating"
+          :style="floatMenuStyle"
+          @dblclick.stop
+        >
+          <div
+            class="quick-kanban-column-menu"
+            @keydown.esc.prevent="closeColorMenu"
+            @dblclick.stop
+          >
+            <button
+              ref="colorMenuButtonFloat"
+              type="button"
+              class="header-item"
+              :aria-label="__('Change {0} column color', [columnLabel])"
+              :aria-expanded="String(colorMenuOpen)"
+              @click="toggleColorMenu"
+            >
+              <svg class="icon icon-sm" aria-hidden="true">
+                <use href="#icon-dot-horizontal"></use>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </Teleport>
     </header>
 
     <slot v-if="hasCustomBody" name="body" />
@@ -277,6 +334,7 @@ import { getIndicators } from "../../utils/colors";
 import {
   clampColumnWidthForResize,
   COLLAPSED_COLUMN_WIDTH_PX,
+  COLUMN_COLLAPSE_ANIMATION_MS,
   COLUMN_DRAG_EXPAND_DELAY_MS,
   getColumnKey,
   getIndicatorClass,
@@ -291,6 +349,10 @@ import {
   childPanelDragGroupName,
   setSortableNearestParticipation,
 } from "../../utils/childPanelBoard";
+import {
+  clearColumnSortableDraggingClass,
+  setColumnSortableDraggingClass,
+} from "../../utils/columnSortable";
 import KanbanCard from "./KanbanCard.vue";
 import IndicatorPill from "../IndicatorPill.vue";
 
@@ -330,22 +392,34 @@ let boundListScroller = null
 let onListScroll = null
 let externalResizeObserver = null
 let scrollTopRaf = null
+const colorMenuButtonInFlow = ref(null)
+const colorMenuButtonFloat = ref(null)
 const colorMenuButton = ref(null)
 const colorMenuPanel = ref(null)
 const colorMenuOpen = ref(false)
 const columnMenuStyle = ref({})
 const columnRootRef = ref(null)
+const titleInFlowRef = ref(null)
+const floatTitleStyle = ref({})
+const floatMenuStyle = ref({})
 const resizePreviewWidth = ref(null)
 const __ = globalThis.__
 const indicators = computed(() => getIndicators())
 let expandOnDragTimer = null
 let resizeSession = null
+let floatChromeRaf = null
+let floatChromeSettleTimer = null
+let floatChromeResizeObserver = null
 
 useDismissibleMenu({
   isOpen: colorMenuOpen,
   triggerRef: colorMenuButton,
   menuRef: colorMenuPanel,
   close: closeColorMenu,
+})
+
+watch([colorMenuButtonInFlow, colorMenuButtonFloat], () => {
+  syncColorMenuButtonRef()
 })
 
 const props = defineProps({
@@ -454,6 +528,181 @@ const columnKey = computed(() => getColumnKey(props.column))
 const collapsed = computed(
   () => store.getters.isColumnCollapsed(columnKey.value),
 )
+const childPanelOpen = computed(() => store.getters.maxOpenChildPanelDepth != null)
+/** Float title + menu above child panel without raising column z-index. */
+const floatCollapsedChrome = computed(
+  () => collapsed.value && childPanelOpen.value && !props.hideHeader,
+)
+
+function syncColorMenuButtonRef() {
+  colorMenuButton.value = floatCollapsedChrome.value
+    ? colorMenuButtonFloat.value
+    : colorMenuButtonInFlow.value
+}
+
+function rectToFixedStyle(rect, color, { centerWithVerticalTitle = false } = {}) {
+  if (!rect) {
+    return {}
+  }
+  if (centerWithVerticalTitle) {
+    return {
+      top: `${rect.top + rect.height / 2}px`,
+      left: `${rect.left + rect.width / 2}px`,
+      transform: 'translate(-50%, -50%) rotate(180deg)',
+      color,
+    }
+  }
+  return {
+    top: `${rect.top}px`,
+    left: `${rect.left}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+    color,
+  }
+}
+
+function syncFloatCollapsedChrome() {
+  if (!floatCollapsedChrome.value) {
+    floatTitleStyle.value = {}
+    floatMenuStyle.value = {}
+    syncColorMenuButtonRef()
+    return
+  }
+  const color = `var(--text-on-${getIndicatorClass(props.column.indicator)}, var(--text-color))`
+  const titleRect = titleInFlowRef.value?.getBoundingClientRect?.()
+  floatTitleStyle.value = rectToFixedStyle(titleRect, color, {
+    centerWithVerticalTitle: true,
+  })
+  const menuEl = colorMenuButtonInFlow.value?.closest?.('.column-header-actions')
+  const menuRect = menuEl?.getBoundingClientRect?.()
+  floatMenuStyle.value = rectToFixedStyle(menuRect, color)
+  syncColorMenuButtonRef()
+}
+
+function scheduleFloatCollapsedChromeSync() {
+  if (floatChromeRaf) {
+    return
+  }
+  floatChromeRaf = requestAnimationFrame(() => {
+    floatChromeRaf = null
+    syncFloatCollapsedChrome()
+  })
+}
+
+/**
+ * Column width CSS transitions for COLUMN_COLLAPSE_ANIMATION_MS; one nextTick
+ * sync leaves floats at pre-collapse coords (title over the neighbor). Re-sync
+ * after the animation settles. Also used when any column collapses (reflow).
+ */
+function scheduleFloatCollapsedChromeSyncAfterSettle() {
+  if (floatChromeSettleTimer != null) {
+    clearTimeout(floatChromeSettleTimer)
+  }
+  floatChromeSettleTimer = setTimeout(() => {
+    floatChromeSettleTimer = null
+    // Sync immediately after settle — do not only queue rAF (can miss under
+    // batching / fake timers while the strip has already finished animating).
+    syncFloatCollapsedChrome()
+    scheduleFloatCollapsedChromeSync()
+  }, COLUMN_COLLAPSE_ANIMATION_MS)
+}
+
+function requestFloatCollapsedChromeLayoutSync() {
+  if (!floatCollapsedChrome.value) {
+    return
+  }
+  syncFloatCollapsedChrome()
+  scheduleFloatCollapsedChromeSync()
+  scheduleFloatCollapsedChromeSyncAfterSettle()
+}
+
+function bindFloatChromeResizeObserver() {
+  unbindFloatChromeResizeObserver()
+  const root = columnRootRef.value
+  if (!(root instanceof Element) || typeof ResizeObserver !== 'function') {
+    return
+  }
+  floatChromeResizeObserver = new ResizeObserver(() => {
+    if (floatCollapsedChrome.value) {
+      scheduleFloatCollapsedChromeSync()
+    }
+  })
+  floatChromeResizeObserver.observe(root)
+}
+
+function unbindFloatChromeResizeObserver() {
+  floatChromeResizeObserver?.disconnect?.()
+  floatChromeResizeObserver = null
+}
+
+function onFloatingTitleDblclick() {
+  setCollapsed(!collapsed.value)
+}
+
+/**
+ * Floating title is teleported outside the Sortable container. Forward primary
+ * pointerdown to the in-flow `.column-title--draggable` so column reorder works
+ * (with forceFallback Sortable + real pointermove).
+ */
+function onFloatingTitlePointerDown(event) {
+  if (!(canEditBoard.value && !hasCustomBody.value)) {
+    return
+  }
+  if (event.button !== 0) {
+    return
+  }
+  const handle = titleInFlowRef.value
+  if (!(handle instanceof Element)) {
+    return
+  }
+  event.preventDefault()
+  // Hide floats before Sortable samples elementFromPoint (avoids end-append jump).
+  setColumnSortableDraggingClass()
+  const previousPointerEvents = handle.style.pointerEvents
+  handle.style.pointerEvents = 'auto'
+  const eventInit = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    isPrimary: event.isPrimary,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    screenX: event.screenX,
+    screenY: event.screenY,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    metaKey: event.metaKey,
+    button: event.button,
+    buttons: event.buttons,
+  }
+  try {
+    handle.dispatchEvent(new PointerEvent('pointerdown', eventInit))
+  } catch {
+    // PointerEvent unavailable — mousedown below is enough.
+  }
+  handle.dispatchEvent(new MouseEvent('mousedown', eventInit))
+
+  const restorePointerEvents = () => {
+    handle.style.pointerEvents = previousPointerEvents
+    clearColumnSortableDraggingClass()
+    window.removeEventListener('pointerup', restorePointerEvents, true)
+    window.removeEventListener('pointercancel', restorePointerEvents, true)
+    window.removeEventListener('mouseup', restorePointerEvents, true)
+  }
+  window.addEventListener('pointerup', restorePointerEvents, true)
+  window.addEventListener('pointercancel', restorePointerEvents, true)
+  window.addEventListener('mouseup', restorePointerEvents, true)
+}
+
+function onFloatChromeScrollOrResize() {
+  if (!floatCollapsedChrome.value) {
+    return
+  }
+  scheduleFloatCollapsedChromeSync()
+}
 const columnDropClasses = computed(() => {
   if (hasCustomBody.value || props.headerOnly) {
     return {}
@@ -853,16 +1102,34 @@ function onResizePointerDown(event) {
 
 onMounted(() => {
   syncChildColumnRegistration(childColumnRefHandle())
+  window.addEventListener('scroll', onFloatChromeScrollOrResize, true)
+  window.addEventListener('resize', onFloatChromeScrollOrResize)
   nextTick(() => {
     bindScrollTopListeners()
     syncSortableNearestParticipation()
     syncChildColumnRegistration(childColumnRefHandle())
+    syncFloatCollapsedChrome()
+    if (floatCollapsedChrome.value) {
+      bindFloatChromeResizeObserver()
+      scheduleFloatCollapsedChromeSyncAfterSettle()
+    }
   })
 })
 
 onBeforeUnmount(() => {
   syncChildColumnRegistration(null)
   unbindGeometryScrollListeners()
+  unbindFloatChromeResizeObserver()
+  window.removeEventListener('scroll', onFloatChromeScrollOrResize, true)
+  window.removeEventListener('resize', onFloatChromeScrollOrResize)
+  if (floatChromeRaf != null) {
+    cancelAnimationFrame(floatChromeRaf)
+    floatChromeRaf = null
+  }
+  if (floatChromeSettleTimer != null) {
+    clearTimeout(floatChromeSettleTimer)
+    floatChromeSettleTimer = null
+  }
   if (scrollTopRaf != null) {
     cancelAnimationFrame(scrollTopRaf)
     scrollTopRaf = null
@@ -1091,6 +1358,47 @@ watch(
   participateInSortableNearest,
   () => {
     nextTick(() => syncSortableNearestParticipation())
+  },
+)
+
+watch(
+  floatCollapsedChrome,
+  (enabled) => {
+    nextTick(() => {
+      syncFloatCollapsedChrome()
+      if (enabled) {
+        scheduleFloatCollapsedChromeSyncAfterSettle()
+        bindFloatChromeResizeObserver()
+      } else {
+        unbindFloatChromeResizeObserver()
+        if (floatChromeSettleTimer != null) {
+          clearTimeout(floatChromeSettleTimer)
+          floatChromeSettleTimer = null
+        }
+      }
+    })
+  },
+)
+
+watch(
+  () => store.state.collapsedColumns,
+  () => {
+    requestFloatCollapsedChromeLayoutSync()
+  },
+  { deep: true },
+)
+
+watch(
+  () => [
+    props.column.indicator,
+    props.column.display_name,
+    props.column.column_name,
+    columnWidthPx.value,
+  ],
+  () => {
+    if (floatCollapsedChrome.value) {
+      requestFloatCollapsedChromeLayoutSync()
+    }
   },
 )
 

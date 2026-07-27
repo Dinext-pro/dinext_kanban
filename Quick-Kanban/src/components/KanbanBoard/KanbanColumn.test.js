@@ -2,6 +2,7 @@ import { expect, test, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createKanbanStore } from '../../utils/store'
+import { COLUMN_COLLAPSE_ANIMATION_MS } from '../../utils/kanban'
 
 const scrollToKey = vi.fn()
 const scrollToIndex = vi.fn()
@@ -1484,4 +1485,132 @@ test('shows stick-room dropzone and drop chrome inside child panel columns', asy
 
   wrapper.unmount()
   globalThis.__quickKanbanPermissiveMoves = previousPermissive
+})
+
+test('floats collapsed title and menu above child panel without strip background', async () => {
+  const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await wrapper.vm.$nextTick()
+
+  expect(wrapper.find('.kanban-collapsed-chrome--floating').exists()).toBe(false)
+
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  const floatingTitles = wrapper.findAll('h2.kanban-collapsed-chrome--floating')
+  expect(floatingTitles.length).toBe(1)
+  expect(floatingTitles[0].text()).toBe('Open')
+  expect(floatingTitles[0].classes()).toContain('column-title--draggable')
+  expect(floatingTitles[0].classes()).not.toContain('kanban-column')
+
+  const floatingMenus = wrapper.findAll(
+    '.column-header-actions.kanban-collapsed-chrome--floating',
+  )
+  expect(floatingMenus.length).toBe(1)
+  expect(floatingMenus[0].find('.header-item').exists()).toBe(true)
+
+  const inFlowTitle = wrapper.get('h2.column-title.kanban-collapsed-chrome--placeholder')
+  expect(inFlowTitle.classes()).toContain('column-title--draggable')
+  const dispatchSpy = vi.spyOn(inFlowTitle.element, 'dispatchEvent')
+
+  floatingTitles[0].element.dispatchEvent(
+    new PointerEvent('pointerdown', { bubbles: true, button: 0, buttons: 1 }),
+  )
+  expect(document.documentElement.classList.contains('kanban-column-sortable-dragging')).toBe(true)
+  expect(dispatchSpy).toHaveBeenCalled()
+  const types = dispatchSpy.mock.calls.map((call) => call[0].type)
+  expect(types).toEqual(expect.arrayContaining(['pointerdown', 'mousedown']))
+  expect(dispatchSpy.mock.calls.every((call) => call[0].bubbles)).toBe(true)
+  dispatchSpy.mockRestore()
+  document.documentElement.classList.remove('kanban-column-sortable-dragging')
+
+  // Column stacking context stays low; float is a Teleport sibling, not raised column.
+  expect(wrapper.classes()).toContain('kanban-column--collapsed')
+  expect(wrapper.attributes('style') || '').not.toMatch(/z-index:\s*6[0-9]/)
+
+  await floatingTitles[0].trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  await wrapper.vm.$nextTick()
+  expect(wrapper.find('.kanban-collapsed-chrome--floating').exists()).toBe(false)
+})
+
+test('does not float collapsed chrome when no child panel is open', async () => {
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await wrapper.vm.$nextTick()
+
+  expect(wrapper.find('.kanban-collapsed-chrome--floating').exists()).toBe(false)
+  expect(wrapper.get('h2.column-title').classes()).not.toContain(
+    'kanban-collapsed-chrome--placeholder',
+  )
+})
+
+test('re-syncs floating title after collapse settle and neighbor collapse', async () => {
+  const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
+
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  const inFlowTitle = wrapper.get('h2.column-title.kanban-collapsed-chrome--placeholder')
+  let rectLeft = 100
+  const rectSpy = vi
+    .spyOn(inFlowTitle.element, 'getBoundingClientRect')
+    .mockImplementation(() => ({
+      x: rectLeft,
+      y: 150,
+      top: 150,
+      left: rectLeft,
+      width: 52,
+      height: 120,
+      right: rectLeft + 52,
+      bottom: 270,
+      toJSON() {},
+    }))
+
+  // Neighbor collapse reflows this strip — immediate sync uses current rect.
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Done', collapsed: true })
+  await wrapper.vm.$nextTick()
+  expect(
+    wrapper.get('h2.kanban-collapsed-chrome--floating').attributes('style') || '',
+  ).toMatch(/left:\s*126px/)
+
+  // Another neighbor change with a moved strip must re-sync immediately.
+  rectLeft = 280
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Closed', collapsed: true })
+  await wrapper.vm.$nextTick()
+  expect(
+    wrapper.get('h2.kanban-collapsed-chrome--floating').attributes('style') || '',
+  ).toMatch(/left:\s*306px/)
+
+  // After width-transition settle, float must follow the final strip rect.
+  rectLeft = 400
+  await new Promise((resolve) => {
+    setTimeout(resolve, COLUMN_COLLAPSE_ANIMATION_MS + 40)
+  })
+  await wrapper.vm.$nextTick()
+  expect(
+    wrapper.get('h2.kanban-collapsed-chrome--floating').attributes('style') || '',
+  ).toMatch(/left:\s*426px/)
+
+  rectSpy.mockRestore()
+  wrapper.unmount()
 })

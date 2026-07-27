@@ -210,8 +210,10 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
   padding-bottom: 0;
 }
 
-#kanbanapp .swimlane-column--header.kanban-column,
-#kanbanapp .kanban-column--header-only {
+/* Fill grid track only inside the header row — not the forceFallback mirror
+ * reparented under #kanbanapp (that would stretch to full board width). */
+#kanbanapp .swimlane-header-row .swimlane-column--header.kanban-column,
+#kanbanapp .swimlane-header-row .kanban-column--header-only {
   min-height: 0 !important;
   max-height: none !important;
   height: auto;
@@ -977,6 +979,108 @@ body.kanban-column-resize-active * {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: var(--shadow-md);
+}
+
+/*
+ * Body Teleport above the whole board (.kanban isolation traps portal z=50).
+ * z-index 5: above board (~0) and below Desk .page-head (6) so toolbar
+ * dropdowns are not covered. Transparent only — no strip/background.
+ */
+.kanban-collapsed-chrome--floating {
+  position: fixed;
+  z-index: 5;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  pointer-events: auto;
+  color: inherit;
+}
+
+.kanban-collapsed-chrome--floating.column-title {
+  display: block;
+  width: auto;
+  max-width: none;
+  min-height: 0;
+  overflow: visible;
+  writing-mode: vertical-rl;
+  /* translate centering comes from inline style with rotate(180deg) */
+  transform-origin: center center;
+  white-space: nowrap;
+  text-align: center;
+  line-height: 1.2;
+  user-select: none;
+  font-size: medium;
+  font-weight: 600;
+}
+
+.kanban-collapsed-chrome--floating.column-header-actions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: visible;
+}
+
+.kanban-collapsed-chrome--floating .header-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.kanban-collapsed-chrome--floating.column-title--draggable {
+  cursor: grab;
+}
+
+.kanban-collapsed-chrome--floating.column-title--draggable:active {
+  cursor: grabbing;
+}
+
+/* During column reorder, hide floats and let hits pass through child panels
+ * so Sortable elementFromPoint targets board columns (not panel / empty-insert). */
+html.kanban-column-sortable-dragging .kanban-collapsed-chrome--floating {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+html.kanban-column-sortable-dragging .child-panel,
+html.kanban-column-sortable-dragging .child-panel-portal {
+  pointer-events: none !important;
+}
+
+/*
+ * Collapsed columns keep an opacity-0 card-list with pointer-events:auto.
+ * Descendants with pe:auto re-enable hits even when Sortable sets pe:none on
+ * the forceFallback mirror — elementFromPoint then sticks on the dragged
+ * column and Sortable empty-inserts it at the end. Kill those hits while
+ * reordering columns.
+ */
+html.kanban-column-sortable-dragging .kanban-column--collapsed .kanban-card-list,
+html.kanban-column-sortable-dragging .sortable-fallback .kanban-card-list,
+html.kanban-column-sortable-dragging .sortable-column-ghost .kanban-card-list,
+html.kanban-column-sortable-dragging .sortable-column-drag .kanban-card-list {
+  pointer-events: none !important;
+}
+
+#kanbanapp .kanban-collapsed-chrome--placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .column-dropdown .column-color-swatches {

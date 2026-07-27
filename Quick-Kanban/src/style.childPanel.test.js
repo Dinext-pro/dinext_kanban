@@ -159,4 +159,49 @@ describe('child panel geometry CSS', () => {
     expect(styleCss).toMatch(/\.child-panel-group/s)
     expect(styleCss).toMatch(/\.child-panel-cell-spacer/s)
   })
+
+  test('collapsed floating chrome sits above panel without strip background', () => {
+    expect(styleCss).toMatch(
+      /\.kanban-collapsed-chrome--floating\s*\{[^}]*z-index:\s*5/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-collapsed-chrome--floating\s*\{[^}]*background:\s*transparent\s*!important/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-collapsed-chrome--floating\s*\{[^}]*box-shadow:\s*none\s*!important/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-collapsed-chrome--floating\s+\.header-item\s*\{[^}]*border:\s*0\s*!important/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-collapsed-chrome--floating\.column-title--draggable\s*\{[^}]*cursor:\s*grab/s,
+    )
+    expect(styleCss).toMatch(
+      /html\.kanban-column-sortable-dragging\s+\.kanban-collapsed-chrome--floating\s*\{[^}]*visibility:\s*hidden\s*!important/s,
+    )
+    expect(styleCss).toMatch(
+      /html\.kanban-column-sortable-dragging\s+\.child-panel[,\s{][\s\S]*?pointer-events:\s*none\s*!important/s,
+    )
+    expect(styleCss).toMatch(
+      /html\.kanban-column-sortable-dragging\s+\.kanban-column--collapsed\s+\.kanban-card-list[,\s{][\s\S]*?pointer-events:\s*none\s*!important/s,
+    )
+    // Stacking: portal above columns (inside .kanban isolate); float z=5 on body
+    // above the board SC and below Desk .page-head (z=6).
+    expect(styleCss).toMatch(/\.child-panel-portal\s*\{[^}]*z-index:\s*50/s)
+    expect(styleCss).toMatch(
+      /\.kanban:not\(\.kanban--swimlanes\)\s*>\s*\.kanban-column\s*\{[^}]*z-index:\s*1/s,
+    )
+  })
+
+  test('header-only width 100% is scoped to swimlane header row only', () => {
+    expect(styleCss).toMatch(
+      /\.swimlane-header-row\s+\.kanban-column--header-only\s*\{[^}]*width:\s*100%\s*!important/s,
+    )
+    expect(styleCss).not.toMatch(
+      /#kanbanapp\s+\.kanban-column--header-only\s*\{[^}]*width:\s*100%\s*!important/s,
+    )
+    expect(styleCss).not.toMatch(
+      /#kanbanapp\s+\.swimlane-column--header\.kanban-column\s*,\s*\n?#kanbanapp\s+\.kanban-column--header-only\s*\{/s,
+    )
+  })
 })
