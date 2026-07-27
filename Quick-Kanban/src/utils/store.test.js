@@ -2941,6 +2941,49 @@ describe('column reorder', () => {
     expect(store.state.lanes[0].columns[1].cards[0].name).toBe('L1')
   })
 
+  test('reorders open child panel columns together with board columns', async () => {
+    frappe.call.mockResolvedValue({
+      message: {
+        columns: [
+          { name: 'done', column_name: 'Done' },
+          { name: 'open', column_name: 'Open' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+    })
+    const store = boardStore()
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [{ name: 'CHILD-OPEN' }] },
+        { name: 'done', column_name: 'Done', cards: [{ name: 'CHILD-DONE' }] },
+        { name: 'review', column_name: 'Review', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: { Open: 1, Done: 1, Review: 0 },
+    })
+
+    await store.dispatch('updateColumnOrder', ['Done', 'Open', 'Review'])
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+    const panelColumns = store.state.childPanels['0::PARENT'].columns
+    expect(panelColumns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+    expect(panelColumns[0].cards[0].name).toBe('CHILD-DONE')
+    expect(panelColumns[1].cards[0].name).toBe('CHILD-OPEN')
+  })
+
   test('rolls back when column reorder fails', async () => {
     frappe.call.mockRejectedValue(new Error('No write access'))
     const store = boardStore()
