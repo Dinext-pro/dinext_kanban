@@ -160,6 +160,18 @@ describe('child panel geometry CSS', () => {
     expect(styleCss).toMatch(/\.child-panel-cell-spacer/s)
   })
 
+  test('nested collapsed spacer fills group without duplicate wash', () => {
+    expect(styleCss).toMatch(
+      /\.child-panel-group\s*>\s*\.child-panel-cell-spacer\s*\{[^}]*flex:\s*1\s+1\s+auto/s,
+    )
+    expect(styleCss).toMatch(
+      /\.child-panel-group\s*>\s*\.child-panel-cell-spacer\s*\{[^}]*padding-top:\s*0/s,
+    )
+    expect(styleCss).toMatch(
+      /\.child-panel-group\s*>\s*\.child-panel-cell-spacer\s*\{[^}]*box-shadow:\s*none/s,
+    )
+  })
+
   test('collapsed floating chrome sits above panel without strip background', () => {
     expect(styleCss).toMatch(
       /\.kanban-collapsed-chrome--floating\s*\{[^}]*z-index:\s*5/s,

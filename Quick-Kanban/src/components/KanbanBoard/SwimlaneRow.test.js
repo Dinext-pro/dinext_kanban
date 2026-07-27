@@ -343,3 +343,36 @@ test('expands a collapsed column on double-click of the cell spacer', async () =
   expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
   wrapper.unmount()
 })
+
+test('keeps SwimlaneGroup mounted across column collapse and expand', async () => {
+  const { wrapper, store } = mountRow({
+    expanded: true,
+    columns: [{ name: 'open', column_name: 'Open', cards: [{ name: 'T1' }] }],
+  })
+  await nextTick()
+
+  const groupBefore = wrapper.findComponent({ name: 'SwimlaneGroup' })
+  expect(groupBefore.exists()).toBe(true)
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
+  const groupVm = groupBefore.vm
+
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await nextTick()
+
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(true)
+  const groupWhileCollapsed = wrapper.findComponent({ name: 'SwimlaneGroup' })
+  expect(groupWhileCollapsed.exists()).toBe(true)
+  expect(groupWhileCollapsed.vm).toBe(groupVm)
+  expect(groupWhileCollapsed.element.style.display).toBe('none')
+
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: false })
+  await nextTick()
+
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
+  const groupAfter = wrapper.findComponent({ name: 'SwimlaneGroup' })
+  expect(groupAfter.exists()).toBe(true)
+  expect(groupAfter.vm).toBe(groupVm)
+  expect(groupAfter.element.style.display).not.toBe('none')
+
+  wrapper.unmount()
+})

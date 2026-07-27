@@ -97,6 +97,10 @@
         v-for="(column, columnIndex) in columns"
         :key="`${lane.key}-${column.column_name}`"
       >
+        <!--
+          Keep SwimlaneGroup mounted while collapsed (v-show) so VirtualList /
+          sortable-dnd survive expand. Spacer is the collapsed hit target only.
+        -->
         <div
           v-if="isColumnCollapsed(column)"
           class="swimlane-cell-spacer"
@@ -110,7 +114,7 @@
           @dragleave="onCollapsedColumnDragLeave"
         />
         <SwimlaneGroup
-          v-else
+          v-show="!isColumnCollapsed(column)"
           :lane="lane"
           :laneIndex="laneIndex"
           :column="column"
