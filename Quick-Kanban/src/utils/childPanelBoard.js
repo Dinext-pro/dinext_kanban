@@ -202,6 +202,96 @@ export function resolveChildPanelSpacerHeight({
 }
 
 /**
+ * Whether a live host pin scrollTop should update last-good memory.
+ * Reject bare 0 after VL/Sortable reset unless the host is actually near top.
+ */
+export function shouldRememberHostPinScroll({
+  scrollTop = 0,
+  hostNearTop = false,
+} = {}) {
+  const top = Math.max(0, Number(scrollTop) || 0)
+  if (top > 0) {
+    return true
+  }
+  return Boolean(hostNearTop)
+}
+
+function hostPinScrollSnapshotKey(entry) {
+  return `${Number(entry?.depth) || 0}::${String(entry?.parentName || '')}::${
+    entry?.hostLaneKey != null ? String(entry.hostLaneKey) : ''
+  }`
+}
+
+/**
+ * Prefer live captured scrollTop when > 0; otherwise keep last-good so shallower
+ * hosts survive nested drag / VL remount (capture often already 0).
+ */
+export function mergeHostPinScrollSnapshots({
+  captured = [],
+  lastGood = [],
+  excludeParentName = '',
+} = {}) {
+  const excluded = String(excludeParentName || '').trim()
+  const lastGoodByKey = new Map()
+  for (const entry of lastGood || []) {
+    if (!entry?.parentName) {
+      continue
+    }
+    if (excluded && String(entry.parentName) === excluded) {
+      continue
+    }
+    lastGoodByKey.set(hostPinScrollSnapshotKey(entry), entry)
+  }
+  const merged = []
+  const seen = new Set()
+  for (const entry of captured || []) {
+    if (!entry?.parentName) {
+      continue
+    }
+    if (excluded && String(entry.parentName) === excluded) {
+      continue
+    }
+    const key = hostPinScrollSnapshotKey(entry)
+    seen.add(key)
+    const liveTop = Math.max(0, Number(entry.scrollTop) || 0)
+    if (liveTop > 0) {
+      merged.push({
+        parentName: String(entry.parentName).trim(),
+        depth: Number(entry.depth) || 0,
+        hostLaneKey: entry.hostLaneKey ?? null,
+        scrollTop: liveTop,
+      })
+      continue
+    }
+    const good = lastGoodByKey.get(key)
+    const goodTop = Math.max(0, Number(good?.scrollTop) || 0)
+    if (goodTop > 0) {
+      merged.push({
+        parentName: String(entry.parentName).trim(),
+        depth: Number(entry.depth) || 0,
+        hostLaneKey: entry.hostLaneKey ?? good.hostLaneKey ?? null,
+        scrollTop: goodTop,
+      })
+    }
+  }
+  for (const [key, good] of lastGoodByKey) {
+    if (seen.has(key)) {
+      continue
+    }
+    const goodTop = Math.max(0, Number(good.scrollTop) || 0)
+    if (goodTop > 0) {
+      merged.push({
+        parentName: String(good.parentName).trim(),
+        depth: Number(good.depth) || 0,
+        hostLaneKey: good.hostLaneKey ?? null,
+        scrollTop: goodTop,
+      })
+    }
+  }
+  return merged
+}
+
+/**
  * Flat column collapse/expand (and missing host while a ChildPanel track is a
  * cell-spacer) can corrupt spacer-based top/height. Keep previous vertical
  * geometry; still allow left/width updates. Swimlane never needs this.
