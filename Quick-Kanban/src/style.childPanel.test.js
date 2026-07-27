@@ -16,6 +16,13 @@ describe('child panel geometry CSS', () => {
     expect(styleCss).toMatch(/\.kanban\s*\{[^}]*isolation:\s*isolate/s)
   })
 
+  test('teleported child panel does not min-stretch to portal width', () => {
+    expect(styleCss).toMatch(
+      /\.child-panel--teleported\s*\{[^}]*min-width:\s*0/s,
+    )
+    expect(styleCss).toMatch(/\.child-panel\s*\{[^}]*min-width:\s*100%/s)
+  })
+
   test('child panel scroll grid stretches tracks; deepest panel fills viewport', () => {
     expect(styleCss).toMatch(/\.child-panel-scroll\s*\{[^}]*align-items:\s*stretch/s)
     expect(styleCss).toMatch(/\.child-panel--viewport-fill\s+\.child-panel-scroll\s*\{[^}]*height:\s*100%/s)
