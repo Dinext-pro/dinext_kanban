@@ -130,6 +130,22 @@ describe('child panel geometry CSS', () => {
     )
   })
 
+  test('column collapse width transition matches track tween tokens', () => {
+    expect(styleCss).toMatch(/--kanban-column-collapse-ms:\s*220ms/)
+    expect(styleCss).toMatch(
+      /--kanban-column-collapse-ease:\s*cubic-bezier\(0\.215,\s*0\.61,\s*0\.355,\s*1\)/,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-column\s*\{[^}]*width\s+var\(--kanban-column-collapse-ms/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-column\s*\{[^}]*flex-basis\s+var\(--kanban-column-collapse-ms/s,
+    )
+    expect(styleCss).not.toMatch(
+      /\.kanban-column\s*\{[^}]*width\s+220ms\s+ease[,\s]/s,
+    )
+  })
+
   test('child panel open/close uses animation tokens and transitions', () => {
     expect(styleCss).toMatch(/--kanban-child-panel-anim-ms:\s*200ms/)
     expect(styleCss).toMatch(/--kanban-child-panel-pin-ms:\s*300ms/)
