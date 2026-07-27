@@ -813,6 +813,11 @@ export function createKanbanStore() {
         for (const lane of state.lanes || []) {
           lane.columns = reorderColumnsByName(lane.columns || [], columnNames)
         }
+        for (const panel of Object.values(state.childPanels || {})) {
+          if (panel?.columns) {
+            panel.columns = reorderColumnsByName(panel.columns, columnNames)
+          }
+        }
       },
       SET_COLUMN_CARDS(state, {
         columnIndex,

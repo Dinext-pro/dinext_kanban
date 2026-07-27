@@ -2126,7 +2126,7 @@ function setupColumnSortable() {
     return
   }
   columnSortable = createColumnSortable(container, {
-    boardRoot: swimlanesEnabled.value ? board : null,
+    boardRoot: board,
     onDragStart() {
       columnDragActive = true
       snapSwimlaneTracks(widthsFromTracks(targetSwimlaneTracks.value))
