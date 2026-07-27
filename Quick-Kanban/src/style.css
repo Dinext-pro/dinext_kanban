@@ -2269,6 +2269,21 @@ html.kanban-tag-drag-move * {
   cursor: pointer;
 }
 
+/*
+ * Collapsed hit-target lives inside .child-panel-group (KanbanColumn stays
+ * mounted via v-show). Fill the track; skip duplicate padding/wash from the
+ * shared group+spacer rule above.
+ */
+#kanbanapp .child-panel-group > .child-panel-cell-spacer {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  height: auto;
+  padding-top: 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+
 #kanbanapp .child-panel .kanban-column,
 #kanbanapp .child-panel .kanban-column.kanban-column--cell {
   flex: 1 1 auto;

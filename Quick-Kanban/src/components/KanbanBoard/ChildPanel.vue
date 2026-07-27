@@ -20,26 +20,29 @@
         v-for="(column, columnIndex) in boardColumns"
         :key="`${scopeId}-${column.column_name}`"
       >
-        <div
-          v-if="isColumnCollapsed(column)"
-          class="child-panel-cell-spacer"
-          :data-column-value="column.column_name"
-          :style="columnTrackStyle(column)"
-          aria-hidden="true"
-          @pointerenter="onCollapsedSpacerPointerEnter(column)"
-          @pointerleave="onCollapsedSpacerPointerLeave"
-          @dragenter.prevent="onCollapsedSpacerPointerEnter(column)"
-          @dragleave="onCollapsedSpacerPointerLeave"
-          @dblclick="onCollapsedColumnDblclick(column)"
-        />
         <section
-          v-else
           class="child-panel-group"
           :data-column-value="column.column_name"
           :style="columnTrackStyle(column)"
         >
+          <!--
+            Keep KanbanColumn mounted while collapsed (v-show) so VirtualList /
+            sortable-dnd survive expand. Spacer is the collapsed hit target only.
+          -->
+          <div
+            v-if="isColumnCollapsed(column)"
+            class="child-panel-cell-spacer"
+            :data-column-value="column.column_name"
+            aria-hidden="true"
+            @pointerenter="onCollapsedSpacerPointerEnter(column)"
+            @pointerleave="onCollapsedSpacerPointerLeave"
+            @dragenter.prevent="onCollapsedSpacerPointerEnter(column)"
+            @dragleave="onCollapsedSpacerPointerLeave"
+            @dblclick="onCollapsedColumnDblclick(column)"
+          />
           <KanbanColumn
             v-if="panelColumn(columnIndex)"
+            v-show="!isColumnCollapsed(column)"
             :column="panelColumn(columnIndex)"
             :columnIndex="columnIndex"
             :listId="encodeChildListId(ordinal, columnIndex)"
