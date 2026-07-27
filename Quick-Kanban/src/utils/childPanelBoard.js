@@ -292,6 +292,53 @@ export function mergeHostPinScrollSnapshots({
 }
 
 /**
+ * Host width for a teleported child panel: sum of visible column track widths
+ * plus gutters between them. Does not include Add-column or empty viewport pad.
+ *
+ * @param {{ columnWidthsPx?: number[], gutterPx?: number }} [options]
+ * @returns {number}
+ */
+export function resolveChildPanelHostWidth({
+  columnWidthsPx = [],
+  gutterPx = 8,
+} = {}) {
+  const widths = (columnWidthsPx || [])
+    .map((w) => Math.round(Number(w) || 0))
+    .filter((w) => w > 0)
+  if (!widths.length) {
+    return 0
+  }
+  const gutter = Math.max(0, Number(gutterPx) || 0)
+  return widths.reduce((sum, w) => sum + w, 0) + gutter * (widths.length - 1)
+}
+
+/**
+ * DOM fallback when track widths are not ready: first→last column span.
+ * Flat: direct `.kanban-column` children. Swimlane: `.swimlane-column-rail`.
+ *
+ * @param {Element | null | undefined} board
+ * @param {{ swimlanesEnabled?: boolean }} [options]
+ * @returns {number}
+ */
+export function measureVisibleColumnsContentWidth(board, { swimlanesEnabled = false } = {}) {
+  if (!board?.querySelectorAll) {
+    return 0
+  }
+  const columns = swimlanesEnabled
+    ? board.querySelectorAll('.swimlane-column-rails .swimlane-column-rail')
+    : board.querySelectorAll(':scope > .kanban-column')
+  if (!columns.length) {
+    return 0
+  }
+  const first = columns[0].getBoundingClientRect?.()
+  const last = columns[columns.length - 1].getBoundingClientRect?.()
+  if (!first || !last) {
+    return 0
+  }
+  return Math.max(0, last.right - first.left)
+}
+
+/**
  * Flat column collapse/expand (and missing host while a ChildPanel track is a
  * cell-spacer) can corrupt spacer-based top/height. Keep previous vertical
  * geometry; still allow left/width updates. Swimlane never needs this.

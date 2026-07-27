@@ -195,8 +195,10 @@ import {
 } from "../../utils/swimlaneBoard";
 import {
   isChildListId,
+  measureVisibleColumnsContentWidth,
   mergeHostPinScrollSnapshots,
   resolveChildPanelDropTarget,
+  resolveChildPanelHostWidth,
   resolveChildPanelSpacerHeight,
   resolvePanelHostCard,
   resolvePanelHostSpacer,
@@ -1079,11 +1081,22 @@ function applyBoardHostedPanelGeometry() {
   const pinnedScrolls = captureHostPinScrolls()
   try {
     const boardRect = board.getBoundingClientRect()
-    const width = Math.max(board.scrollWidth || 0, boardRect.width || 0)
     const overhangRaw = getComputedStyle(board).getPropertyValue('--swimlane-lane-overhang')
     const overhang = swimlanesEnabled.value
       ? Math.max(0, Number.parseFloat(overhangRaw) || 0)
       : 0
+    const columnWidthsPx = swimlanesEnabled.value
+      ? animatedSwimlaneTrackWidths.value
+      : widthsFromTracks(targetSwimlaneTracks.value)
+    let width = resolveChildPanelHostWidth({
+      columnWidthsPx,
+      gutterPx: SWIMLANE_COLUMN_GAP_PX,
+    })
+    if (!(width > 0)) {
+      width = measureVisibleColumnsContentWidth(board, {
+        swimlanesEnabled: swimlanesEnabled.value,
+      })
+    }
     const nextRects = {}
     const previousRects = boardHostedPanelRects.value || {}
     const nextSpacerHeights = {}
@@ -1104,7 +1117,8 @@ function applyBoardHostedPanelGeometry() {
       const rect = {
         top,
         left: overhang,
-        width: Math.max(0, width - overhang),
+        // Overhang is already applied via left; do not stretch to viewport.
+        width: Math.max(0, width),
       }
       // Keep spacer + panel height for every open host (not only maxDepth).
       // Nested open must not drop the board pad under a mid-column depth-0 host

@@ -16,7 +16,9 @@ import {
   resolvePanelHostCard,
   resolvePanelHostSpacer,
   setSortableNearestParticipation,
+  measureVisibleColumnsContentWidth,
   mergeHostPinScrollSnapshots,
+  resolveChildPanelHostWidth,
   shouldRememberHostPinScroll,
   stabilizeCollapsedHostPanelRect,
   stabilizeHostPanelRectOnColumnToggle,
@@ -219,6 +221,63 @@ describe('childPanelBoard', () => {
       { parentName: 'TASK-B', depth: 1, hostLaneKey: null, scrollTop: 40 },
       { parentName: 'TASK-C', depth: 0, hostLaneKey: null, scrollTop: 80 },
     ])
+  })
+
+  test('resolveChildPanelHostWidth sums tracks and gutters', () => {
+    expect(resolveChildPanelHostWidth({
+      columnWidthsPx: [280, 280, 52],
+      gutterPx: 8,
+    })).toBe(280 + 8 + 280 + 8 + 52)
+    expect(resolveChildPanelHostWidth({
+      columnWidthsPx: [300],
+      gutterPx: 8,
+    })).toBe(300)
+    expect(resolveChildPanelHostWidth({
+      columnWidthsPx: [],
+      gutterPx: 8,
+    })).toBe(0)
+    expect(resolveChildPanelHostWidth({
+      columnWidthsPx: [52, 280, 0, null, 52],
+      gutterPx: 8,
+    })).toBe(52 + 8 + 280 + 8 + 52)
+  })
+
+  test('measureVisibleColumnsContentWidth spans first to last column', () => {
+    const board = document.createElement('div')
+    board.className = 'kanban'
+    const makeCol = (left, width) => {
+      const el = document.createElement('div')
+      el.className = 'kanban-column'
+      el.getBoundingClientRect = () => ({
+        left,
+        right: left + width,
+        width,
+        top: 0,
+        bottom: 100,
+        height: 100,
+        x: left,
+        y: 0,
+        toJSON() { return {} },
+      })
+      return el
+    }
+    board.appendChild(makeCol(0, 280))
+    board.appendChild(makeCol(288, 52))
+    const add = document.createElement('div')
+    add.className = 'add-column-control'
+    add.getBoundingClientRect = () => ({
+      left: 400,
+      right: 520,
+      width: 120,
+      top: 0,
+      bottom: 40,
+      height: 40,
+      x: 400,
+      y: 0,
+      toJSON() { return {} },
+    })
+    board.appendChild(add)
+    expect(measureVisibleColumnsContentWidth(board, { swimlanesEnabled: false })).toBe(340)
   })
 
   test('stabilizeHostPanelRectOnColumnToggle freezes top/height on flat collapsed host', () => {

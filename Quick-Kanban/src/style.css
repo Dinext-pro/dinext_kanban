@@ -2216,6 +2216,9 @@ html.kanban-tag-drag-move * {
 
 #kanbanapp .child-panel--teleported {
   margin: 0;
+  /* Honor hostRect width; do not stretch to full portal (inset:0 board). */
+  min-width: 0;
+  width: auto;
   z-index: 50;
   pointer-events: auto;
 }
