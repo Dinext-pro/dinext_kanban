@@ -63,55 +63,62 @@
             </svg>
           </button>
 
-          <div
-            v-if="colorMenuOpen"
-            ref="colorMenuPanel"
-            class="column-dropdown"
-            role="group"
-            :aria-label="__('Column colors')"
-            :style="collapsed ? columnMenuStyle : undefined"
-          >
-            <div class="column-color-swatches">
+          <!--
+            Teleport to body (like move-card-menu) so the menu leaves the column
+            stacking context without raising column z-index above the child panel.
+          -->
+          <Teleport to="body">
+            <div
+              v-if="colorMenuOpen"
+              ref="colorMenuPanel"
+              class="column-dropdown"
+              role="group"
+              :aria-label="__('Column colors')"
+              :style="columnMenuStyle"
+              @keydown.esc.prevent="closeColorMenu"
+            >
+              <div class="column-color-swatches">
+                <button
+                  v-for="indicator in indicators"
+                  :key="indicator.name"
+                  type="button"
+                  class="indicator-choice"
+                  :aria-label="__('Set {0} color to {1}', [columnLabel, indicator.name])"
+                  @click="setIndicator(indicator.value)"
+                >
+                  <IndicatorPill :indicator="indicator.class" />
+                  <span class="sr-only">{{ indicator.name }}</span>
+                </button>
+              </div>
               <button
-                v-for="indicator in indicators"
-                :key="indicator.name"
                 type="button"
-                class="indicator-choice"
-                :aria-label="__('Set {0} color to {1}', [columnLabel, indicator.name])"
-                @click="setIndicator(indicator.value)"
+                class="column-menu-action"
+                :aria-label="collapsed
+                  ? __('Open {0} column', [columnLabel], COLUMN_CTX)
+                  : __('Collapse {0} column', [columnLabel], COLUMN_CTX)"
+                @click="toggleCollapsedFromMenu"
               >
-                <IndicatorPill :indicator="indicator.class" />
-                <span class="sr-only">{{ indicator.name }}</span>
+                <svg class="icon icon-sm" aria-hidden="true">
+                  <use :href="collapsed ? '#icon-sidebar-expand' : '#icon-sidebar-collapse'"></use>
+                </svg>
+                <span>{{ collapsed
+                  ? __('Open', [], COLUMN_CTX)
+                  : __('Collapse', [], COLUMN_CTX) }}</span>
+              </button>
+              <button
+                v-if="canEditBoard"
+                type="button"
+                class="column-menu-action"
+                :aria-label="__('Hide {0} column', [columnLabel])"
+                @click="hideColumn"
+              >
+                <svg class="icon icon-sm" aria-hidden="true">
+                  <use href="#icon-hide"></use>
+                </svg>
+                <span>{{ __('Hide') }}</span>
               </button>
             </div>
-            <button
-              type="button"
-              class="column-menu-action"
-              :aria-label="collapsed
-                ? __('Open {0} column', [columnLabel], COLUMN_CTX)
-                : __('Collapse {0} column', [columnLabel], COLUMN_CTX)"
-              @click="toggleCollapsedFromMenu"
-            >
-              <svg class="icon icon-sm" aria-hidden="true">
-                <use :href="collapsed ? '#icon-sidebar-expand' : '#icon-sidebar-collapse'"></use>
-              </svg>
-              <span>{{ collapsed
-                ? __('Open', [], COLUMN_CTX)
-                : __('Collapse', [], COLUMN_CTX) }}</span>
-            </button>
-            <button
-              v-if="canEditBoard"
-              type="button"
-              class="column-menu-action"
-              :aria-label="__('Hide {0} column', [columnLabel])"
-              @click="hideColumn"
-            >
-              <svg class="icon icon-sm" aria-hidden="true">
-                <use href="#icon-hide"></use>
-              </svg>
-              <span>{{ __('Hide') }}</span>
-            </button>
-          </div>
+          </Teleport>
         </div>
 
         <button
@@ -1157,23 +1164,38 @@ function closeColorMenu({ restoreFocus = true } = {}) {
   if (restoreFocus) nextTick(() => colorMenuButton.value?.focus())
 }
 
-function positionCollapsedColorMenu() {
+function positionColorMenu() {
   const triggerRect = colorMenuButton.value?.getBoundingClientRect()
   const menuRect = colorMenuPanel.value?.getBoundingClientRect()
   if (!triggerRect || !menuRect) return
 
   const margin = 8
   const gap = 4
-  const preferredLeft = triggerRect.right + gap
-  const flippedLeft = triggerRect.left - menuRect.width - gap
-  const left = preferredLeft + menuRect.width <= window.innerWidth - margin
-    ? Math.max(margin, preferredLeft)
-    : Math.max(margin, Math.min(flippedLeft, window.innerWidth - menuRect.width - margin))
+  let left
+  let top
 
-  const preferredTop = triggerRect.top
-  const top = preferredTop + menuRect.height <= window.innerHeight - margin
-    ? Math.max(margin, preferredTop)
-    : Math.max(margin, triggerRect.bottom - menuRect.height)
+  if (collapsed.value) {
+    const preferredLeft = triggerRect.right + gap
+    const flippedLeft = triggerRect.left - menuRect.width - gap
+    left = preferredLeft + menuRect.width <= window.innerWidth - margin
+      ? Math.max(margin, preferredLeft)
+      : Math.max(margin, Math.min(flippedLeft, window.innerWidth - menuRect.width - margin))
+
+    const preferredTop = triggerRect.top
+    top = preferredTop + menuRect.height <= window.innerHeight - margin
+      ? Math.max(margin, preferredTop)
+      : Math.max(margin, triggerRect.bottom - menuRect.height)
+  } else {
+    // Expanded: below the trigger, right-aligned (matches former absolute top/right).
+    left = Math.max(
+      margin,
+      Math.min(triggerRect.right - menuRect.width, window.innerWidth - menuRect.width - margin),
+    )
+    const preferredTop = triggerRect.bottom + gap
+    top = preferredTop + menuRect.height <= window.innerHeight - margin
+      ? Math.max(margin, preferredTop)
+      : Math.max(margin, triggerRect.top - menuRect.height - gap)
+  }
 
   columnMenuStyle.value = {
     top: `${top}px`,
@@ -1188,15 +1210,9 @@ function toggleColorMenu() {
     return
   }
 
-  if (!collapsed.value) {
-    columnMenuStyle.value = {}
-    colorMenuOpen.value = true
-    return
-  }
-
   columnMenuStyle.value = { visibility: 'hidden' }
   colorMenuOpen.value = true
-  nextTick(() => positionCollapsedColorMenu())
+  nextTick(() => positionColorMenu())
 }
 
 function scrollToCard(cardName, cardIndex) {

@@ -56,6 +56,7 @@ function mountColumn(column = {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           inheritAttrs: false,
@@ -557,6 +558,7 @@ test('scrolls the external swimlane scroller to the column top', async () => {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div role="list" class="kanban-card-list"><slot name="footer" /></div>',
@@ -614,6 +616,9 @@ test('exposes scrollToCard through the virtual list API', async () => {
     },
     global: {
       plugins: [createKanbanStore()],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+      },
     },
   })
 
@@ -676,6 +681,72 @@ test('collapses the column from the menu and shows Open while collapsed', async 
   await wrapper.get('[aria-label="Open Open column"]').trigger('click')
   expect(wrapper.classes()).not.toContain('kanban-column--collapsed')
   expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+})
+
+test('positions the expanded column menu with fixed viewport coords', async () => {
+  const { wrapper } = mountColumn(undefined, { boardPerms: { write: true } })
+
+  const originalInnerWidth = window.innerWidth
+  const originalInnerHeight = window.innerHeight
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+  const originalGbr = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.classList?.contains('column-dropdown')) {
+      return {
+        top: 0,
+        bottom: 160,
+        left: 0,
+        right: 180,
+        width: 180,
+        height: 160,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      }
+    }
+    if (this.getAttribute?.('aria-label') === 'Change Open column color') {
+      return {
+        top: 40,
+        bottom: 72,
+        left: 500,
+        right: 532,
+        width: 32,
+        height: 32,
+        x: 500,
+        y: 40,
+        toJSON() {},
+      }
+    }
+    return originalGbr.call(this)
+  }
+
+  try {
+    await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const menu = wrapper.get('[aria-label="Column colors"]')
+    const style = menu.attributes('style') || ''
+    const leftMatch = style.match(/left:\s*([\d.]+)px/)
+    const topMatch = style.match(/top:\s*([\d.]+)px/)
+    expect(leftMatch).not.toBeNull()
+    expect(topMatch).not.toBeNull()
+    // trigger.right (532) - menu.width (180) = 352; top = trigger.bottom (72) + gap (4)
+    expect(Number(leftMatch[1])).toBe(352)
+    expect(Number(topMatch[1])).toBe(76)
+    expect(style).toContain('visibility: visible')
+  } finally {
+    Element.prototype.getBoundingClientRect = originalGbr
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalInnerWidth,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: originalInnerHeight,
+    })
+  }
 })
 
 test('flips the collapsed column menu left when there is no room on the right', async () => {
@@ -840,6 +911,7 @@ test('header-only mode keeps the header and hides the card list', () => {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div class="virtual-list-stub" />',
@@ -884,6 +956,7 @@ test('header-only collapsed column expands on title double-click', async () => {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div class="virtual-list-stub" />',
@@ -927,6 +1000,7 @@ test('header-only collapsed column expands on count double-click without opening
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div class="virtual-list-stub" />',
@@ -978,6 +1052,7 @@ test('passes externalScroller to VirtualList and marks external scroll mode', ()
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           props: ['scroller'],
@@ -1043,6 +1118,7 @@ test('raises VirtualList keeps when a board-hosted ChildPanel host is in the col
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           props: ['keeps', 'scroller'],
@@ -1118,6 +1194,7 @@ test('swimlane cell shows forbidden overlay mark while dragging into a blocked c
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div class="kanban-card-list" />',
@@ -1216,6 +1293,7 @@ test('keeps Add enabled inside the deepest child panel columns', async () => {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           inheritAttrs: false,
@@ -1273,6 +1351,7 @@ test('uses board Sortable group on main columns and scoped group in child panels
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           props: ['group'],
@@ -1298,6 +1377,7 @@ test('uses board Sortable group on main columns and scoped group in child panels
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           props: ['group'],
@@ -1370,6 +1450,7 @@ test('shows stick-room dropzone and drop chrome inside child panel columns', asy
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div class="kanban-card-list"><slot name="footer" /></div>',

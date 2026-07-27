@@ -913,15 +913,6 @@ body.kanban-column-resize-active * {
   overflow: visible;
 }
 
-#kanbanapp .kanban-column--collapsed .column-dropdown {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: auto;
-  transform: none;
-  z-index: 1050;
-}
-
 #kanbanapp .kanban-column--collapsed .kanban-card-list {
   position: absolute;
   inset: 0;
@@ -964,14 +955,19 @@ body.kanban-column-resize-active * {
   padding: 8px var(--kanban-column-gutter) 0;
 }
 
-#kanbanapp .column-dropdown {
+/*
+ * Fixed + JS coords; Teleported to body so it paints above the child-panel
+ * portal without raising column z-index. Selector is unscoped (#kanbanapp) so
+ * body-teleported nodes still receive styles (same pattern as .move-card-menu).
+ */
+.column-dropdown {
   max-height: 300px;
   overflow-y: auto;
-  position: absolute;
-  transform: translate3d(0px, 16px, 0px);
-  top: 28px;
-  right: 0;
-  will-change: transform;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  transform: none;
   z-index: 1050;
   display: flex;
   flex-direction: column;
@@ -983,7 +979,7 @@ body.kanban-column-resize-active * {
   box-shadow: var(--shadow-md);
 }
 
-#kanbanapp .column-color-swatches {
+.column-dropdown .column-color-swatches {
   display: grid;
   grid-template-columns: repeat(5, minmax(32px, 1fr));
   gap: 4px;
@@ -1096,7 +1092,7 @@ body.kanban-column-resize-active * {
   position: relative;
 }
 
-#kanbanapp .indicator-choice {
+.column-dropdown .indicator-choice {
   min-width: 32px;
   min-height: 32px;
   padding: 4px;
@@ -1105,7 +1101,7 @@ body.kanban-column-resize-active * {
   background: transparent;
 }
 
-#kanbanapp .column-menu-action {
+.column-dropdown .column-menu-action {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -1123,24 +1119,25 @@ body.kanban-column-resize-active * {
   cursor: pointer;
 }
 
-#kanbanapp .column-menu-action .icon {
+.column-dropdown .column-menu-action .icon {
   flex: 0 0 16px;
   width: 16px;
   height: 16px;
   margin: 0; /* override Frappe .icon { margin: 0 auto } */
 }
 
-#kanbanapp .column-menu-action:last-child {
+.column-dropdown .column-menu-action:last-child {
   border-radius: 0 0 6px 6px;
 }
 
-#kanbanapp .column-menu-action:hover,
-#kanbanapp .column-menu-action:focus-visible {
+.column-dropdown .column-menu-action:hover,
+.column-dropdown .column-menu-action:focus-visible {
   background: var(--fg-hover);
   outline: none;
 }
 
-#kanbanapp .quick-kanban-indicator-swatch {
+#kanbanapp .quick-kanban-indicator-swatch,
+.column-dropdown .quick-kanban-indicator-swatch {
   display: inline-block;
   flex: 0 0 16px;
   width: 16px;
@@ -1150,43 +1147,53 @@ body.kanban-column-resize-active * {
   margin-right: 6px;
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.blue {
+#kanbanapp .quick-kanban-indicator-swatch.blue,
+.column-dropdown .quick-kanban-indicator-swatch.blue {
   background: var(--bg-blue);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.cyan {
+#kanbanapp .quick-kanban-indicator-swatch.cyan,
+.column-dropdown .quick-kanban-indicator-swatch.cyan {
   background: var(--bg-cyan);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.gray {
+#kanbanapp .quick-kanban-indicator-swatch.gray,
+.column-dropdown .quick-kanban-indicator-swatch.gray {
   background: var(--bg-gray);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.green {
+#kanbanapp .quick-kanban-indicator-swatch.green,
+.column-dropdown .quick-kanban-indicator-swatch.green {
   background: var(--bg-green);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.light-blue {
+#kanbanapp .quick-kanban-indicator-swatch.light-blue,
+.column-dropdown .quick-kanban-indicator-swatch.light-blue {
   background: var(--bg-light-blue, var(--bg-blue));
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.orange {
+#kanbanapp .quick-kanban-indicator-swatch.orange,
+.column-dropdown .quick-kanban-indicator-swatch.orange {
   background: var(--bg-orange);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.pink {
+#kanbanapp .quick-kanban-indicator-swatch.pink,
+.column-dropdown .quick-kanban-indicator-swatch.pink {
   background: var(--bg-pink);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.purple {
+#kanbanapp .quick-kanban-indicator-swatch.purple,
+.column-dropdown .quick-kanban-indicator-swatch.purple {
   background: var(--bg-purple);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.red {
+#kanbanapp .quick-kanban-indicator-swatch.red,
+.column-dropdown .quick-kanban-indicator-swatch.red {
   background: var(--bg-red);
 }
 
-#kanbanapp .quick-kanban-indicator-swatch.yellow {
+#kanbanapp .quick-kanban-indicator-swatch.yellow,
+.column-dropdown .quick-kanban-indicator-swatch.yellow {
   background: var(--bg-yellow);
 }
 
