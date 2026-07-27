@@ -16,6 +16,8 @@ import {
   resolvePanelHostCard,
   resolvePanelHostSpacer,
   setSortableNearestParticipation,
+  mergeHostPinScrollSnapshots,
+  shouldRememberHostPinScroll,
   stabilizeCollapsedHostPanelRect,
   stabilizeHostPanelRectOnColumnToggle,
 } from './childPanelBoard.js'
@@ -184,6 +186,39 @@ describe('childPanelBoard', () => {
       topInset: 80,
       hostHeight: 40,
     })).toBe(0)
+  })
+
+  test('shouldRememberHostPinScroll rejects bare zero unless near top', () => {
+    expect(shouldRememberHostPinScroll({ scrollTop: 120 })).toBe(true)
+    expect(shouldRememberHostPinScroll({ scrollTop: 0, hostNearTop: false })).toBe(false)
+    expect(shouldRememberHostPinScroll({ scrollTop: 0, hostNearTop: true })).toBe(true)
+  })
+
+  test('mergeHostPinScrollSnapshots prefers live scroll then last-good', () => {
+    const captured = [
+      { parentName: 'TASK-A', depth: 0, hostLaneKey: null, scrollTop: 0 },
+      { parentName: 'TASK-B', depth: 1, hostLaneKey: null, scrollTop: 40 },
+    ]
+    const lastGood = [
+      { parentName: 'TASK-A', depth: 0, hostLaneKey: null, scrollTop: 220 },
+      { parentName: 'TASK-C', depth: 0, hostLaneKey: null, scrollTop: 80 },
+    ]
+    expect(mergeHostPinScrollSnapshots({
+      captured,
+      lastGood,
+      excludeParentName: 'TASK-B',
+    })).toEqual([
+      { parentName: 'TASK-A', depth: 0, hostLaneKey: null, scrollTop: 220 },
+      { parentName: 'TASK-C', depth: 0, hostLaneKey: null, scrollTop: 80 },
+    ])
+    expect(mergeHostPinScrollSnapshots({
+      captured,
+      lastGood,
+    })).toEqual([
+      { parentName: 'TASK-A', depth: 0, hostLaneKey: null, scrollTop: 220 },
+      { parentName: 'TASK-B', depth: 1, hostLaneKey: null, scrollTop: 40 },
+      { parentName: 'TASK-C', depth: 0, hostLaneKey: null, scrollTop: 80 },
+    ])
   })
 
   test('stabilizeHostPanelRectOnColumnToggle freezes top/height on flat collapsed host', () => {

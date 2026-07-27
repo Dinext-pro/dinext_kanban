@@ -195,10 +195,12 @@ import {
 } from "../../utils/swimlaneBoard";
 import {
   isChildListId,
+  mergeHostPinScrollSnapshots,
   resolveChildPanelDropTarget,
   resolveChildPanelSpacerHeight,
   resolvePanelHostCard,
   resolvePanelHostSpacer,
+  shouldRememberHostPinScroll,
   stabilizeHostPanelRectOnColumnToggle,
 } from "../../utils/childPanelBoard";
 import {
@@ -546,8 +548,12 @@ function hostPinScrollEntryKey(entry) {
   }`
 }
 
-function rememberGoodHostPinScroll(entry) {
+function rememberGoodHostPinScroll(entry, { hostNearTop = false } = {}) {
   if (!entry?.parentName) {
+    return
+  }
+  const scrollTop = Math.max(0, Number(entry.scrollTop) || 0)
+  if (!shouldRememberHostPinScroll({ scrollTop, hostNearTop })) {
     return
   }
   const key = hostPinScrollEntryKey(entry)
@@ -555,7 +561,7 @@ function rememberGoodHostPinScroll(entry) {
     parentName: String(entry.parentName).trim(),
     depth: Number(entry.depth) || 0,
     hostLaneKey: entry.hostLaneKey ?? null,
-    scrollTop: Math.max(0, Number(entry.scrollTop) || 0),
+    scrollTop,
   }
   const idx = lastGoodHostPinScrolls.findIndex(
     (item) => hostPinScrollEntryKey(item) === key,
@@ -565,6 +571,11 @@ function rememberGoodHostPinScroll(entry) {
   } else {
     lastGoodHostPinScrolls.push(next)
   }
+}
+
+function restoreBoardHostedPanelPinScrolls() {
+  restoreHostPinScrolls(lastGoodHostPinScrolls)
+  applyBoardHostedPanelGeometry()
 }
 
 function pruneLastGoodHostPinScrolls() {
@@ -1125,12 +1136,17 @@ function applyBoardHostedPanelGeometry() {
       if (hostCard && !hostColumnCollapsed && !columnCollapseVerticalLock) {
         const scroller = resolveHostPinScroller(hostCard)
         if (scroller) {
-          rememberGoodHostPinScroll({
-            parentName: panel.parentName,
-            depth,
-            hostLaneKey: panel.hostLaneKey,
-            scrollTop: scroller.scrollTop || 0,
-          })
+          rememberGoodHostPinScroll(
+            {
+              parentName: panel.parentName,
+              depth,
+              hostLaneKey: panel.hostLaneKey,
+              scrollTop: scroller.scrollTop || 0,
+            },
+            {
+              hostNearTop: isPanelHostNearTop(panel.parentName, depth),
+            },
+          )
         }
       }
       const { rect: stableRect, verticalFrozen } = stabilizeHostPanelRectOnColumnToggle({
@@ -1263,8 +1279,12 @@ function flushGeometryThenPin(parentName, { animateOpen = false } = {}) {
         return isPanelHostNearTop(target.parentName, target.depth)
       }
       // Snapshot shallower pin scrolls once up front — later captures may already
-      // see VL-reset scrollTop=0 and must not replace a good snapshot.
-      const preservedScrolls = captureHostPinScrolls({ excludeParentName: parent })
+      // see VL-reset scrollTop=0; merge last-good so nested drag cannot drop depth-0.
+      const preservedScrolls = mergeHostPinScrollSnapshots({
+        captured: captureHostPinScrolls({ excludeParentName: parent }),
+        lastGood: lastGoodHostPinScrolls,
+        excludeParentName: parent,
+      })
       const restorePreserved = () => restoreHostPinScrolls(preservedScrolls)
       const pinTarget = async (behavior) => {
         const target = resolvePinTarget()
@@ -2355,6 +2375,7 @@ async function dropChildPanel({ event, context, toId, fromId }) {
   }
 
   if (resolved.sameColumn) {
+    restoreBoardHostedPanelPinScrolls()
     return
   }
 
@@ -2391,6 +2412,7 @@ async function dropChildPanel({ event, context, toId, fromId }) {
       // Reveal is best-effort; move already succeeded.
     }
   }
+  restoreBoardHostedPanelPinScrolls()
   await flashMovedCard(context.cardName, {
     outcome: result?.ok ? 'success' : 'failure',
   })
