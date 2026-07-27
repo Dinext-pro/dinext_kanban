@@ -291,6 +291,13 @@ function snapSwimlaneTracks(widthsPx) {
   animatedSwimlaneTrackWidths.value = (widthsPx || []).map((w) => Math.round(Number(w) || 0))
 }
 
+function syncHostGeometryDuringTrackTween() {
+  if (!boardHostedChildPanels.value.length) {
+    return
+  }
+  applyBoardHostedPanelGeometry()
+}
+
 function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
   const target = (nextWidths || []).map((w) => Math.round(Number(w) || 0))
   const current = animatedSwimlaneTrackWidths.value
@@ -301,6 +308,7 @@ function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
     || current.length !== target.length
   ) {
     snapSwimlaneTracks(target)
+    syncHostGeometryDuringTrackTween()
     return
   }
   cancelSwimlaneTrackTween()
@@ -309,10 +317,12 @@ function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
     to: target,
     onFrame(widths) {
       animatedSwimlaneTrackWidths.value = widths
+      syncHostGeometryDuringTrackTween()
     },
     onDone(widths) {
       animatedSwimlaneTrackWidths.value = widths
       trackTweenCancel = null
+      syncHostGeometryDuringTrackTween()
     },
   })
   trackTweenCancel = () => tween.cancel()
@@ -321,12 +331,8 @@ function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
 const swimlaneColumnTracks = computed(() => (
   formatTrackTemplate(animatedSwimlaneTrackWidths.value)
 ))
-const boardColumnTracks = computed(() => {
-  if (swimlanesEnabled.value) {
-    return swimlaneColumnTracks.value
-  }
-  return formatTrackTemplate(widthsFromTracks(targetSwimlaneTracks.value))
-})
+/** Flat and swimlane share animated tracks so child-panel columns stay in sync. */
+const boardColumnTracks = computed(() => swimlaneColumnTracks.value)
 provide('boardColumnTracks', boardColumnTracks)
 const childPanelPortal = ref(null)
 const boardHostedPanelRects = ref({})
@@ -1085,9 +1091,7 @@ function applyBoardHostedPanelGeometry() {
     const overhang = swimlanesEnabled.value
       ? Math.max(0, Number.parseFloat(overhangRaw) || 0)
       : 0
-    const columnWidthsPx = swimlanesEnabled.value
-      ? animatedSwimlaneTrackWidths.value
-      : widthsFromTracks(targetSwimlaneTracks.value)
+    const columnWidthsPx = animatedSwimlaneTrackWidths.value
     let width = resolveChildPanelHostWidth({
       columnWidthsPx,
       gutterPx: SWIMLANE_COLUMN_GAP_PX,
@@ -1656,11 +1660,6 @@ watch(
   (nextTracks) => {
     const nextWidths = widthsFromTracks(nextTracks)
     const nextKeys = trackKeysSignature(nextTracks)
-    if (!swimlanesEnabled.value) {
-      lastTrackKeys = nextKeys
-      snapSwimlaneTracks(nextWidths)
-      return
-    }
     const keysChanged = nextKeys !== lastTrackKeys
     lastTrackKeys = nextKeys
     runSwimlaneTrackTween(nextWidths, { animate: !keysChanged })
@@ -1668,15 +1667,11 @@ watch(
   { immediate: true, deep: true },
 )
 
-watch(swimlanesEnabled, (enabled) => {
-  if (!enabled) {
-    cancelSwimlaneTrackTween()
-    animatedSwimlaneTrackWidths.value = []
-    lastTrackKeys = ''
-    return
-  }
+watch(swimlanesEnabled, () => {
+  cancelSwimlaneTrackTween()
   lastTrackKeys = trackKeysSignature(targetSwimlaneTracks.value)
   snapSwimlaneTracks(widthsFromTracks(targetSwimlaneTracks.value))
+  syncHostGeometryDuringTrackTween()
 })
 
 function columnRailStyle(column) {

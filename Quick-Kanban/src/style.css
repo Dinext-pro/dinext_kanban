@@ -53,6 +53,9 @@
 #kanbanapp {
   min-height: 70vh;
   --kanban-column-gutter: 8px;
+  --kanban-column-collapse-ms: 220ms;
+  /* Matches easeOutCubic in columnCollapseAnimation.js */
+  --kanban-column-collapse-ease: cubic-bezier(0.215, 0.61, 0.355, 1);
   --kanban-child-panel-anim-ms: 200ms;
   --kanban-child-panel-pin-ms: 300ms;
   --amber-200: var(--yellow-200);
@@ -742,8 +745,8 @@ html.kanban-card-drag-active.kanban-card-drag-forbidden * {
   min-height: 70vh;
   position: relative;
   transition:
-    width 220ms ease,
-    flex-basis 220ms ease;
+    width var(--kanban-column-collapse-ms, 220ms) var(--kanban-column-collapse-ease, cubic-bezier(0.215, 0.61, 0.355, 1)),
+    flex-basis var(--kanban-column-collapse-ms, 220ms) var(--kanban-column-collapse-ease, cubic-bezier(0.215, 0.61, 0.355, 1));
 }
 
 /* Classic board: cards scroll inside the column; never paint past column/board bounds. */

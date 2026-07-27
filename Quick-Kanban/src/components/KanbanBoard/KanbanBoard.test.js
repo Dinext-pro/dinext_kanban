@@ -755,7 +755,8 @@ test('swimlane mode renders row-major lanes with shared column tracks', async ()
     '--swimlane-label-inset: 60px',
   )
   expect(wrapper.findAll('.swimlane-cell-spacer').length).toBe(2)
-  expect(wrapper.findAll('.swimlane-group').length).toBe(2)
+  // Groups stay mounted via v-show while collapsed (2 lanes × 2 columns).
+  expect(wrapper.findAll('.swimlane-group').length).toBe(4)
   expect(
     wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').attributes('style'),
   ).toContain('--kanban-column-blue')
@@ -852,6 +853,157 @@ test('swimlane column collapse animates grid tracks before settling', async () =
   wrapper.unmount()
   dispatch.mockRestore()
   rafSpy.mockRestore()
+})
+
+test('flat column collapse animates child-panel tracks before settling', async () => {
+  prefersReducedMotion.mockReturnValue(false)
+
+  let now = 0
+  const rafCallbacks = []
+  const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+    rafCallbacks.push(cb)
+    return rafCallbacks.length
+  })
+  const perfSpy = vi.spyOn(globalThis.performance, 'now').mockImplementation(() => now)
+
+  const store = createKanbanStore()
+  const dispatch = vi.spyOn(store, 'dispatch').mockResolvedValue()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    board_name: 'Flat Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    fields: ['name', 'status'],
+    parent_field: 'parent_task',
+  })
+  store.commit('SET_COLUMNS', [
+    {
+      name: 'open',
+      column_name: 'Open',
+      indicator: 'blue',
+      custom_column_width: 280,
+      cards: [{ name: 'TASK-1' }],
+    },
+    {
+      name: 'done',
+      column_name: 'Done',
+      indicator: 'green',
+      custom_column_width: 320,
+      cards: [],
+    },
+  ])
+  store.commit('SET_BOARD_PERMS', { write: true })
+
+  const rect = (overrides = {}) => ({
+    top: 0,
+    left: 0,
+    bottom: 100,
+    right: 280,
+    width: 280,
+    height: 100,
+    x: 0,
+    y: 0,
+    toJSON() {},
+    ...overrides,
+  })
+
+  const wrapper = mount(KanbanBoard, {
+    attachTo: document.body,
+    global: {
+      plugins: [store],
+      stubs: {
+        KanbanColumn: {
+          name: 'KanbanColumn',
+          props: ['column'],
+          template: `
+            <section class="kanban-column" :data-column-value="column.column_name">
+              <div class="kanban-card-list">
+                <article
+                  v-for="card in (column.cards || [])"
+                  :key="card.name"
+                  class="kanban-card"
+                  :data-card-name="card.name"
+                />
+              </div>
+            </section>
+          `,
+        },
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['scroller'],
+          template: '<div class="virtual-list-stub"><slot /><slot name="footer" /></div>',
+        },
+      },
+    },
+  })
+
+  await wrapper.vm.$nextTick()
+  const boardEl = wrapper.find('.kanban').element
+  boardEl.getBoundingClientRect = () => rect({
+    bottom: 600,
+    right: 900,
+    width: 900,
+    height: 600,
+  })
+  Object.defineProperty(boardEl, 'scrollTop', { configurable: true, value: 0, writable: true })
+  Object.defineProperty(boardEl, 'scrollWidth', { configurable: true, value: 608, writable: true })
+  Object.defineProperty(boardEl, 'clientHeight', { configurable: true, value: 600, writable: true })
+  Object.defineProperty(boardEl, 'scrollHeight', { configurable: true, value: 600, writable: true })
+
+  const hostCard = wrapper.find('.kanban-card[data-card-name="TASK-1"]').element
+  hostCard.getBoundingClientRect = () => rect({
+    top: 80,
+    bottom: 160,
+    height: 80,
+  })
+
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::TASK-1',
+    parentName: 'TASK-1',
+    depth: 0,
+    ordinal: 0,
+    columns: store.state.columns.map((column) => ({ ...column, cards: [] })),
+    columnPagination: {},
+    columnTotals: {},
+  })
+
+  await vi.waitFor(() => expect(wrapper.find('.child-panel-scroll').exists()).toBe(true))
+  expect(wrapper.find('.child-panel-scroll').attributes('style')).toContain('280px 320px')
+
+  rafCallbacks.length = 0
+  now = 0
+
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await wrapper.vm.$nextTick()
+  expect(rafCallbacks.length).toBeGreaterThan(0)
+
+  async function flushRaf(at) {
+    now = at
+    for (let i = 0; i < 8; i += 1) {
+      const batch = rafCallbacks.splice(0, rafCallbacks.length)
+      if (!batch.length) {
+        break
+      }
+      for (const cb of batch) {
+        cb(at)
+      }
+      await wrapper.vm.$nextTick()
+    }
+  }
+
+  await flushRaf(110)
+  const midStyle = wrapper.find('.child-panel-scroll').attributes('style') || ''
+  expect(midStyle).not.toContain('280px 320px')
+  expect(midStyle).not.toContain('52px 320px')
+  expect(midStyle).toMatch(/grid-template-columns:\s*\d+px 320px/)
+
+  await flushRaf(220)
+  expect(wrapper.find('.child-panel-scroll').attributes('style')).toContain('52px 320px')
+
+  wrapper.unmount()
+  dispatch.mockRestore()
+  rafSpy.mockRestore()
+  perfSpy.mockRestore()
 })
 
 test('toggles column collapse on double-click of a swimlane column rail', async () => {
