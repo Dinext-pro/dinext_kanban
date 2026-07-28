@@ -243,7 +243,7 @@
             :ref="setPanelSpacerRef"
             class="child-panel-spacer"
             :class="{ 'child-panel-spacer--animate': isSpacerAnimating(record.name) }"
-            :style="{ height: `${spacerHeightFor(record.name)}px` }"
+            :style="{ '--child-panel-spacer-h': `${spacerHeightFor(record.name)}px` }"
             :data-panel-parent="record.name"
           />
         </div>
@@ -335,7 +335,6 @@ import {
   clampColumnWidthForResize,
   COLLAPSED_COLUMN_WIDTH_PX,
   COLUMN_COLLAPSE_ANIMATION_MS,
-  COLUMN_DRAG_EXPAND_DELAY_MS,
   getColumnKey,
   getIndicatorClass,
   isNearScrollEnd,
@@ -349,6 +348,7 @@ import {
   childPanelDragGroupName,
   setSortableNearestParticipation,
 } from "../../utils/childPanelBoard";
+import { createCollapsedColumnExpandOnDrag } from "../../utils/collapsedColumnExpandOnDrag";
 import {
   clearColumnSortableDraggingClass,
   setColumnSortableDraggingClass,
@@ -405,7 +405,6 @@ const floatMenuStyle = ref({})
 const resizePreviewWidth = ref(null)
 const __ = globalThis.__
 const indicators = computed(() => getIndicators())
-let expandOnDragTimer = null
 let resizeSession = null
 let floatChromeRaf = null
 let floatChromeSettleTimer = null
@@ -942,26 +941,18 @@ function onColumnDblclick(event) {
 }
 
 function clearExpandOnDragTimer() {
-  if (expandOnDragTimer) {
-    clearTimeout(expandOnDragTimer)
-    expandOnDragTimer = null
-  }
+  expandOnDrag.clear()
 }
 
 function scheduleExpandOnDrag() {
-  if (!collapsed.value || !activeDrag.value?.cardName) {
-    return
-  }
-  if (expandOnDragTimer) {
-    return
-  }
-  expandOnDragTimer = setTimeout(() => {
-    expandOnDragTimer = null
-    if (collapsed.value && activeDrag.value?.cardName) {
-      setCollapsed(false)
-    }
-  }, COLUMN_DRAG_EXPAND_DELAY_MS)
+  expandOnDrag.schedule()
 }
+
+const expandOnDrag = createCollapsedColumnExpandOnDrag({
+  shouldSchedule: () => Boolean(collapsed.value && activeDrag.value?.cardName),
+  shouldExpand: () => Boolean(collapsed.value && activeDrag.value?.cardName),
+  expand: () => setCollapsed(false),
+})
 
 function isLeavingColumn(event) {
   const related = event.relatedTarget

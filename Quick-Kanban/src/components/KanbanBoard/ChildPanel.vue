@@ -6,6 +6,7 @@
       'child-panel--nested': depth > 0,
       'child-panel--teleported': teleported,
       'child-panel--viewport-fill': isViewportFill,
+      'child-panel--has-host-height': teleported && hasHostHeight,
     }"
     :data-child-scope="scopeId"
     :data-child-depth="depth"
@@ -73,7 +74,6 @@ import {
 import { useStore } from 'vuex'
 import KanbanColumn from './KanbanColumn.vue'
 import {
-  COLUMN_DRAG_EXPAND_DELAY_MS,
   getColumnKey,
   getIndicatorClass,
 } from '../../utils/kanban'
@@ -81,6 +81,7 @@ import {
   childPanelColumnTintValue,
   encodeChildListId,
 } from '../../utils/childPanelBoard'
+import { createCollapsedColumnExpandOnDrag } from '../../utils/collapsedColumnExpandOnDrag'
 
 const props = defineProps({
   parentName: { type: String, required: true },
@@ -98,7 +99,6 @@ const __ = globalThis.__
 const boardColumnTracks = inject('boardColumnTracks', computed(() => ''))
 const panelRoot = ref(null)
 let resizeObserver = null
-let expandOnDragTimer = null
 const activeDrag = computed(() => store.getters.activeDragCard)
 
 const panel = computed(() => store.getters.getChildPanel(props.scopeId))
@@ -109,6 +109,9 @@ const isViewportFill = computed(() => {
   const maxDepth = store.getters.maxOpenChildPanelDepth
   return maxDepth != null && Number(props.depth) === maxDepth
 })
+const hasHostHeight = computed(() => (
+  Number.isFinite(props.hostRect?.height) && props.hostRect.height > 0
+))
 const columnTintStyle = computed(() => ({
   '--child-panel-column-tint': childPanelColumnTintValue(
     props.depth,
@@ -125,15 +128,13 @@ const panelStyle = computed(() => {
   }
   const style = {
     ...tint,
-    position: 'absolute',
-    top: `${props.hostRect.top}px`,
-    left: `${props.hostRect.left}px`,
-    width: `${props.hostRect.width}px`,
-    zIndex: 50 + Math.max(0, Number(props.depth) || 0),
+    '--child-panel-top': `${props.hostRect.top}px`,
+    '--child-panel-left': `${props.hostRect.left}px`,
+    '--child-panel-width': `${props.hostRect.width}px`,
+    '--child-panel-z': String(50 + Math.max(0, Number(props.depth) || 0)),
   }
-  if (Number.isFinite(props.hostRect.height) && props.hostRect.height > 0) {
-    style.height = `${props.hostRect.height}px`
-    style.overflow = 'hidden'
+  if (hasHostHeight.value) {
+    style['--child-panel-height'] = `${props.hostRect.height}px`
   }
   return style
 })
@@ -164,42 +165,38 @@ function onCollapsedColumnDblclick(column) {
   })
 }
 
-function clearExpandOnDragTimer() {
-  if (expandOnDragTimer) {
-    clearTimeout(expandOnDragTimer)
-    expandOnDragTimer = null
-  }
-}
-
-function scheduleExpandCollapsedColumn(column) {
-  const drag = activeDrag.value
-  if (!drag?.cardName || drag.childScopeId !== props.scopeId) {
-    return
-  }
-  const columnKey = getColumnKey(column)
-  if (!columnKey || !store.getters.isColumnCollapsed(columnKey)) {
-    return
-  }
-  if (expandOnDragTimer) {
-    return
-  }
-  expandOnDragTimer = setTimeout(() => {
-    expandOnDragTimer = null
-    const stillDragging = activeDrag.value
-    if (
-      !stillDragging?.cardName
-      || stillDragging.childScopeId !== props.scopeId
-    ) {
-      return
-    }
-    if (store.getters.isColumnCollapsed(columnKey)) {
+const { clear: clearExpandOnDragTimer, schedule: scheduleExpandCollapsedColumn } =
+  createCollapsedColumnExpandOnDrag({
+    shouldSchedule(column) {
+      const drag = activeDrag.value
+      if (!drag?.cardName || drag.childScopeId !== props.scopeId) {
+        return false
+      }
+      const columnKey = getColumnKey(column)
+      return Boolean(columnKey && store.getters.isColumnCollapsed(columnKey))
+    },
+    shouldExpand(column) {
+      const stillDragging = activeDrag.value
+      if (
+        !stillDragging?.cardName
+        || stillDragging.childScopeId !== props.scopeId
+      ) {
+        return false
+      }
+      const columnKey = getColumnKey(column)
+      return Boolean(columnKey && store.getters.isColumnCollapsed(columnKey))
+    },
+    expand(column) {
+      const columnKey = getColumnKey(column)
+      if (!columnKey) {
+        return
+      }
       store.commit('SET_COLUMN_COLLAPSED', {
         columnKey,
         collapsed: false,
       })
-    }
-  }, COLUMN_DRAG_EXPAND_DELAY_MS)
-}
+    },
+  })
 
 function onCollapsedSpacerPointerEnter(column) {
   scheduleExpandCollapsedColumn(column)

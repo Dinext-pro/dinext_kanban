@@ -22,6 +22,7 @@ import {
   shouldRememberHostPinScroll,
   stabilizeCollapsedHostPanelRect,
   stabilizeHostPanelRectOnColumnToggle,
+  isUsableHostLayoutRect,
 } from './childPanelBoard.js'
 
 function buildDuplicateHostDom() {
@@ -280,6 +281,16 @@ describe('childPanelBoard', () => {
     expect(measureVisibleColumnsContentWidth(board, { swimlanesEnabled: false })).toBe(340)
   })
 
+  test('isUsableHostLayoutRect rejects missing or zero-sized boxes', () => {
+    expect(isUsableHostLayoutRect(null)).toBe(false)
+    expect(isUsableHostLayoutRect(undefined)).toBe(false)
+    expect(isUsableHostLayoutRect({ width: 0, height: 100 })).toBe(false)
+    expect(isUsableHostLayoutRect({ width: 100, height: 0 })).toBe(false)
+    expect(isUsableHostLayoutRect({ width: 1, height: 1 })).toBe(false)
+    expect(isUsableHostLayoutRect({ width: 2, height: 2 })).toBe(true)
+    expect(isUsableHostLayoutRect({ width: 320, height: 80 })).toBe(true)
+  })
+
   test('stabilizeHostPanelRectOnColumnToggle freezes top/height on flat collapsed host', () => {
     const previousRect = { top: 120, left: 0, width: 900, height: 400 }
     const nextRect = { top: 40, left: 0, width: 800, height: 520 }
@@ -316,7 +327,7 @@ describe('childPanelBoard', () => {
     })
   })
 
-  test('stabilizeHostPanelRectOnColumnToggle does not freeze when expanded or swimlane', () => {
+  test('stabilizeHostPanelRectOnColumnToggle freezes swimlane collapse the same as flat', () => {
     const previousRect = { top: 120, left: 0, width: 900, height: 400 }
     const nextRect = { top: 40, left: 0, width: 800, height: 520 }
     expect(stabilizeHostPanelRectOnColumnToggle({
@@ -332,7 +343,10 @@ describe('childPanelBoard', () => {
       verticalLock: true,
       hostMissing: true,
       swimlanesEnabled: true,
-    })).toEqual({ rect: nextRect, verticalFrozen: false })
+    })).toEqual({
+      rect: { top: 120, left: 0, width: 800, height: 400 },
+      verticalFrozen: true,
+    })
     expect(stabilizeHostPanelRectOnColumnToggle({
       previousRect: null,
       nextRect,

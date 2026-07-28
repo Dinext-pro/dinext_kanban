@@ -16,7 +16,13 @@ describe('child panel geometry CSS', () => {
     expect(styleCss).toMatch(/\.kanban\s*\{[^}]*isolation:\s*isolate/s)
   })
 
-  test('teleported child panel does not min-stretch to portal width', () => {
+  test('teleported child panel positions via CSS custom properties', () => {
+    expect(styleCss).toMatch(
+      /\.child-panel--teleported\s*\{[^}]*--child-panel-top/s,
+    )
+    expect(styleCss).toMatch(
+      /\.child-panel--teleported\s*\{[^}]*position:\s*absolute/s,
+    )
     expect(styleCss).toMatch(
       /\.child-panel--teleported\s*\{[^}]*min-width:\s*0/s,
     )
@@ -151,6 +157,12 @@ describe('child panel geometry CSS', () => {
     expect(styleCss).toMatch(/--kanban-child-panel-pin-ms:\s*300ms/)
     expect(styleCss).toMatch(
       /\.child-panel-spacer--animate\s*\{[^}]*transition:\s*height\s+var\(--kanban-child-panel-anim-ms/s,
+    )
+    expect(styleCss).toMatch(
+      /\.child-panel-spacer\s*\{[^}]*height:\s*var\(--child-panel-spacer-h/s,
+    )
+    expect(styleCss).toMatch(
+      /\.kanban-card-list--nested-pin\s*\{[^}]*height:\s*var\(--nested-pin-h/s,
     )
     expect(styleCss).not.toMatch(
       /\.child-panel-spacer\s*\{[^}]*transition:\s*height/s,
