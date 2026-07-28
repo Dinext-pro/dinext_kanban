@@ -81,14 +81,16 @@ test.describe('child tasks panel', () => {
     const metrics = await page.evaluate(() => {
       const board = document.querySelector('#kanbanapp .kanban')
       const firstColumn = board?.querySelector('.kanban-column')
+      const columns = [...(board?.querySelectorAll(':scope > .kanban-column') || [])]
       const panelEl = document.querySelector('.child-panel.child-panel--teleported')
       const otherCard = [...document.querySelectorAll('.kanban-card')]
         .find((card) => card.textContent.includes('Other root in first column'))
-      if (!board || !firstColumn || !panelEl || !otherCard) {
+      if (!board || !firstColumn || !panelEl || !otherCard || columns.length < 2) {
         return null
       }
       const boardRect = board.getBoundingClientRect()
       const columnRect = firstColumn.getBoundingClientRect()
+      const lastColumnRect = columns[columns.length - 1].getBoundingClientRect()
       const panelRect = panelEl.getBoundingClientRect()
       const otherRect = otherCard.getBoundingClientRect()
       const style = getComputedStyle(panelEl)
@@ -97,12 +99,13 @@ test.describe('child tasks panel', () => {
       const midX = otherRect.left + otherRect.width / 2
       const midY = panelRect.top + Math.min(40, panelRect.height / 2)
       const topEl = document.elementFromPoint(midX, midY)
+      const columnsContentWidth = lastColumnRect.right - columnRect.left
       return {
         panelLeft: panelRect.left,
         firstColumnLeft: columnRect.left,
         boardLeft: boardRect.left,
         panelWidth: panelRect.width,
-        boardScrollWidth: board.scrollWidth,
+        columnsContentWidth,
         panelInlineLeft: style.left,
         panelPosition: style.position,
         scrollOverflow: scrollStyle?.overflow,
@@ -118,7 +121,10 @@ test.describe('child tasks panel', () => {
     expect(metrics.panelPosition).toBe('absolute')
     expect(metrics.panelInlineLeft).toBe('0px')
     expect(Math.abs(metrics.panelLeft - metrics.firstColumnLeft)).toBeLessThan(12)
-    expect(metrics.panelWidth).toBeGreaterThan(metrics.boardScrollWidth * 0.9)
+    // Host width follows visible column tracks (not the board scrollport, which can
+    // be wider than content when columns use the default 250px width).
+    expect(metrics.panelWidth).toBeGreaterThan(metrics.columnsContentWidth * 0.9)
+    expect(Math.abs(metrics.panelWidth - metrics.columnsContentWidth)).toBeLessThan(16)
     expect(metrics.topElIsPanel).toBe(true)
     expect(metrics.topElIsOtherCard).toBe(false)
   })
@@ -1738,5 +1744,283 @@ test.describe('child tasks panel', () => {
       return { spacerPresent: Boolean(spacer) }
     }, { bottomHost })
     expect(closedMetrics.spacerPresent).toBe(false)
+  })
+
+  test('swimlane collapsing parent column keeps ChildPanel below sticky', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__childCounts = {
+        'TASK-PARENT': 2,
+        'TASK-OTHER': 0,
+      }
+      window.__childColumnTotals = {
+        'TASK-PARENT': { Open: 1, Done: 1 },
+      }
+    })
+
+    await page.goto('/e2e/fixture.html')
+    await expect(page.getByRole('heading', { name: /Open/ })).toBeVisible()
+
+    await page.evaluate(() => {
+      const store = window.__quickKanbanStore
+      const openCards = [
+        {
+          name: 'TASK-PARENT',
+          subject: 'Parent in swimlane',
+          status: 'Open',
+          project: 'TEST-PROJECT',
+          _child_count: 2,
+        },
+      ]
+      const doneCards = [
+        {
+          name: 'TASK-OTHER',
+          subject: 'Other root',
+          status: 'Done',
+          project: 'TEST-PROJECT',
+        },
+      ]
+      store.commit('SET_KANBAN_CONFIG', {
+        ...store.state.config,
+        board_name: 'Swim Collapse Child Board',
+        ref_doctype: 'Task',
+        field_name: 'status',
+        fields: ['name', 'subject', 'status', 'project'],
+        title_field: 'subject',
+        parent_field: 'parent_task',
+        swimlane_field: 'project',
+        swimlane_mode: 'field',
+      })
+      store.commit('SET_COLUMNS', [
+        {
+          name: 'open',
+          column_name: 'Open',
+          display_name: 'Open',
+          indicator: 'blue',
+          custom_column_width: 320,
+          cards: [],
+        },
+        {
+          name: 'done',
+          column_name: 'Done',
+          display_name: 'Done',
+          indicator: 'green',
+          custom_column_width: 320,
+          cards: [],
+        },
+      ])
+      store.commit('SET_LANES', [
+        {
+          key: 'test-project',
+          label: 'TEST-PROJECT',
+          columns: [
+            { name: 'open', column_name: 'Open', cards: openCards },
+            { name: 'done', column_name: 'Done', cards: doneCards },
+          ],
+        },
+      ])
+      store.commit('SET_CELL_TOTALS', {
+        'test-project': { Open: openCards.length, Done: doneCards.length },
+      })
+      store.commit('SET_CELL_PAGINATION', {
+        'test-project::Open': {
+          offset: openCards.length,
+          hasMore: false,
+          loading: false,
+        },
+        'test-project::Done': {
+          offset: doneCards.length,
+          hasMore: false,
+          loading: false,
+        },
+      })
+      store.commit('SET_EXPANDED_LANE_KEYS', ['test-project'])
+      store.commit('SET_LANE_HYDRATION', { laneKey: 'test-project', status: 'ready' })
+      store.commit('SET_LOADING', false)
+      store.commit('SET_ERROR', '')
+    })
+
+    await expect(page.locator('.kanban--swimlanes')).toBeVisible()
+    await page.locator(
+      '.kanban-card:has-text("Parent in swimlane") .kanban-child-count',
+    ).click()
+
+    const panel = page.locator('.child-panel.child-panel--teleported')
+    await expect(panel).toBeVisible()
+    await expect(page.getByText('Child of TASK-PARENT in Open')).toBeVisible()
+
+    const before = await page.evaluate(() => {
+      const panelEl = document.querySelector('.child-panel.child-panel--teleported')
+      const sticky = document.querySelector('.swimlane-lane-sticky')
+      const r = panelEl?.getBoundingClientRect()
+      const sr = sticky?.getBoundingClientRect()
+      return {
+        top: r?.top ?? null,
+        height: r?.height ?? null,
+        stickyBottom: sr?.bottom ?? null,
+      }
+    })
+    expect(before.top).toBeGreaterThanOrEqual((before.stickyBottom || 0) - 4)
+
+    const headerCol = page.locator(
+      '.swimlane-header-row .kanban-column:has(.column-title:text-is("Open"))',
+    )
+    await headerCol.locator('.column-title').dispatchEvent('dblclick')
+    await expect(headerCol).toHaveClass(/kanban-column--collapsed/)
+    await page.waitForTimeout(450)
+
+    const afterCollapse = await page.evaluate(() => {
+      const panelEl = document.querySelector('.child-panel.child-panel--teleported')
+      const sticky = document.querySelector('.swimlane-lane-sticky')
+      const r = panelEl?.getBoundingClientRect()
+      const sr = sticky?.getBoundingClientRect()
+      return {
+        panels: panelEl ? 1 : 0,
+        cards: panelEl?.querySelectorAll('.kanban-card').length || 0,
+        top: r?.top ?? null,
+        height: r?.height ?? null,
+        opacity: panelEl ? getComputedStyle(panelEl).opacity : null,
+        stickyBottom: sr?.bottom ?? null,
+        leaveStuck: Boolean(document.querySelector('.child-panel-leave-active')),
+        laneSpacer: Boolean(document.querySelector(
+          '.swimlane-row .swimlane-cell-spacer[data-column-value="Open"]',
+        )),
+        panelColSpacer: Boolean(document.querySelector(
+          '.child-panel .child-panel-cell-spacer[data-column-value="Open"]',
+        )),
+      }
+    })
+
+    expect(afterCollapse.panels).toBe(1)
+    expect(afterCollapse.leaveStuck).toBe(false)
+    expect(Number.parseFloat(afterCollapse.opacity)).toBeGreaterThan(0.9)
+    expect(afterCollapse.cards).toBeGreaterThan(0)
+    expect(afterCollapse.laneSpacer).toBe(true)
+    expect(afterCollapse.panelColSpacer).toBe(true)
+    expect(afterCollapse.top).toBeGreaterThanOrEqual((afterCollapse.stickyBottom || 0) - 4)
+    expect(Math.abs(afterCollapse.top - before.top)).toBeLessThan(60)
+    expect(Math.abs(afterCollapse.height - before.height)).toBeLessThan(60)
+
+    await headerCol.locator('.column-title').dispatchEvent('dblclick')
+    await expect(headerCol).not.toHaveClass(/kanban-column--collapsed/)
+    await page.waitForTimeout(300)
+
+    await expect(panel).toBeVisible()
+    await expect(page.getByText('Child of TASK-PARENT in Open')).toBeVisible()
+    await expect(page.getByText('Parent in swimlane')).toBeVisible()
+  })
+
+  test('swimlane nested panels survive collapsing a board column', async ({ page }) => {
+    const nestedParent = 'TASK-PARENT-CHILD-Open'
+    await page.addInitScript(({ nestedParent: nested }) => {
+      window.__childCounts = {
+        'TASK-PARENT': 2,
+        [nested]: 2,
+      }
+      window.__childColumnTotals = {
+        'TASK-PARENT': { Open: 1, Done: 1 },
+        [nested]: { Open: 1, Done: 1 },
+      }
+    }, { nestedParent })
+
+    await page.goto('/e2e/fixture.html')
+    await expect(page.getByRole('heading', { name: /Open/ })).toBeVisible()
+
+    await page.evaluate(() => {
+      const store = window.__quickKanbanStore
+      const openCards = [
+        {
+          name: 'TASK-PARENT',
+          subject: 'Parent in swimlane',
+          status: 'Open',
+          project: 'TEST-PROJECT',
+          _child_count: 2,
+        },
+      ]
+      store.commit('SET_KANBAN_CONFIG', {
+        ...store.state.config,
+        board_name: 'Swim Nested Collapse',
+        ref_doctype: 'Task',
+        field_name: 'status',
+        fields: ['name', 'subject', 'status', 'project'],
+        title_field: 'subject',
+        parent_field: 'parent_task',
+        swimlane_field: 'project',
+        swimlane_mode: 'field',
+      })
+      store.commit('SET_COLUMNS', [
+        {
+          name: 'open',
+          column_name: 'Open',
+          display_name: 'Open',
+          indicator: 'blue',
+          custom_column_width: 320,
+          cards: [],
+        },
+        {
+          name: 'done',
+          column_name: 'Done',
+          display_name: 'Done',
+          indicator: 'green',
+          custom_column_width: 320,
+          cards: [],
+        },
+      ])
+      store.commit('SET_LANES', [
+        {
+          key: 'test-project',
+          label: 'TEST-PROJECT',
+          columns: [
+            { name: 'open', column_name: 'Open', cards: openCards },
+            { name: 'done', column_name: 'Done', cards: [] },
+          ],
+        },
+      ])
+      store.commit('SET_CELL_TOTALS', { 'test-project': { Open: 1, Done: 0 } })
+      store.commit('SET_CELL_PAGINATION', {
+        'test-project::Open': { offset: 1, hasMore: false, loading: false },
+        'test-project::Done': { offset: 0, hasMore: false, loading: false },
+      })
+      store.commit('SET_EXPANDED_LANE_KEYS', ['test-project'])
+      store.commit('SET_LANE_HYDRATION', { laneKey: 'test-project', status: 'ready' })
+      store.commit('SET_LOADING', false)
+      store.commit('SET_ERROR', '')
+    })
+
+    await expect(page.locator('.kanban--swimlanes')).toBeVisible()
+    await page.locator(
+      '.kanban-card:has-text("Parent in swimlane") .kanban-child-count',
+    ).click()
+    await expect(page.locator('.child-panel.child-panel--teleported')).toBeVisible()
+
+    await page.locator(
+      '.child-panel .kanban-card:has-text("Child of TASK-PARENT in Open") .kanban-child-count',
+    ).click()
+    await expect.poll(async () =>
+      page.locator('.child-panel.child-panel--teleported').count(),
+    ).toBe(2)
+
+    await page.locator(
+      '.swimlane-header-row .kanban-column:has(.column-title:text-is("Open")) .column-title',
+    ).dispatchEvent('dblclick')
+    await page.waitForTimeout(450)
+
+    const nestedState = await page.evaluate(() => {
+      const panels = [...document.querySelectorAll('.child-panel.child-panel--teleported')]
+      const sticky = document.querySelector('.swimlane-lane-sticky')
+      const stickyBottom = sticky?.getBoundingClientRect().bottom ?? 0
+      return {
+        count: panels.length,
+        opacities: panels.map((p) => getComputedStyle(p).opacity),
+        cards: panels.map((p) => p.querySelectorAll('.kanban-card').length),
+        tops: panels.map((p) => p.getBoundingClientRect().top),
+        stickyBottom,
+        leaveStuck: document.querySelectorAll('.child-panel-leave-active').length,
+      }
+    })
+    expect(nestedState.count).toBe(2)
+    expect(nestedState.leaveStuck).toBe(0)
+    expect(nestedState.opacities.every((o) => Number.parseFloat(o) > 0.9)).toBe(true)
+    expect(nestedState.cards.every((n) => n > 0)).toBe(true)
+    expect(nestedState.tops.every((t) => t >= nestedState.stickyBottom - 4)).toBe(true)
   })
 })

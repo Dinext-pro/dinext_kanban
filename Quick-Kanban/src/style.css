@@ -2218,12 +2218,20 @@ html.kanban-tag-drag-move * {
 }
 
 #kanbanapp .child-panel--teleported {
+  position: absolute;
+  top: var(--child-panel-top, 0px);
+  left: var(--child-panel-left, 0px);
+  width: var(--child-panel-width, auto);
+  height: var(--child-panel-height, auto);
   margin: 0;
   /* Honor hostRect width; do not stretch to full portal (inset:0 board). */
   min-width: 0;
-  width: auto;
-  z-index: 50;
+  z-index: var(--child-panel-z, 50);
   pointer-events: auto;
+}
+
+#kanbanapp .child-panel--teleported.child-panel--has-host-height {
+  overflow: hidden;
 }
 
 /* Grid tracks for panel columns; deepest panel fills host→board-bottom. */
@@ -2353,14 +2361,17 @@ html.kanban-tag-drag-move * {
   overflow-y: hidden !important;
 }
 
-/* Nested mid-host pin: parent list becomes a bounded scrollport (height via inline). */
+/* Nested mid-host pin: parent list becomes a bounded scrollport (height via --nested-pin-h). */
 #kanbanapp .child-panel .kanban-card-list.kanban-card-list--nested-pin {
+  height: var(--nested-pin-h) !important;
+  max-height: var(--nested-pin-h) !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
 }
 
 #kanbanapp .child-panel-spacer {
   width: 100%;
+  height: var(--child-panel-spacer-h, 0px);
   pointer-events: none;
 }
 

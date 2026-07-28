@@ -339,9 +339,27 @@ export function measureVisibleColumnsContentWidth(board, { swimlanesEnabled = fa
 }
 
 /**
- * Flat column collapse/expand (and missing host while a ChildPanel track is a
- * cell-spacer) can corrupt spacer-based top/height. Keep previous vertical
- * geometry; still allow left/width updates. Swimlane never needs this.
+ * True when a host/spacer layout box is laid out (not display:none / zeroed).
+ * Swimlane column collapse keeps host cards in DOM via v-show:false; those
+ * nodes still resolve but return 0×0 rects that must not drive panel top.
+ *
+ * @param {{ width?: number, height?: number } | null | undefined} rect
+ * @returns {boolean}
+ */
+export function isUsableHostLayoutRect(rect) {
+  if (!rect || typeof rect !== 'object') {
+    return false
+  }
+  return (Number(rect.width) || 0) > 1 && (Number(rect.height) || 0) > 1
+}
+
+/**
+ * Flat/swimlane column collapse (and missing/hidden host while a ChildPanel
+ * track is a cell-spacer) can corrupt spacer-based top/height. Keep previous
+ * vertical geometry; still allow left/width updates.
+ *
+ * `swimlanesEnabled` is accepted for call-site compatibility and does not
+ * disable freeze (swimlane collapse also needs stable top under sticky).
  *
  * @returns {{ rect: object, verticalFrozen: boolean }}
  */
@@ -351,8 +369,9 @@ export function stabilizeHostPanelRectOnColumnToggle({
   hostColumnCollapsed = false,
   hostMissing = false,
   verticalLock = false,
-  swimlanesEnabled = false,
+  swimlanesEnabled: _swimlanesEnabled = false,
 } = {}) {
+  void _swimlanesEnabled
   const next = nextRect && typeof nextRect === 'object' ? { ...nextRect } : null
   if (!next) {
     return { rect: next, verticalFrozen: false }
@@ -360,7 +379,7 @@ export function stabilizeHostPanelRectOnColumnToggle({
   const shouldFreeze = Boolean(
     hostColumnCollapsed || hostMissing || verticalLock,
   )
-  if (swimlanesEnabled || !shouldFreeze || !previousRect) {
+  if (!shouldFreeze || !previousRect) {
     return { rect: next, verticalFrozen: false }
   }
   const prevTop = previousRect.top
