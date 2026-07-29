@@ -5,8 +5,8 @@
 tags
 node_modules
 __pycache__
-quick_kanban/public/dist
-Quick-Kanban/dist
-Quick-Kanban/coverage
-Quick-Kanban/playwright-report
-Quick-Kanban/test-results
+dinext_kanban/public/dist
+frontend/dist
+frontend/coverage
+frontend/playwright-report
+frontend/test-results
