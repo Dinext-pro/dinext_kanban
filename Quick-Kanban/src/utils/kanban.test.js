@@ -1072,7 +1072,9 @@ describe('column width helpers', () => {
 
   test('clampColumnWidthForResize clamps only against the current viewport', () => {
     expect(getColumnWidthBounds(1000)).toEqual({ min: 150, max: 500 })
+    expect(getColumnWidthBounds(2000)).toEqual({ min: 180, max: 1000 })
     expect(clampColumnWidthForResize(100, 1000)).toBe(150)
+    expect(clampColumnWidthForResize(100, 2000)).toBe(180)
     expect(clampColumnWidthForResize(800, 1000)).toBe(500)
     expect(clampColumnWidthForResize(320, 1000)).toBe(320)
   })

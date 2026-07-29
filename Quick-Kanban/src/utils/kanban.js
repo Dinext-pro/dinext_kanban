@@ -29,6 +29,7 @@ export const SWIMLANE_LANE_ANIMATION_MS = 220
 export const COLLAPSED_COLUMN_WIDTH_PX = 52
 export const COLUMN_DRAG_EXPAND_DELAY_MS = 400
 export const DEFAULT_COLUMN_WIDTH_PX = 250
+export const COLUMN_WIDTH_MIN_PX = 180
 export const COLUMN_WIDTH_MIN_VIEWPORT_RATIO = 0.15
 export const COLUMN_WIDTH_MAX_VIEWPORT_RATIO = 0.5
 
@@ -36,7 +37,10 @@ export function getColumnWidthBounds(viewportWidth = globalThis.window?.innerWid
   const width = Number(viewportWidth)
   const safeWidth = Number.isFinite(width) && width > 0 ? width : DEFAULT_COLUMN_WIDTH_PX / COLUMN_WIDTH_MIN_VIEWPORT_RATIO
   return {
-    min: Math.round(safeWidth * COLUMN_WIDTH_MIN_VIEWPORT_RATIO),
+    min: Math.min(
+      COLUMN_WIDTH_MIN_PX,
+      Math.round(safeWidth * COLUMN_WIDTH_MIN_VIEWPORT_RATIO),
+    ),
     max: Math.round(safeWidth * COLUMN_WIDTH_MAX_VIEWPORT_RATIO),
   }
 }
