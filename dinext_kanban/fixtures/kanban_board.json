@@ -1,0 +1,133 @@
+[
+ {
+  "columns": [
+   {
+    "column_name": "Open",
+    "custom_column_width": 0,
+    "indicator": "Cyan",
+    "order": "[\"TASK-2026-00254\", \"TASK-2026-00178\", \"TASK-2026-00044\", \"TASK-2026-00186\", \"TASK-2026-00013\", \"TASK-2026-00175\", \"TASK-2026-00021\", \"TASK-2026-00247\", \"TASK-2026-00012\", \"TASK-2026-00094\", \"TASK-2026-00249\", \"TASK-2026-00173\", \"TASK-2026-00014\", \"TASK-2026-00246\", \"TASK-2026-00148\", \"TASK-2026-00182\", \"TASK-2026-00140\", \"TASK-2026-00162\", \"TASK-2026-00159\", \"TASK-2026-00238\", \"TASK-2026-00152\", \"TASK-2026-00139\", \"TASK-2026-00233\", \"TASK-2026-00232\", \"TASK-2026-00231\", \"TASK-2026-00230\", \"TASK-2026-00229\", \"TASK-2026-00227\", \"TASK-2026-00226\", \"TASK-2026-00225\", \"TASK-2026-00224\", \"TASK-2026-00145\", \"TASK-2026-00214\", \"TASK-2026-00218\", \"TASK-2026-00215\", \"TASK-2026-00217\", \"TASK-2026-00216\", \"TASK-2026-00207\", \"TASK-2026-00213\", \"TASK-2026-00211\", \"TASK-2026-00212\", \"TASK-2026-00208\", \"TASK-2026-00210\", \"TASK-2026-00209\", \"TASK-2026-00184\", \"TASK-2026-00185\", \"TASK-2026-00183\", \"TASK-2026-00170\", \"TASK-2026-00171\", \"TASK-2026-00172\", \"TASK-2026-00166\", \"TASK-2026-00164\", \"TASK-2026-00163\", \"TASK-2026-00165\", \"TASK-2026-00155\", \"TASK-2026-00041\", \"TASK-2026-00043\", \"TASK-2026-00052\", \"TASK-2026-00153\", \"TASK-2026-00051\", \"TASK-2026-00050\", \"TASK-2026-00151\", \"TASK-2026-00048\", \"TASK-2026-00150\", \"TASK-2026-00149\", \"TASK-2026-00063\", \"TASK-2026-00062\", \"TASK-2026-00061\", \"TASK-2026-00060\", \"TASK-2026-00059\", \"TASK-2026-00058\", \"TASK-2026-00045\", \"TASK-2026-00117\", \"TASK-2026-00113\", \"TASK-2026-00116\", \"TASK-2026-00114\", \"TASK-2026-00125\", \"TASK-2026-00135\", \"TASK-2026-00115\", \"TASK-2026-00134\", \"TASK-2026-00123\", \"TASK-2026-00133\", \"TASK-2026-00132\", \"TASK-2026-00121\", \"TASK-2026-00131\", \"TASK-2026-00130\", \"TASK-2026-00120\", \"TASK-2026-00129\", \"TASK-2026-00122\", \"TASK-2026-00128\", \"TASK-2026-00119\", \"TASK-2026-00124\", \"TASK-2026-00118\", \"TASK-2026-00126\", \"TASK-2026-00035\", \"TASK-2026-00034\", \"TASK-2026-00018\", \"TASK-2026-00020\", \"TASK-2026-00019\", \"TASK-2026-00069\", \"TASK-2026-00066\", \"TASK-2026-00070\", \"TASK-2026-00076\", \"TASK-2026-00087\", \"TASK-2026-00065\", \"TASK-2026-00084\", \"TASK-2026-00068\", \"TASK-2026-00083\", \"TASK-2026-00082\", \"TASK-2026-00074\", \"TASK-2026-00078\", \"TASK-2026-00067\", \"TASK-2026-00081\", \"TASK-2026-00086\", \"TASK-2026-00075\", \"TASK-2026-00085\", \"TASK-2026-00029\", \"TASK-2026-00027\", \"TASK-2026-00038\", \"TASK-2026-00039\", \"TASK-2026-00026\", \"TASK-2026-00033\", \"TASK-2026-00024\", \"TASK-2026-00037\", \"TASK-2026-00036\", \"TASK-2026-00023\", \"TASK-2026-00108\", \"TASK-2026-00107\", \"TASK-2026-00106\", \"TASK-2026-00105\", \"TASK-2026-00103\", \"TASK-2026-00104\", \"TASK-2026-00102\", \"TASK-2026-00099\", \"TASK-2026-00098\", \"TASK-2026-00097\", \"TASK-2026-00096\", \"TASK-2026-00095\", \"TASK-2026-00093\", \"TASK-2026-00090\", \"TASK-2026-00091\"]",
+    "parent": "Все задачи",
+    "parentfield": "columns",
+    "parenttype": "Kanban Board",
+    "status": "Active"
+   },
+   {
+    "column_name": "Working",
+    "custom_column_width": 0,
+    "indicator": "Blue",
+    "order": "[\"TASK-2026-00253\", \"TASK-2026-00055\", \"TASK-2026-00248\", \"TASK-2026-00177\", \"TASK-2026-00079\", \"TASK-2026-00176\", \"TASK-2026-00049\", \"TASK-2026-00242\", \"TASK-2026-00042\", \"TASK-2026-00250\", \"TASK-2026-00109\", \"TASK-2026-00228\", \"TASK-2026-00031\", \"TASK-2026-00030\", \"TASK-2026-00110\", \"TASK-2026-00017\", \"TASK-2026-00089\", \"TASK-2026-00240\", \"TASK-2026-00146\", \"TASK-2026-00007\", \"TASK-2026-00011\", \"TASK-2026-00016\", \"TASK-2026-00006\", \"TASK-2026-00002\", \"TASK-2026-00112\", \"TASK-2026-00221\", \"TASK-2026-00236\", \"TASK-2026-00235\", \"TASK-2026-00234\", \"TASK-2026-00222\", \"TASK-2026-00220\", \"TASK-2026-00223\"]",
+    "parent": "Все задачи",
+    "parentfield": "columns",
+    "parenttype": "Kanban Board",
+    "status": "Active"
+   },
+   {
+    "column_name": "Overdue",
+    "custom_column_width": 0,
+    "indicator": "Red",
+    "order": "[\"TASK-2026-00237\", \"TASK-2026-00251\", \"TASK-2026-00028\", \"TASK-2026-00009\", \"TASK-2026-00136\", \"TASK-2026-00064\", \"TASK-2026-00141\", \"TASK-2026-00241\", \"TASK-2026-00180\", \"TASK-2026-00244\", \"TASK-2026-00158\", \"TASK-2026-00160\", \"TASK-2026-00047\", \"TASK-2026-00056\", \"TASK-2026-00054\", \"TASK-2026-00053\", \"TASK-2026-00046\", \"TASK-2026-00127\", \"TASK-2026-00071\", \"TASK-2026-00073\", \"TASK-2026-00077\", \"TASK-2026-00072\", \"TASK-2026-00080\", \"TASK-2026-00022\", \"TASK-2026-00032\", \"TASK-2026-00100\", \"TASK-2026-00101\", \"TASK-2026-00092\", \"TASK-2026-00015\"]",
+    "parent": "Все задачи",
+    "parentfield": "columns",
+    "parenttype": "Kanban Board",
+    "status": "Active"
+   },
+   {
+    "column_name": "Pending Review",
+    "custom_column_width": 0,
+    "indicator": "Light Blue",
+    "order": "[\"TASK-2026-00111\", \"TASK-2026-00187\", \"TASK-2026-00057\", \"TASK-2026-00025\", \"TASK-2026-00138\", \"TASK-2026-00001\", \"TASK-2026-00088\", \"TASK-2026-00040\", \"TASK-2026-00179\", \"TASK-2026-00010\", \"TASK-2026-00003\", \"TASK-2026-00005\", \"TASK-2026-00239\", \"TASK-2026-00243\", \"TASK-2026-00181\", \"TASK-2026-00156\", \"TASK-2026-00157\"]",
+    "parent": "Все задачи",
+    "parentfield": "columns",
+    "parenttype": "Kanban Board",
+    "status": "Active"
+   },
+   {
+    "column_name": "Completed",
+    "custom_column_width": 0,
+    "indicator": "Green",
+    "order": "[\"TASK-2026-00168\", \"TASK-2026-00169\", \"TASK-2026-00167\", \"TASK-2026-00137\", \"TASK-2026-00161\", \"TASK-2026-00144\", \"TASK-2026-00143\", \"TASK-2026-00142\", \"TASK-2026-00008\", \"TASK-2026-00004\", \"TASK-2026-00154\"]",
+    "parent": "Все задачи",
+    "parentfield": "columns",
+    "parenttype": "Kanban Board",
+    "status": "Active"
+   },
+   {
+    "column_name": "Cancelled",
+    "custom_column_width": 0,
+    "indicator": "Gray",
+    "order": "[\"TASK-2026-00174\", \"TASK-2026-00193\", \"TASK-2026-00197\", \"TASK-2026-00200\", \"TASK-2026-00204\", \"TASK-2026-00195\", \"TASK-2026-00194\", \"TASK-2026-00198\", \"TASK-2026-00199\", \"TASK-2026-00201\", \"TASK-2026-00202\", \"TASK-2026-00203\", \"TASK-2026-00205\", \"TASK-2026-00206\"]",
+    "parent": "Все задачи",
+    "parentfield": "columns",
+    "parenttype": "Kanban Board",
+    "status": "Active"
+   }
+  ],
+  "custom_deadline_attention_days": 3,
+  "custom_deadline_columns": [
+   {
+    "column_value": "Open",
+    "parent": "Все задачи",
+    "parentfield": "custom_deadline_columns",
+    "parenttype": "Kanban Board"
+   },
+   {
+    "column_value": "Working",
+    "parent": "Все задачи",
+    "parentfield": "custom_deadline_columns",
+    "parenttype": "Kanban Board"
+   },
+   {
+    "column_value": "Overdue",
+    "parent": "Все задачи",
+    "parentfield": "custom_deadline_columns",
+    "parenttype": "Kanban Board"
+   }
+  ],
+  "custom_deadline_field": "exp_end_date",
+  "custom_highlight_table": [
+   {
+    "color": "red",
+    "parent": "Все задачи",
+    "parentfield": "custom_highlight_table",
+    "parenttype": "Kanban Board",
+    "tag": "Urgent"
+   },
+   {
+    "color": "orange",
+    "parent": "Все задачи",
+    "parentfield": "custom_highlight_table",
+    "parenttype": "Kanban Board",
+    "tag": "High"
+   },
+   {
+    "color": "yellow",
+    "parent": "Все задачи",
+    "parentfield": "custom_highlight_table",
+    "parenttype": "Kanban Board",
+    "tag": "Medium"
+   },
+   {
+    "color": "gray",
+    "parent": "Все задачи",
+    "parentfield": "custom_highlight_table",
+    "parenttype": "Kanban Board",
+    "tag": "Low"
+   }
+  ],
+  "custom_highlighted_field": "priority",
+  "custom_show_extra_info": 1,
+  "custom_show_tags": 1,
+  "custom_swimlane_field": "__assign",
+  "docstatus": 0,
+  "doctype": "Kanban Board",
+  "field_name": "status",
+  "fields": "[\"progress\",\"exp_end_date\",\"priority\",\"project\",\"type\"]",
+  "filters": null,
+  "kanban_board_name": "Все задачи",
+  "modified": "2026-07-30 00:56:57.209232",
+  "name": "Все задачи",
+  "private": 0,
+  "reference_doctype": "Task",
+  "show_labels": 1
+ }
+]

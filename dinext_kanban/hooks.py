@@ -8,6 +8,33 @@ app_email = "info@dinext.ru"
 app_license = "mit"
 # required_apps = []
 
+fixtures = [
+    {
+        "doctype": "Custom HTML Block",
+        "filters": [
+            ["name", "in", ["My Kanban"]]
+        ]
+    },
+    {
+        "doctype": "Kanban Board",
+        "filters": [
+            ["name", "in", ["Все задачи"]]
+        ]
+    },
+    {
+        "doctype": "Custom Field",
+        "filters": [
+            ["module", "in", ["Dinext Kanban"]]
+        ]
+    },
+    {
+        "doctype": "Property Setter",
+        "filters": [
+            ["module", "in", ["Dinext Kanban"]]
+        ]
+    }
+]
+
 # Includes in <head>
 # ------------------
 
