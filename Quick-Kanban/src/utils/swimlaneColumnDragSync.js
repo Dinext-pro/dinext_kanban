@@ -17,6 +17,8 @@ function isBodyColumnEl(el) {
     || el.classList.contains('swimlane-chrome-cell')
     || el.classList.contains('swimlane-group')
     || el.classList.contains('swimlane-cell-spacer')
+    || el.classList.contains('child-panel-group')
+    || el.classList.contains('child-panel-cell-spacer')
   )
 }
 
@@ -132,6 +134,11 @@ function collectBodyElements(boardRoot) {
       add(el)
     }
   })
+  boardRoot.querySelectorAll('.child-panel-scroll').forEach((row) => {
+    for (const el of row.children) {
+      add(el)
+    }
+  })
   return byValue
 }
 
@@ -160,27 +167,34 @@ function clearTransforms(elementsByValue) {
 }
 
 /**
- * Visually mirrors swimlane header column reorder onto body cells via translateX.
- * Does not mutate Vue-managed DOM order during drag.
+ * Visually mirrors column reorder onto swimlane body cells and child-panel
+ * tracks via translateX. Does not mutate Vue-managed DOM order during drag.
+ * Order source: swimlane header row when present, otherwise boardRoot (classic).
  */
 export function createSwimlaneColumnDragSync(boardRoot) {
   let session = null
 
-  function getHeaderRow() {
-    return boardRoot?.querySelector?.('.swimlane-header-row') || null
+  function getOrderContainer() {
+    if (!boardRoot) {
+      return null
+    }
+    return boardRoot.querySelector?.('.swimlane-header-row') || boardRoot
   }
 
   function start() {
-    const headerRow = getHeaderRow()
-    if (!boardRoot || !headerRow) {
+    const orderContainer = getOrderContainer()
+    if (!boardRoot || !orderContainer) {
       session = null
       return
     }
-    const order = readColumnOrder(headerRow, isHeaderColumn)
-    const headerTemplate = headerRow.style.gridTemplateColumns || ''
+    const managesGridTemplate = orderContainer.classList?.contains('swimlane-header-row')
+    const order = readColumnOrder(orderContainer, isHeaderColumn)
+    const headerTemplate = managesGridTemplate
+      ? (orderContainer.style.gridTemplateColumns || '')
+      : ''
     const { widthByColumn, hasAddTrack } = buildWidthByColumn(order, headerTemplate)
 
-    for (const el of headerRow.children) {
+    for (const el of orderContainer.children) {
       if (!isHeaderColumn(el)) {
         continue
       }
@@ -196,10 +210,12 @@ export function createSwimlaneColumnDragSync(boardRoot) {
     session = {
       originalOrder: [...order],
       widthByColumn,
-      hasAddTrack,
-      headerRow,
+      hasAddTrack: managesGridTemplate ? hasAddTrack : false,
+      orderContainer,
+      headerRow: orderContainer,
       headerTemplate,
-      gapPx: readGapPx(headerRow),
+      managesGridTemplate,
+      gapPx: readGapPx(orderContainer),
       elementsByValue: collectBodyElements(boardRoot),
     }
   }
@@ -208,19 +224,21 @@ export function createSwimlaneColumnDragSync(boardRoot) {
     if (!session) {
       return
     }
-    const headerRow = getHeaderRow() || session.headerRow
-    if (!headerRow) {
+    const orderContainer = getOrderContainer() || session.orderContainer
+    if (!orderContainer) {
       return
     }
-    const nextOrder = readColumnOrder(headerRow, isHeaderColumn)
+    const nextOrder = readColumnOrder(orderContainer, isHeaderColumn)
     if (!nextOrder.length) {
       return
     }
-    headerRow.style.gridTemplateColumns = buildHeaderGridTemplate(
-      nextOrder,
-      session.widthByColumn,
-      session.hasAddTrack,
-    )
+    if (session.managesGridTemplate) {
+      orderContainer.style.gridTemplateColumns = buildHeaderGridTemplate(
+        nextOrder,
+        session.widthByColumn,
+        session.hasAddTrack,
+      )
+    }
     for (const value of session.originalOrder) {
       const dx = translateXForReorder({
         columnValue: value,
@@ -248,8 +266,8 @@ export function createSwimlaneColumnDragSync(boardRoot) {
       return
     }
     clearTransformsOnly()
-    if (cancelled && session.headerRow) {
-      session.headerRow.style.gridTemplateColumns = session.headerTemplate
+    if (cancelled && session.managesGridTemplate && session.orderContainer) {
+      session.orderContainer.style.gridTemplateColumns = session.headerTemplate
     }
     session = null
   }

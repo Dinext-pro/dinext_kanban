@@ -219,3 +219,124 @@ test('successful finish clears transforms but keeps synced header template', () 
   expect(readColumnOrder(rails, (el) => el.classList.contains('swimlane-column-rail')))
     .toEqual(['Open', 'Progress', 'Done'])
 })
+
+function appendChildPanel(board, {
+  tracks = '100px 200px 300px',
+  order = ['Open', 'Progress', 'Done'],
+} = {}) {
+  const portal = document.createElement('div')
+  portal.className = 'child-panel-portal'
+  const panel = document.createElement('section')
+  panel.className = 'child-panel'
+  const scroll = document.createElement('div')
+  scroll.className = 'child-panel-scroll'
+  scroll.style.gridTemplateColumns = tracks
+  scroll.style.columnGap = '8px'
+  order.forEach((name, index) => {
+    if (index === 0) {
+      scroll.appendChild(makeColumnEl('div', 'child-panel-cell-spacer', name))
+    } else {
+      scroll.appendChild(makeColumnEl('section', 'child-panel-group', name))
+    }
+  })
+  panel.appendChild(scroll)
+  portal.appendChild(panel)
+  board.appendChild(portal)
+  return { portal, panel, scroll }
+}
+
+function buildClassicBoard({
+  tracks = '100px 200px 300px',
+  order = ['Open', 'Progress', 'Done'],
+} = {}) {
+  const board = document.createElement('div')
+  board.className = 'kanban'
+  board.style.columnGap = '8px'
+  const widths = tracks.split(/\s+/)
+  order.forEach((name, index) => {
+    const column = makeColumnEl('section', 'kanban-column', name)
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => ({
+        width: Number.parseFloat(widths[index]) || 100,
+        height: 40,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+      }),
+    })
+    board.appendChild(column)
+  })
+  const add = document.createElement('div')
+  add.className = 'add-column-control'
+  board.appendChild(add)
+  document.body.appendChild(board)
+  return { board }
+}
+
+function reorderBoardColumns(board, order) {
+  const byValue = new Map(
+    [...board.children]
+      .filter((el) => el.classList.contains('kanban-column'))
+      .map((el) => [el.getAttribute('data-column-value'), el]),
+  )
+  const add = [...board.children].find((el) => el.classList.contains('add-column-control'))
+  for (const value of order) {
+    const el = byValue.get(value)
+    if (el) {
+      board.insertBefore(el, add || null)
+    }
+  }
+}
+
+test('swimlane sync mirrors translateX onto child-panel tracks', () => {
+  const { board, header } = buildBoard()
+  const { scroll } = appendChildPanel(board)
+  const syncApi = createSwimlaneColumnDragSync(board)
+  syncApi.start()
+
+  const originalChildOrder = readColumnOrder(
+    scroll,
+    (el) => el.classList.contains('child-panel-group')
+      || el.classList.contains('child-panel-cell-spacer'),
+  )
+  reorderHeader(header, ['Done', 'Open', 'Progress'])
+  syncApi.sync()
+
+  expect(readColumnOrder(
+    scroll,
+    (el) => el.classList.contains('child-panel-group')
+      || el.classList.contains('child-panel-cell-spacer'),
+  )).toEqual(originalChildOrder)
+
+  const doneGroup = scroll.querySelector('[data-column-value="Done"]')
+  const openSpacer = scroll.querySelector('[data-column-value="Open"]')
+  expect(doneGroup.style.transform).toMatch(/translateX\(-?\d+(\.\d+)?px\)/)
+  expect(openSpacer.style.transform).toMatch(/translateX\(-?\d+(\.\d+)?px\)/)
+  expect(doneGroup.style.transform).not.toBe(openSpacer.style.transform)
+
+  syncApi.finish({ cancelled: false })
+  expect(doneGroup.style.transform).toBe('')
+  expect(openSpacer.style.transform).toBe('')
+})
+
+test('classic board sync mirrors child-panel tracks from boardRoot order', () => {
+  const { board } = buildClassicBoard()
+  const { scroll } = appendChildPanel(board)
+  const syncApi = createSwimlaneColumnDragSync(board)
+  syncApi.start()
+
+  reorderBoardColumns(board, ['Done', 'Open', 'Progress'])
+  syncApi.sync()
+
+  const doneGroup = scroll.querySelector('[data-column-value="Done"]')
+  const openSpacer = scroll.querySelector('[data-column-value="Open"]')
+  expect(doneGroup.style.transform).toMatch(/translateX\(-?\d+(\.\d+)?px\)/)
+  expect(openSpacer.style.transform).toMatch(/translateX\(-?\d+(\.\d+)?px\)/)
+  expect(board.style.gridTemplateColumns).toBe('')
+
+  syncApi.finish({ cancelled: true })
+  expect(doneGroup.style.transform).toBe('')
+  expect(openSpacer.style.transform).toBe('')
+  expect(board.style.gridTemplateColumns).toBe('')
+})

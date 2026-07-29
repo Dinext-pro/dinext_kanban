@@ -150,6 +150,27 @@ test('dispatches ensureLaneHydrated when expanded lane becomes visible', async (
   expect(disconnect).toHaveBeenCalled()
 })
 
+test('rehydrates expanded visible lane after CLEAR_LANE_HYDRATION', async () => {
+  const { dispatch, wrapper, store } = mountRow({ expanded: true })
+  await nextTick()
+  await nextTick()
+  observerCallback([{ isIntersecting: true }])
+  await nextTick()
+  dispatch.mockClear()
+
+  store.commit('SET_LANE_HYDRATION', { laneKey: 'proj-a', status: 'ready' })
+  await nextTick()
+  dispatch.mockClear()
+
+  store.commit('CLEAR_LANE_HYDRATION')
+  await nextTick()
+
+  expect(dispatch).toHaveBeenCalledWith('ensureLaneHydrated', {
+    laneKey: 'proj-a',
+  })
+  wrapper.unmount()
+})
+
 test('hydrates immediately when a visible lane is expanded', async () => {
   const { dispatch, wrapper, store } = mountRow({ expanded: false })
   await nextTick()
@@ -306,5 +327,52 @@ test('does not auto-expand a collapsed column spacer without an active card drag
 
   expect(store.getters.isColumnCollapsed('Open')).toBe(true)
   vi.useRealTimers()
+  wrapper.unmount()
+})
+
+test('expands a collapsed column on double-click of the cell spacer', async () => {
+  const { wrapper, store } = mountRow({
+    expanded: true,
+    collapsedColumns: ['Open'],
+  })
+  await nextTick()
+
+  await wrapper.get('.swimlane-cell-spacer[data-column-value="Open"]').trigger('dblclick')
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+test('keeps SwimlaneGroup mounted across column collapse and expand', async () => {
+  const { wrapper, store } = mountRow({
+    expanded: true,
+    columns: [{ name: 'open', column_name: 'Open', cards: [{ name: 'T1' }] }],
+  })
+  await nextTick()
+
+  const groupBefore = wrapper.findComponent({ name: 'SwimlaneGroup' })
+  expect(groupBefore.exists()).toBe(true)
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
+  const groupVm = groupBefore.vm
+
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await nextTick()
+
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(true)
+  const groupWhileCollapsed = wrapper.findComponent({ name: 'SwimlaneGroup' })
+  expect(groupWhileCollapsed.exists()).toBe(true)
+  expect(groupWhileCollapsed.vm).toBe(groupVm)
+  expect(groupWhileCollapsed.element.style.display).toBe('none')
+
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: false })
+  await nextTick()
+
+  expect(wrapper.find('.swimlane-cell-spacer[data-column-value="Open"]').exists()).toBe(false)
+  const groupAfter = wrapper.findComponent({ name: 'SwimlaneGroup' })
+  expect(groupAfter.exists()).toBe(true)
+  expect(groupAfter.vm).toBe(groupVm)
+  expect(groupAfter.element.style.display).not.toBe('none')
+
   wrapper.unmount()
 })

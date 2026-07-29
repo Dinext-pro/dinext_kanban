@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  getLaneStickyBottom,
+  getScrollerTopInset,
+  isCardRevealedInScroller,
   isCardVisibleInList,
   isCardVisibleInScroller,
   resolveComponentRootEl,
   resolveScrollBehavior,
+  revealCardInChildColumn,
   revealCardInColumn,
   revealMovedCard,
   scrollCardIntoScroller,
+  scrollCardToScrollerTop,
   scrollColumnIntoView,
   waitForPaint,
 } from './menuMoveScroll'
@@ -201,6 +206,254 @@ describe('menu move scroll', () => {
     expect(isCardVisibleInScroller(cardBelowViewport, scrollerEl, { topInset: 40 })).toBe(false)
   })
 
+  test('isCardRevealedInScroller rejects cards whose top is under sticky inset', () => {
+    const scrollerEl = {
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 0,
+        bottom: 400,
+      }),
+    }
+    // topInset 40 + margin 8 → visibleTop 48; card top 30 is under chrome
+    const partiallyObscured = {
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 30,
+        bottom: 120,
+      }),
+    }
+    const cleared = {
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 50,
+        bottom: 140,
+      }),
+    }
+
+    expect(isCardVisibleInScroller(partiallyObscured, scrollerEl, { topInset: 40 })).toBe(true)
+    expect(isCardRevealedInScroller(partiallyObscured, scrollerEl, { topInset: 40 })).toBe(false)
+    expect(isCardRevealedInScroller(cleared, scrollerEl, { topInset: 40 })).toBe(true)
+  })
+
+  test('revealCardInChildColumn scrolls VirtualList once and aligns list once when off-screen', async () => {
+    const scrollToCard = vi.fn()
+    let cardTop = 500
+    const cardEl = {
+      classList: { contains: (name) => name === 'kanban-card' },
+      scrollIntoView: vi.fn(),
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: cardTop,
+        bottom: cardTop + 80,
+      }),
+    }
+    const listEl = {
+      scrollTop: 0,
+      scrollHeight: 2000,
+      clientHeight: 300,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        const delta = top - this.scrollTop
+        this.scrollTop = top
+        cardTop -= delta
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 280,
+        top: 0,
+        bottom: 300,
+      }),
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return cardEl
+        }
+        return null
+      }),
+    }
+
+    const revealed = await revealCardInChildColumn({
+      cardName: 'CHILD-1',
+      cardIndex: 4,
+      getListEl: () => listEl,
+      scrollToCard,
+    })
+
+    expect(scrollToCard).toHaveBeenCalledTimes(1)
+    expect(scrollToCard).toHaveBeenCalledWith('CHILD-1', 4)
+    expect(listEl.scrollTo).toHaveBeenCalledTimes(1)
+    expect(listEl.scrollTo).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'auto' }),
+    )
+    expect(cardEl.scrollIntoView).not.toHaveBeenCalled()
+    expect(revealed).toBe(true)
+  })
+
+  test('revealCardInChildColumn skips list align when card already visible', async () => {
+    const scrollToCard = vi.fn()
+    const cardEl = {
+      classList: { contains: (name) => name === 'kanban-card' },
+      scrollIntoView: vi.fn(),
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 40,
+        bottom: 120,
+      }),
+    }
+    const listEl = {
+      scrollTop: 0,
+      scrollTo: vi.fn(),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 280,
+        top: 0,
+        bottom: 300,
+      }),
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return cardEl
+        }
+        return null
+      }),
+    }
+
+    const revealed = await revealCardInChildColumn({
+      cardName: 'CHILD-1',
+      cardIndex: 0,
+      getListEl: () => listEl,
+      scrollToCard,
+    })
+
+    expect(scrollToCard).toHaveBeenCalledTimes(1)
+    expect(listEl.scrollTo).not.toHaveBeenCalled()
+    expect(cardEl.scrollIntoView).not.toHaveBeenCalled()
+    expect(revealed).toBe(true)
+  })
+
+  test('revealCardInColumn clears sticky with nearest scroll when partially obscured', async () => {
+    const scrollToCard = vi.fn()
+    let cardTop = 30
+    const scrollerEl = {
+      scrollTop: 200,
+      scrollHeight: 2000,
+      clientHeight: 400,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        const delta = top - this.scrollTop
+        this.scrollTop = top
+        cardTop -= delta
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 0,
+        bottom: 400,
+      }),
+      querySelector: vi.fn(() => null),
+    }
+    const cardEl = {
+      closest: vi.fn(() => null),
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: cardTop,
+        bottom: cardTop + 90,
+      }),
+      querySelector: vi.fn(() => null),
+    }
+    const root = {
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return cardEl
+        }
+        return null
+      }),
+    }
+
+    // visibleTop = 0 + 40 + 8 = 48; start top 30 → scrollTop decreases by 18 → top 48
+    const revealed = await revealCardInColumn({
+      cardName: 'TASK-1',
+      cardIndex: 0,
+      getListEl: () => null,
+      getScrollerEl: () => scrollerEl,
+      getTopInset: () => 40,
+      root,
+      scrollToCard,
+      maxAttempts: 2,
+    })
+
+    expect(revealed).toBe(true)
+    expect(scrollerEl.scrollTo).toHaveBeenCalledTimes(1)
+    expect(cardTop).toBeCloseTo(48, 0)
+    expect(scrollerEl.scrollTop).toBeCloseTo(182, 0)
+  })
+
+  test('revealCardInColumn freezes topInset so sticky reflow does not re-scroll', async () => {
+    const scrollToCard = vi.fn()
+    let insetCalls = 0
+    let cardTop = 30
+    const scrollerEl = {
+      scrollTop: 200,
+      scrollHeight: 2000,
+      clientHeight: 400,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        const delta = top - this.scrollTop
+        this.scrollTop = top
+        cardTop -= delta
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 0,
+        bottom: 400,
+      }),
+      querySelector: vi.fn(() => null),
+    }
+    const cardEl = {
+      closest: vi.fn(() => null),
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: cardTop,
+        bottom: cardTop + 90,
+      }),
+      querySelector: vi.fn(() => null),
+    }
+    const root = {
+      querySelector: vi.fn((selector) => {
+        if (selector.includes('data-card-name') || selector.includes('data-key')) {
+          return cardEl
+        }
+        return null
+      }),
+    }
+
+    const getTopInset = vi.fn(() => {
+      insetCalls += 1
+      // After first measure, sticky "grows" — without freeze this would re-align.
+      return insetCalls === 1 ? 40 : 80
+    })
+
+    const revealed = await revealCardInColumn({
+      cardName: 'TASK-1',
+      cardIndex: 0,
+      getListEl: () => null,
+      getScrollerEl: () => scrollerEl,
+      getTopInset,
+      root,
+      scrollToCard,
+      maxAttempts: 4,
+    })
+
+    expect(revealed).toBe(true)
+    expect(scrollerEl.scrollTo).toHaveBeenCalledTimes(1)
+    expect(cardTop).toBeCloseTo(48, 0)
+    // Only the first inset measurement is used; later calls must not drive scroll.
+    expect(getTopInset).toHaveBeenCalledTimes(1)
+  })
+
   test('scrollCardIntoScroller adjusts scrollTop for cards below the viewport', () => {
     const scrollerEl = {
       scrollTop: 0,
@@ -226,6 +479,42 @@ describe('menu move scroll', () => {
     expect(scrollCardIntoScroller(cardEl, scrollerEl, { behavior: 'auto' })).toBe(true)
     expect(scrollerEl.scrollTo).toHaveBeenCalledWith({
       top: 188,
+      behavior: 'auto',
+    })
+  })
+
+  test('scrollCardToScrollerTop aligns card top to visible top with inset', () => {
+    const scrollerEl = {
+      scrollTop: 100,
+      scrollTo: vi.fn(function scrollTo({ top }) {
+        this.scrollTop = top
+      }),
+      getBoundingClientRect: () => mockRect({
+        left: 0,
+        right: 400,
+        top: 50,
+        bottom: 450,
+      }),
+    }
+    const cardEl = {
+      getBoundingClientRect: () => mockRect({
+        left: 10,
+        right: 190,
+        top: 250,
+        bottom: 320,
+      }),
+    }
+
+    // visibleTop = 50 + 40 + 8 = 98; delta = 250 - 98 = 152; nextTop = 100 + 152 = 252
+    scrollerEl.scrollHeight = 1000
+    scrollerEl.clientHeight = 400
+    expect(scrollCardToScrollerTop(cardEl, scrollerEl, {
+      behavior: 'auto',
+      topInset: 40,
+      margin: 8,
+    })).toBe(true)
+    expect(scrollerEl.scrollTo).toHaveBeenCalledWith({
+      top: 252,
       behavior: 'auto',
     })
   })
@@ -386,5 +675,80 @@ describe('menu move scroll', () => {
 
     expect(revealed).toBe(true)
     expect(getListEl).toHaveBeenCalled()
+  })
+})
+
+describe('getLaneStickyBottom / getScrollerTopInset', () => {
+  test('uses lane sticky bottom when host is inside .swimlane-lane', () => {
+    const sticky = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 100, top: 80, bottom: 120 }),
+    }
+    const lane = {
+      querySelector: (selector) => (selector === '.swimlane-lane-sticky' ? sticky : null),
+    }
+    const columnEl = {
+      closest: (selector) => (selector === '.swimlane-lane' ? lane : null),
+    }
+    const scroller = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 600 }),
+      querySelector: vi.fn(),
+      querySelectorAll: vi.fn(() => []),
+    }
+
+    expect(getLaneStickyBottom(scroller, columnEl)).toBe(120)
+    expect(getScrollerTopInset(scroller, columnEl)).toBe(120)
+    expect(scroller.querySelector).not.toHaveBeenCalled()
+  })
+
+  test('nested host outside lane uses stuck sticky under header', () => {
+    const header = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 64 }),
+    }
+    const stuckSticky = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 64, bottom: 104 }),
+    }
+    const otherSticky = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 300, bottom: 340 }),
+    }
+    const columnEl = {
+      closest: () => null,
+    }
+    const scroller = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 10, bottom: 610 }),
+      querySelector: (selector) => (selector === '.swimlane-header-row' ? header : null),
+      querySelectorAll: (selector) => (
+        selector === '.swimlane-lane-sticky' ? [otherSticky, stuckSticky] : []
+      ),
+    }
+
+    expect(getLaneStickyBottom(scroller, columnEl)).toBe(104)
+    expect(getScrollerTopInset(scroller, columnEl)).toBe(94)
+  })
+
+  test('nested host outside lane falls back to header plus chrome height var', () => {
+    const header = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 50 }),
+    }
+    const columnEl = {
+      closest: () => null,
+    }
+    const scroller = {
+      getBoundingClientRect: () => mockRect({ left: 0, right: 400, top: 0, bottom: 600 }),
+      querySelector: (selector) => (selector === '.swimlane-header-row' ? header : null),
+      querySelectorAll: () => [],
+      style: {},
+    }
+    const getComputedStyle = vi.spyOn(globalThis, 'getComputedStyle').mockReturnValue({
+      getPropertyValue: (name) => (
+        name === '--swimlane-lane-chrome-height' ? '40px' : ''
+      ),
+    })
+
+    try {
+      expect(getLaneStickyBottom(scroller, columnEl)).toBe(90)
+      expect(getScrollerTopInset(scroller, columnEl)).toBe(90)
+    } finally {
+      getComputedStyle.mockRestore()
+    }
   })
 })

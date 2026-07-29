@@ -109,6 +109,17 @@ export function canDeleteAttachment({
   return true
 }
 
+/**
+ * Card delete is allowed when the user has doctype delete permission
+ * and the document is not submitted (docstatus !== 1).
+ */
+export function canDeleteCard({ canDelete = false, docstatus = 0 } = {}) {
+  if (!canDelete) {
+    return false
+  }
+  return Number(docstatus) !== 1
+}
+
 export function hasPreviewAttachment() {
   return typeof globalThis.frappe?.ui?.form?.Attachments?.prototype?.preview_attachment === 'function'
 }
@@ -256,6 +267,8 @@ export async function navigateToFormComments(doctype, name) {
 
 export const DELETE_ATTACHMENT_CONFIRM_MESSAGE = 'Are you sure you want to delete the attachment?'
 
+export const DELETE_CARD_CONFIRM_MESSAGE = 'Are you sure you want to delete {0}?'
+
 /**
  * Confirm attachment delete with the same prompt as Form sidebar Attachments.
  * @returns {Promise<boolean>} true if the user confirmed
@@ -268,6 +281,25 @@ export function confirmDeleteAttachment() {
     }
     frappe.confirm(
       __(DELETE_ATTACHMENT_CONFIRM_MESSAGE),
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
+}
+
+/**
+ * Confirm permanent card/document delete.
+ * @param {string} label Document title or name shown in the prompt
+ * @returns {Promise<boolean>} true if the user confirmed
+ */
+export function confirmDeleteCard(label) {
+  return new Promise((resolve) => {
+    if (typeof frappe.confirm !== 'function') {
+      resolve(true)
+      return
+    }
+    frappe.confirm(
+      __(DELETE_CARD_CONFIRM_MESSAGE, [label || ''], EXTRA_INFO_CONTEXT),
       () => resolve(true),
       () => resolve(false),
     )

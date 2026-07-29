@@ -2,6 +2,7 @@ import { expect, test, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createKanbanStore } from '../../utils/store'
+import { COLUMN_COLLAPSE_ANIMATION_MS } from '../../utils/kanban'
 
 const scrollToKey = vi.fn()
 const scrollToIndex = vi.fn()
@@ -56,6 +57,7 @@ function mountColumn(column = {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           inheritAttrs: false,
@@ -103,6 +105,24 @@ test('opens the filtered list view when the column count is double-clicked', asy
   await wrapper.get('.column-count').trigger('dblclick')
 
   expect(frappe.route_options).toEqual({ status: 'Open' })
+  expect(frappe.set_route).toHaveBeenCalledWith('List', 'Task', 'List')
+})
+
+test('double-click adds name not-in for hidden board children when children are hidden', async () => {
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_KANBAN_CONFIG', {
+    ...store.state.config,
+    parent_field: 'parent_task',
+  })
+  store.commit('SET_SHOW_CHILD_TASKS', false)
+  store.commit('SET_HIDDEN_BOARD_CHILD_NAMES', ['CHILD-1', 'CHILD-2'])
+
+  await wrapper.get('.column-count').trigger('dblclick')
+
+  expect(frappe.route_options).toEqual({
+    status: 'Open',
+    name: ['not in', ['CHILD-1', 'CHILD-2']],
+  })
   expect(frappe.set_route).toHaveBeenCalledWith('List', 'Task', 'List')
 })
 
@@ -263,6 +283,7 @@ test('renders translated column labels while dispatching create from the column'
       columnIndex: 0,
       column: expect.objectContaining({ column_name: 'Open' }),
       laneKey: null,
+      childScopeId: null,
     })
   } finally {
     globalThis.__ = originalTranslate
@@ -288,6 +309,7 @@ test('passes swimlane laneKey when adding a card from a cell', async () => {
     columnIndex: 0,
     column: expect.objectContaining({ column_name: 'Open' }),
     laneKey: 'PROJ-1',
+    childScopeId: null,
   })
 })
 
@@ -316,6 +338,8 @@ test('forwards the drag origin supplied by the virtual list', async () => {
     fromLaneIndex: null,
     fromLaneKey: null,
     fromIndex: 0,
+    childDepth: 0,
+    childScopeId: null,
   })
 })
 
@@ -429,7 +453,7 @@ test('keeps append drop marker classes without local mouseup handlers', async ()
   expect(wrapper.find('.column-stick-room-dropzone').element.onmouseup).toBeFalsy()
 })
 
-test('marks empty-column as drop target only with external scroller', async () => {
+test('marks empty-column as drop target on classic columns without external scroller', async () => {
   const { wrapper } = mountColumn({
     name: 'open',
     column_name: 'Open',
@@ -439,10 +463,6 @@ test('marks empty-column as drop target only with external scroller', async () =
   })
   await wrapper.vm.$nextTick()
   expect(wrapper.find('.empty-column').exists()).toBe(true)
-  expect(wrapper.find('.empty-column--drop-target').exists()).toBe(false)
-
-  const scroller = document.createElement('div')
-  await wrapper.setProps({ externalScroller: scroller })
   expect(wrapper.find('.empty-column--drop-target').exists()).toBe(true)
 })
 
@@ -539,6 +559,7 @@ test('scrolls the external swimlane scroller to the column top', async () => {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div role="list" class="kanban-card-list"><slot name="footer" /></div>',
@@ -596,6 +617,9 @@ test('exposes scrollToCard through the virtual list API', async () => {
     },
     global: {
       plugins: [createKanbanStore()],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+      },
     },
   })
 
@@ -658,6 +682,72 @@ test('collapses the column from the menu and shows Open while collapsed', async 
   await wrapper.get('[aria-label="Open Open column"]').trigger('click')
   expect(wrapper.classes()).not.toContain('kanban-column--collapsed')
   expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+})
+
+test('positions the expanded column menu with fixed viewport coords', async () => {
+  const { wrapper } = mountColumn(undefined, { boardPerms: { write: true } })
+
+  const originalInnerWidth = window.innerWidth
+  const originalInnerHeight = window.innerHeight
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+  const originalGbr = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.classList?.contains('column-dropdown')) {
+      return {
+        top: 0,
+        bottom: 160,
+        left: 0,
+        right: 180,
+        width: 180,
+        height: 160,
+        x: 0,
+        y: 0,
+        toJSON() {},
+      }
+    }
+    if (this.getAttribute?.('aria-label') === 'Change Open column color') {
+      return {
+        top: 40,
+        bottom: 72,
+        left: 500,
+        right: 532,
+        width: 32,
+        height: 32,
+        x: 500,
+        y: 40,
+        toJSON() {},
+      }
+    }
+    return originalGbr.call(this)
+  }
+
+  try {
+    await wrapper.get('[aria-label="Change Open column color"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const menu = wrapper.get('[aria-label="Column colors"]')
+    const style = menu.attributes('style') || ''
+    const leftMatch = style.match(/left:\s*([\d.]+)px/)
+    const topMatch = style.match(/top:\s*([\d.]+)px/)
+    expect(leftMatch).not.toBeNull()
+    expect(topMatch).not.toBeNull()
+    // trigger.right (532) - menu.width (180) = 352; top = trigger.bottom (72) + gap (4)
+    expect(Number(leftMatch[1])).toBe(352)
+    expect(Number(topMatch[1])).toBe(76)
+    expect(style).toContain('visibility: visible')
+  } finally {
+    Element.prototype.getBoundingClientRect = originalGbr
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalInnerWidth,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: originalInnerHeight,
+    })
+  }
 })
 
 test('flips the collapsed column menu left when there is no room on the right', async () => {
@@ -822,6 +912,7 @@ test('header-only mode keeps the header and hides the card list', () => {
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div class="virtual-list-stub" />',
@@ -834,6 +925,96 @@ test('header-only mode keeps the header and hides the card list', () => {
   expect(wrapper.find('.kanban-column-header').exists()).toBe(true)
   expect(wrapper.find('.virtual-list-stub').exists()).toBe(false)
   expect(wrapper.get('h2.column-title').classes()).toContain('column-title--draggable')
+  wrapper.unmount()
+})
+
+test('header-only collapsed column expands on title double-click', async () => {
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+  })
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards: [{ name: 'T1' }],
+  }
+  store.commit('SET_COLUMNS', [column])
+  store.commit('SET_COLUMN_TOTALS', { Open: 1 })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      headerOnly: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+        VirtualList: {
+          name: 'VirtualList',
+          template: '<div class="virtual-list-stub" />',
+        },
+      },
+    },
+  })
+
+  expect(wrapper.classes()).toContain('kanban-column--collapsed')
+  await wrapper.get('h2.column-title').trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  wrapper.unmount()
+})
+
+test('header-only collapsed column expands on count double-click without opening the list', async () => {
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+  })
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards: [{ name: 'T1' }],
+  }
+  store.commit('SET_COLUMNS', [column])
+  store.commit('SET_COLUMN_TOTALS', { Open: 1 })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      headerOnly: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+        VirtualList: {
+          name: 'VirtualList',
+          template: '<div class="virtual-list-stub" />',
+        },
+      },
+    },
+  })
+  frappe.set_route.mockClear()
+
+  await wrapper.get('.column-count').trigger('dblclick')
+
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  expect(frappe.set_route).not.toHaveBeenCalled()
   wrapper.unmount()
 })
 
@@ -872,6 +1053,7 @@ test('passes externalScroller to VirtualList and marks external scroll mode', ()
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           props: ['scroller'],
@@ -893,6 +1075,80 @@ test('passes externalScroller to VirtualList and marks external scroll mode', ()
   expect(wrapper.find('.kanban-card-list--external-scroller').exists()).toBe(true)
   expect(wrapper.find('.kanban-card-list').attributes('data-has-scroller')).toBe('true')
   expect(wrapper.findComponent({ name: 'VirtualList' }).props('scroller')).toBe(scroller)
+  wrapper.unmount()
+})
+
+test('raises VirtualList keeps when a board-hosted ChildPanel host is in the column', async () => {
+  const cards = Array.from({ length: 35 }, (_, index) => ({
+    name: `CARD-${index + 1}`,
+    subject: `Card ${index + 1}`,
+    status: 'Open',
+  }))
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards,
+  }
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    parent_field: 'parent_task',
+    fields: ['name', 'subject', 'status'],
+    swimlane_mode: 'field',
+    swimlane_field: 'project',
+  })
+  store.commit('SET_COLUMNS', [column])
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      laneIndex: 0,
+      laneKey: 'alpha',
+      listId: 1,
+      config: store.state.config,
+      childDepth: 0,
+      hideHeader: true,
+      hideResize: true,
+      externalScroller: document.createElement('div'),
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['keeps', 'scroller'],
+          inheritAttrs: false,
+          template: '<div role="list" class="kanban-card-list" />',
+        },
+        KanbanCard: true,
+      },
+    },
+  })
+
+  expect(wrapper.findComponent({ name: 'VirtualList' }).props('keeps')).toBe(30)
+
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: 'PARENT::CARD-20::0',
+    parentName: 'CARD-20',
+    depth: 0,
+    ordinal: 0,
+    columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  expect(wrapper.findComponent({ name: 'VirtualList' }).props('keeps')).toBe(40)
+
+  store.commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+  await wrapper.vm.$nextTick()
+  expect(wrapper.findComponent({ name: 'VirtualList' }).props('keeps')).toBe(30)
   wrapper.unmount()
 })
 
@@ -939,6 +1195,7 @@ test('swimlane cell shows forbidden overlay mark while dragging into a blocked c
     global: {
       plugins: [store],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         VirtualList: {
           name: 'VirtualList',
           template: '<div class="kanban-card-list" />',
@@ -950,5 +1207,410 @@ test('swimlane cell shows forbidden overlay mark while dragging into a blocked c
   expect(wrapper.classes()).toContain('kanban-column-drop-forbidden')
   expect(wrapper.find('.kanban-column-drop-overlay').exists()).toBe(true)
   expect(wrapper.find('.kanban-column-drop-overlay__mark').exists()).toBe(true)
+  wrapper.unmount()
+})
+
+test('disables Add outside the deepest open child panel', async () => {
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_CREATE_OPTIONS_BY_COLUMN', {
+    Open: {
+      allowed: true,
+      reason: null,
+      form_mode: 'quick_entry',
+      missing_mandatory: [],
+      missing_fieldnames: [],
+    },
+  })
+  await wrapper.vm.$nextTick()
+
+  const headerAdd = wrapper.get('[aria-label="Add Task to Open"]')
+  const footerAdd = wrapper.get('.addcard button')
+  expect(headerAdd.attributes('disabled')).toBeUndefined()
+  expect(footerAdd.attributes('disabled')).toBeUndefined()
+
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT-A',
+    parentName: 'PARENT-A',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  expect(headerAdd.attributes('disabled')).toBeDefined()
+  expect(footerAdd.attributes('disabled')).toBeDefined()
+  wrapper.unmount()
+})
+
+test('keeps Add enabled inside the deepest child panel columns', async () => {
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+    parent_field: 'parent_task',
+  })
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'blue',
+    cards: [],
+  }
+  store.commit('SET_COLUMNS', [column])
+  store.commit('SET_CREATE_OPTIONS_BY_COLUMN', {
+    Open: {
+      allowed: true,
+      reason: null,
+      form_mode: 'quick_entry',
+      missing_mandatory: [],
+      missing_fieldnames: [],
+    },
+  })
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT-A',
+    parentName: 'PARENT-A',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [{ name: 'open', column_name: 'Open', cards: [] }],
+    columnPagination: {},
+    columnTotals: {},
+  })
+
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      childDepth: 1,
+      hideHeader: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+        VirtualList: {
+          name: 'VirtualList',
+          inheritAttrs: false,
+          template: '<div role="list" class="kanban-card-list"><slot name="footer" /></div>',
+        },
+      },
+    },
+  })
+
+  expect(wrapper.get('.addcard button').attributes('disabled')).toBeUndefined()
+  wrapper.unmount()
+})
+
+test('uses board Sortable group on main columns and scoped group in child panels', () => {
+  const previousPermissive = globalThis.__quickKanbanPermissiveMoves
+  globalThis.__quickKanbanPermissiveMoves = false
+
+  const column = {
+    name: 'open',
+    column_name: 'Open',
+    display_name: 'Open',
+    indicator: 'gray',
+    cards: [{ name: 'TASK-1', status: 'Open' }],
+  }
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    status_field_meta: { fieldname: 'status', fieldtype: 'Select', parent: 'Task' },
+    fields: ['name'],
+    highlighted_field: '',
+    highlight_table: [],
+    show_labels: false,
+  })
+  store.commit('SET_COLUMNS', [column])
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 3,
+    columns: [column],
+    columnPagination: {},
+    columnTotals: {},
+  })
+
+  const boardWrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['group'],
+          template: '<div class="kanban-card-list" />',
+        },
+      },
+    },
+  })
+  expect(boardWrapper.findComponent({ name: 'VirtualList' }).props('group')).toEqual(
+    expect.objectContaining({ name: 'kanban', put: true }),
+  )
+  boardWrapper.unmount()
+
+  const childWrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 0,
+      config: store.state.config,
+      childScopeId: '0::PARENT',
+      childDepth: 1,
+      hideHeader: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+        VirtualList: {
+          name: 'VirtualList',
+          props: ['group'],
+          template: '<div class="kanban-card-list" />',
+        },
+      },
+    },
+  })
+  expect(childWrapper.findComponent({ name: 'VirtualList' }).props('group')).toEqual(
+    expect.objectContaining({ name: 'kanban-child-3', put: true }),
+  )
+  childWrapper.unmount()
+
+  globalThis.__quickKanbanPermissiveMoves = previousPermissive
+})
+
+test('shows stick-room dropzone and drop chrome inside child panel columns', async () => {
+  const previousPermissive = globalThis.__quickKanbanPermissiveMoves
+  globalThis.__quickKanbanPermissiveMoves = false
+
+  const column = {
+    name: 'done',
+    column_name: 'Done',
+    display_name: 'Done',
+    indicator: 'green',
+    cards: [],
+  }
+  const store = createKanbanStore()
+  store.commit('SET_KANBAN_CONFIG', {
+    board_name: 'Task Board',
+    ref_doctype: 'Task',
+    field_name: 'status',
+    title_field: 'name',
+    fields: ['name'],
+    status_field_meta: { fieldname: 'status', fieldtype: 'Select', read_only: 1 },
+  })
+  store.commit('SET_COLUMNS', [
+    { name: 'open', column_name: 'Open', cards: [] },
+    column,
+  ])
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [
+      { name: 'open', column_name: 'Open', cards: [] },
+      column,
+    ],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  store.commit('SET_ACTIVE_DRAG', {
+    cardName: 'CHILD-1',
+    fromColumn: 0,
+    fromIndex: 0,
+    childScopeId: '0::PARENT',
+  })
+
+  const wrapper = mount(KanbanColumn, {
+    props: {
+      column,
+      columnIndex: 1,
+      config: store.state.config,
+      childScopeId: '0::PARENT',
+      childDepth: 1,
+      hideHeader: true,
+    },
+    global: {
+      plugins: [store],
+      stubs: {
+        Teleport: { template: '<div><slot /></div>' },
+        VirtualList: {
+          name: 'VirtualList',
+          template: '<div class="kanban-card-list"><slot name="footer" /></div>',
+        },
+      },
+    },
+  })
+
+  expect(wrapper.find('.column-stick-room-dropzone').exists()).toBe(true)
+  expect(wrapper.classes()).toContain('kanban-column-drop-forbidden')
+  expect(wrapper.find('.kanban-column-drop-overlay').exists()).toBe(true)
+
+  const dispatchSpy = vi.spyOn(store, 'dispatch').mockResolvedValue(true)
+  store.commit('SET_CREATE_OPTIONS_BY_COLUMN', {
+    Done: {
+      allowed: true,
+      reason: null,
+      form_mode: 'quick_entry',
+      missing_mandatory: [],
+      missing_fieldnames: [],
+    },
+  })
+  await wrapper.vm.$nextTick()
+  await wrapper.get('.addcard button').trigger('click')
+  expect(dispatchSpy).toHaveBeenCalledWith('startCreateCard', {
+    columnIndex: 1,
+    column: expect.objectContaining({ column_name: 'Done' }),
+    laneKey: null,
+    childScopeId: '0::PARENT',
+  })
+
+  wrapper.unmount()
+  globalThis.__quickKanbanPermissiveMoves = previousPermissive
+})
+
+test('floats collapsed title and menu above child panel without strip background', async () => {
+  const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await wrapper.vm.$nextTick()
+
+  expect(wrapper.find('.kanban-collapsed-chrome--floating').exists()).toBe(false)
+
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  const floatingTitles = wrapper.findAll('h2.kanban-collapsed-chrome--floating')
+  expect(floatingTitles.length).toBe(1)
+  expect(floatingTitles[0].text()).toBe('Open')
+  expect(floatingTitles[0].classes()).toContain('column-title--draggable')
+  expect(floatingTitles[0].classes()).not.toContain('kanban-column')
+
+  const floatingMenus = wrapper.findAll(
+    '.column-header-actions.kanban-collapsed-chrome--floating',
+  )
+  expect(floatingMenus.length).toBe(1)
+  expect(floatingMenus[0].find('.header-item').exists()).toBe(true)
+
+  const inFlowTitle = wrapper.get('h2.column-title.kanban-collapsed-chrome--placeholder')
+  expect(inFlowTitle.classes()).toContain('column-title--draggable')
+  const dispatchSpy = vi.spyOn(inFlowTitle.element, 'dispatchEvent')
+
+  floatingTitles[0].element.dispatchEvent(
+    new PointerEvent('pointerdown', { bubbles: true, button: 0, buttons: 1 }),
+  )
+  expect(document.documentElement.classList.contains('kanban-column-sortable-dragging')).toBe(true)
+  expect(dispatchSpy).toHaveBeenCalled()
+  const types = dispatchSpy.mock.calls.map((call) => call[0].type)
+  expect(types).toEqual(expect.arrayContaining(['pointerdown', 'mousedown']))
+  expect(dispatchSpy.mock.calls.every((call) => call[0].bubbles)).toBe(true)
+  dispatchSpy.mockRestore()
+  document.documentElement.classList.remove('kanban-column-sortable-dragging')
+
+  // Column stacking context stays low; float is a Teleport sibling, not raised column.
+  expect(wrapper.classes()).toContain('kanban-column--collapsed')
+  expect(wrapper.attributes('style') || '').not.toMatch(/z-index:\s*6[0-9]/)
+
+  await floatingTitles[0].trigger('dblclick')
+  expect(store.getters.isColumnCollapsed('Open')).toBe(false)
+  await wrapper.vm.$nextTick()
+  expect(wrapper.find('.kanban-collapsed-chrome--floating').exists()).toBe(false)
+})
+
+test('does not float collapsed chrome when no child panel is open', async () => {
+  const { wrapper, store } = mountColumn()
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  await wrapper.vm.$nextTick()
+
+  expect(wrapper.find('.kanban-collapsed-chrome--floating').exists()).toBe(false)
+  expect(wrapper.get('h2.column-title').classes()).not.toContain(
+    'kanban-collapsed-chrome--placeholder',
+  )
+})
+
+test('re-syncs floating title after collapse settle and neighbor collapse', async () => {
+  const { wrapper, store } = mountColumn(undefined, { boardPerms: { write: true } })
+
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Open', collapsed: true })
+  store.commit('OPEN_CHILD_PANEL', {
+    scopeId: '0::PARENT',
+    parentName: 'PARENT',
+    depth: 0,
+    hostLaneKey: null,
+    ordinal: 0,
+    columns: [],
+    columnPagination: {},
+    columnTotals: {},
+  })
+  await wrapper.vm.$nextTick()
+
+  const inFlowTitle = wrapper.get('h2.column-title.kanban-collapsed-chrome--placeholder')
+  let rectLeft = 100
+  const rectSpy = vi
+    .spyOn(inFlowTitle.element, 'getBoundingClientRect')
+    .mockImplementation(() => ({
+      x: rectLeft,
+      y: 150,
+      top: 150,
+      left: rectLeft,
+      width: 52,
+      height: 120,
+      right: rectLeft + 52,
+      bottom: 270,
+      toJSON() {},
+    }))
+
+  // Neighbor collapse reflows this strip — immediate sync uses current rect.
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Done', collapsed: true })
+  await wrapper.vm.$nextTick()
+  expect(
+    wrapper.get('h2.kanban-collapsed-chrome--floating').attributes('style') || '',
+  ).toMatch(/left:\s*126px/)
+
+  // Another neighbor change with a moved strip must re-sync immediately.
+  rectLeft = 280
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey: 'Closed', collapsed: true })
+  await wrapper.vm.$nextTick()
+  expect(
+    wrapper.get('h2.kanban-collapsed-chrome--floating').attributes('style') || '',
+  ).toMatch(/left:\s*306px/)
+
+  // After width-transition settle, float must follow the final strip rect.
+  rectLeft = 400
+  await new Promise((resolve) => {
+    setTimeout(resolve, COLUMN_COLLAPSE_ANIMATION_MS + 40)
+  })
+  await wrapper.vm.$nextTick()
+  expect(
+    wrapper.get('h2.kanban-collapsed-chrome--floating').attributes('style') || '',
+  ).toMatch(/left:\s*426px/)
+
+  rectSpy.mockRestore()
   wrapper.unmount()
 })

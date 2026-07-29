@@ -161,6 +161,7 @@ globalThis.frappe = {
         },
       }),
     ),
+    get_value: vi.fn(() => Promise.resolve({ message: {} })),
   },
   route_options: {},
   route_hooks: {},

@@ -11,6 +11,7 @@
       v-if="swimlanesEnabled"
       ref="kanbanBoard"
       class="kanban kanban--swimlanes"
+      :class="{ 'kanban--child-panel-open': childPanelChromeOpen }"
       tabindex="0"
       :style="swimlaneBoardCssVars"
       :aria-label="__('Kanban columns with swimlane groups. Scroll to see more.')"
@@ -27,6 +28,7 @@
             class="swimlane-column-rail"
             :data-column-value="column.column_name"
             :style="columnRailStyle(column)"
+            @dblclick.stop="onColumnRailDblclick(column)"
           />
         </div>
         <div class="swimlane-board-foreground">
@@ -70,12 +72,40 @@
       >
         {{ __('No columns are configured for this board.') }}
       </p>
+      <div
+        ref="childPanelPortal"
+        class="child-panel-portal"
+      >
+        <template
+          v-for="panel in renderedChildPanels"
+          :key="panel.scopeId"
+        >
+          <Transition
+            name="child-panel"
+            @after-leave="() => onChildPanelAfterLeave(panel.scopeId)"
+          >
+            <ChildPanel
+              v-if="!panel.exiting && boardHostedPanelRects[panel.scopeId]"
+              :parent-name="panel.parentName"
+              :depth="panel.depth"
+              :scope-id="panel.scopeId"
+              :config="config"
+              teleported
+              :host-rect="boardHostedPanelRects[panel.scopeId]"
+              @dragstart="rememberDrag"
+              @drop="dropSwimlane"
+              @height-change="(height) => onBoardHostedPanelHeight(panel.parentName, height)"
+            />
+          </Transition>
+        </template>
+      </div>
     </div>
 
     <div
       v-else
       ref="kanbanBoard"
       class="kanban"
+      :class="{ 'kanban--child-panel-open': childPanelChromeOpen }"
       tabindex="0"
       :aria-label="__('Kanban columns. Scroll horizontally to see more.')"
     >
@@ -96,6 +126,38 @@
       >
         {{ __('No columns are configured for this board.') }}
       </p>
+      <!--
+        Host all open child-panel depths here so overlays start at the board
+        content origin (including nested panels) and paint above columns.
+      -->
+      <div
+        ref="childPanelPortal"
+        class="child-panel-portal"
+        aria-hidden="false"
+      >
+        <template
+          v-for="panel in renderedChildPanels"
+          :key="panel.scopeId"
+        >
+          <Transition
+            name="child-panel"
+            @after-leave="() => onChildPanelAfterLeave(panel.scopeId)"
+          >
+            <ChildPanel
+              v-if="!panel.exiting && boardHostedPanelRects[panel.scopeId]"
+              :parent-name="panel.parentName"
+              :depth="panel.depth"
+              :scope-id="panel.scopeId"
+              :config="config"
+              teleported
+              :host-rect="boardHostedPanelRects[panel.scopeId]"
+              @dragstart="rememberDrag"
+              @drop="drop"
+              @height-change="(height) => onBoardHostedPanelHeight(panel.parentName, height)"
+            />
+          </Transition>
+        </template>
+      </div>
     </div>
 
     <p class="sr-only" aria-live="polite" aria-atomic="true">
@@ -108,6 +170,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, provide, watch } from "vue";
 import { useStore } from "vuex";
 import KanbanColumn from "./KanbanColumn.vue";
+import ChildPanel from "./ChildPanel.vue";
 import SwimlaneColumn from "./SwimlaneColumn.vue";
 import SwimlaneRow from "./SwimlaneRow.vue";
 import AddColumnControl from "./AddColumnControl.vue";
@@ -124,6 +187,7 @@ import {
 import { flashMovedCard } from "../../utils/cardMoveFlash";
 import {
   resolveComponentRootEl,
+  revealCardInChildColumn,
   revealCardInColumn,
   scrollColumnIntoView,
   waitForPaint,
@@ -134,8 +198,13 @@ import {
   encodeCellListId,
 } from "../../utils/swimlaneBoard";
 import {
+  isChildListId,
+  resolveChildPanelDropTarget,
+} from "../../utils/childPanelBoard";
+import { useBoardHostedChildPanels } from "../../composables/useBoardHostedChildPanels";
+import {
   clearCardDropHoverElement,
-  completeCellAppendDrop,
+  completeAppendDrop,
   findAppendDropTarget,
   findCardDropHoverTarget,
   isForbiddenDropHoverTarget,
@@ -155,10 +224,10 @@ import {
   animateColumnTracks,
   formatTrackTemplate,
 } from "../../utils/columnCollapseAnimation";
-
 const SWIMLANE_COLUMN_GAP_PX = 8
 
 const store = useStore();
+const kanbanBoard = ref(null);
 const columns = computed(() => store.getters.getColumns);
 const lanes = computed(() => store.getters.getLanes);
 const swimlanesEnabled = computed(() => store.getters.swimlanesEnabled);
@@ -213,6 +282,13 @@ function snapSwimlaneTracks(widthsPx) {
   animatedSwimlaneTrackWidths.value = (widthsPx || []).map((w) => Math.round(Number(w) || 0))
 }
 
+function syncHostGeometryDuringTrackTween() {
+  if (!boardHostedChildPanels.value.length) {
+    return
+  }
+  applyBoardHostedPanelGeometry()
+}
+
 function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
   const target = (nextWidths || []).map((w) => Math.round(Number(w) || 0))
   const current = animatedSwimlaneTrackWidths.value
@@ -223,6 +299,7 @@ function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
     || current.length !== target.length
   ) {
     snapSwimlaneTracks(target)
+    syncHostGeometryDuringTrackTween()
     return
   }
   cancelSwimlaneTrackTween()
@@ -231,10 +308,12 @@ function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
     to: target,
     onFrame(widths) {
       animatedSwimlaneTrackWidths.value = widths
+      syncHostGeometryDuringTrackTween()
     },
     onDone(widths) {
       animatedSwimlaneTrackWidths.value = widths
       trackTweenCancel = null
+      syncHostGeometryDuringTrackTween()
     },
   })
   trackTweenCancel = () => tween.cancel()
@@ -243,6 +322,27 @@ function runSwimlaneTrackTween(nextWidths, { animate = true } = {}) {
 const swimlaneColumnTracks = computed(() => (
   formatTrackTemplate(animatedSwimlaneTrackWidths.value)
 ))
+/** Flat and swimlane share animated tracks so child-panel columns stay in sync. */
+const boardColumnTracks = computed(() => swimlaneColumnTracks.value)
+provide('boardColumnTracks', boardColumnTracks)
+const childPanelPortal = ref(null)
+const {
+  renderedChildPanels,
+  boardHostedPanelRects,
+  childPanelChromeOpen,
+  boardHostedChildPanels,
+  onBoardHostedPanelHeight,
+  onChildPanelAfterLeave,
+  applyBoardHostedPanelGeometry,
+  restoreBoardHostedPanelPinScrolls,
+  disposeBoardHostedChildPanels,
+} = useBoardHostedChildPanels({
+  kanbanBoard,
+  swimlanesEnabled,
+  animatedSwimlaneTrackWidths,
+  store,
+})
+
 const swimlaneLabelInsetPx = computed(() => (
   swimlaneLabelInsetFromWidths(animatedSwimlaneTrackWidths.value)
 ))
@@ -269,11 +369,6 @@ watch(
   (nextTracks) => {
     const nextWidths = widthsFromTracks(nextTracks)
     const nextKeys = trackKeysSignature(nextTracks)
-    if (!swimlanesEnabled.value) {
-      lastTrackKeys = nextKeys
-      snapSwimlaneTracks(nextWidths)
-      return
-    }
     const keysChanged = nextKeys !== lastTrackKeys
     lastTrackKeys = nextKeys
     runSwimlaneTrackTween(nextWidths, { animate: !keysChanged })
@@ -281,15 +376,11 @@ watch(
   { immediate: true, deep: true },
 )
 
-watch(swimlanesEnabled, (enabled) => {
-  if (!enabled) {
-    cancelSwimlaneTrackTween()
-    animatedSwimlaneTrackWidths.value = []
-    lastTrackKeys = ''
-    return
-  }
+watch(swimlanesEnabled, () => {
+  cancelSwimlaneTrackTween()
   lastTrackKeys = trackKeysSignature(targetSwimlaneTracks.value)
   snapSwimlaneTracks(widthsFromTracks(targetSwimlaneTracks.value))
+  syncHostGeometryDuringTrackTween()
 })
 
 function columnRailStyle(column) {
@@ -299,10 +390,22 @@ function columnRailStyle(column) {
   }
 }
 
-const kanbanBoard = ref(null);
+function onColumnRailDblclick(column) {
+  const columnKey = getColumnKey(column)
+  if (!columnKey) {
+    return
+  }
+  store.commit('SET_COLUMN_COLLAPSED', {
+    columnKey,
+    collapsed: !store.getters.isColumnCollapsed(columnKey),
+  })
+}
+
 const columnRefs = ref([])
 const headerColumnRefs = ref({})
 const cellColumnRefs = ref({})
+/** scopeId → { [columnIndex]: component handle } */
+const childColumnRefs = ref({})
 const loading = computed(() => store.state.loading)
 const error = computed(() => store.state.error)
 const announcement = computed(() => store.state.announcement)
@@ -431,12 +534,10 @@ function handleCardDropHoverPointerMove(event) {
 /**
  * Capture-phase append drop onto stick-room / «No data» before bubble
  * clearActiveDrag and before Sortable mouseup reverts the drag.
+ * Covers swimlane, classic flat board, and child-panel empty columns.
  */
 function handleAppendDropPointerUpCapture(event) {
   if (event.button != null && event.button !== 0) {
-    return
-  }
-  if (!store.getters.swimlanesEnabled) {
     return
   }
   const drag = store.state.activeDrag || dragContext
@@ -447,7 +548,7 @@ function handleAppendDropPointerUpCapture(event) {
   if (!hit) {
     return
   }
-  const completed = completeCellAppendDrop({
+  const completed = completeAppendDrop({
     store,
     drag,
     listId: hit.listId,
@@ -460,8 +561,12 @@ function handleAppendDropPointerUpCapture(event) {
   event.stopImmediatePropagation()
   suppressSortableMouseUp = true
   clearDropHover()
-  // Persist via the same path as Sortable cell drops.
-  dropSwimlane(completed.payload)
+  if (completed.mode === 'swimlane') {
+    dropSwimlane(completed.payload)
+    return
+  }
+  // Classic + child: drop() routes child list ids to dropChildPanel.
+  drop(completed.payload)
 }
 
 function handleAppendDropMouseUpCapture(event) {
@@ -507,6 +612,29 @@ function registerCellColumnRef(listId, el) {
   delete cellColumnRefs.value[listId]
 }
 
+function registerChildColumnRef(scopeId, columnIndex, el) {
+  const scope = String(scopeId || '').trim()
+  if (!scope || !Number.isFinite(columnIndex)) {
+    return
+  }
+  const byScope = { ...(childColumnRefs.value[scope] || {}) }
+  if (el) {
+    byScope[columnIndex] = el
+  } else {
+    delete byScope[columnIndex]
+  }
+  if (Object.keys(byScope).length === 0) {
+    const next = { ...childColumnRefs.value }
+    delete next[scope]
+    childColumnRefs.value = next
+    return
+  }
+  childColumnRefs.value = {
+    ...childColumnRefs.value,
+    [scope]: byScope,
+  }
+}
+
 function resolveColumnDomEl(columnIndex, { preferHeader = false } = {}) {
   const board = kanbanBoard.value
   const column = columns.value[columnIndex]
@@ -542,7 +670,10 @@ function resolveColumnDomEl(columnIndex, { preferHeader = false } = {}) {
   return board.querySelector(`.kanban-column[data-column-value="${escaped}"]`)
 }
 
-function resolveCardColumnComponent(columnIndex, laneIndex) {
+function resolveCardColumnComponent(columnIndex, laneIndex, childScopeId = null) {
+  if (childScopeId) {
+    return childColumnRefs.value[childScopeId]?.[columnIndex] || null
+  }
   if (swimlanesEnabled.value && Number.isFinite(laneIndex)) {
     const listId = encodeCellListId(laneIndex, columnIndex)
     return cellColumnRefs.value[listId] || null
@@ -582,6 +713,7 @@ async function scrollToMovedCard({
   cardName,
   cardIndex,
   laneIndex = null,
+  childScopeId = null,
 }) {
   const { didExpandColumn, didExpandLane } = await expandDestinationForReveal(
     columnIndex,
@@ -601,6 +733,36 @@ async function scrollToMovedCard({
   }
 
   const board = kanbanBoard.value
+
+  if (childScopeId) {
+    const childComponent = resolveCardColumnComponent(
+      columnIndex,
+      laneIndex,
+      childScopeId,
+    )
+    const horizontalEl = resolveComponentRootEl(childComponent)
+    if (board && horizontalEl) {
+      // Child panel rides board.scrollLeft; .child-panel-scroll is overflow:visible.
+      scrollColumnIntoView(horizontalEl, board, {
+        behavior: 'auto',
+      })
+      await waitForPaint()
+    }
+    await revealCardInChildColumn({
+      cardName,
+      cardIndex,
+      root: board || document,
+      getListEl: () => (
+        resolveComponentRootEl(childComponent)?.querySelector?.('.kanban-card-list')
+        || null
+      ),
+      scrollToCard: (name, index) => {
+        childComponent?.scrollToCard?.(name, index)
+      },
+    })
+    return
+  }
+
   const horizontalEl = resolveColumnDomEl(columnIndex, {
     preferHeader: swimlanesEnabled.value,
   })
@@ -636,6 +798,7 @@ async function scrollToMovedCard({
 provide('scrollToMovedCard', scrollToMovedCard)
 provide('registerHeaderColumnRef', registerHeaderColumnRef)
 provide('registerCellColumnRef', registerCellColumnRef)
+provide('registerChildColumnRef', registerChildColumnRef)
 
 watch(
   () => store.state.revealCreatedCard,
@@ -647,6 +810,13 @@ watch(
       await scrollToMovedCard(payload)
     } catch {
       // Reveal is best-effort; create already succeeded.
+    }
+    if (payload.flash) {
+      try {
+        await flashMovedCard(payload.cardName, { outcome: 'success' })
+      } catch {
+        // Flash is best-effort.
+      }
     }
     store.commit('CLEAR_REVEAL_CREATED_CARD')
   },
@@ -674,7 +844,7 @@ function setupColumnSortable() {
     return
   }
   columnSortable = createColumnSortable(container, {
-    boardRoot: swimlanesEnabled.value ? board : null,
+    boardRoot: board,
     onDragStart() {
       columnDragActive = true
       snapSwimlaneTracks(widthsFromTracks(targetSwimlaneTracks.value))
@@ -739,6 +909,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposeBoardHostedChildPanels()
   cancelSwimlaneTrackTween()
   teardownColumnSortable()
   teardownSwimlaneStickyTopObserver()
@@ -828,8 +999,21 @@ async function drop(event) {
     return
   }
 
-  const toColumn = Number(event.event?.to?.id)
-  const fromColumn = Number(event.event?.from?.id ?? context.fromColumn)
+  const toId = event.event?.to?.id
+  const fromId = event.event?.from?.id ?? context.fromColumn
+
+  if (isChildListId(toId) || isChildListId(fromId) || context.childScopeId) {
+    await dropChildPanel({
+      event,
+      context,
+      toId,
+      fromId,
+    })
+    return
+  }
+
+  const toColumn = Number(toId)
+  const fromColumn = Number(fromId)
 
   if (!Number.isFinite(toColumn) || fromColumn === toColumn) {
     return
@@ -876,6 +1060,71 @@ async function drop(event) {
   })
 }
 
+async function dropChildPanel({ event, context, toId, fromId }) {
+  const resolved = resolveChildPanelDropTarget({
+    toId,
+    fromId,
+    contextChildScopeId: context.childScopeId || null,
+    contextFromColumn: context.fromColumn,
+    childPanels: store.state.childPanels,
+  })
+
+  if (!resolved.ok) {
+    if (resolved.childScopeId && context?.cardName != null) {
+      store.commit('RECOVER_CHILD_PANEL_DRAG', {
+        cardName: context.cardName,
+        fromColumn: resolved.fromColumn ?? context.fromColumn,
+        fromIndex: context.fromIndex,
+        childScopeId: resolved.childScopeId,
+      })
+    }
+    return
+  }
+
+  if (resolved.sameColumn) {
+    restoreBoardHostedPanelPinScrolls()
+    return
+  }
+
+  const { childScopeId, fromColumn, toColumn } = resolved
+  const destinationRect = captureCardRect(
+    context.cardName,
+    kanbanBoard.value || document,
+  )
+  await nextTick()
+  const result = await store.dispatch('persistMovedCard', {
+    cardName: context.cardName,
+    fromColumn,
+    toColumn,
+    fromIndex: context.fromIndex,
+    toIndex: event.newIndex,
+    childScopeId,
+  }).catch(() => null)
+
+  await nextTick()
+  if (result?.needsAnimatedRollback) {
+    await playRollbackAnimation(context.cardName, destinationRect)
+  }
+
+  await nextTick()
+  if (result?.ok) {
+    try {
+      await scrollToMovedCard({
+        columnIndex: toColumn,
+        cardName: context.cardName,
+        cardIndex: event.newIndex,
+        childScopeId,
+      })
+    } catch {
+      // Reveal is best-effort; move already succeeded.
+    }
+  }
+  restoreBoardHostedPanelPinScrolls()
+  await flashMovedCard(context.cardName, {
+    outcome: result?.ok ? 'success' : 'failure',
+  })
+}
+
 async function dropSwimlane(event) {
   clearActiveDragVisual()
   const context = dragContext
@@ -885,8 +1134,21 @@ async function dropSwimlane(event) {
     return
   }
 
-  const toDecoded = decodeCellListId(event.event?.to?.id)
-  const fromDecoded = decodeCellListId(event.event?.from?.id)
+  const toId = event.event?.to?.id
+  const fromId = event.event?.from?.id
+  if (isChildListId(toId) || isChildListId(fromId) || context.childScopeId) {
+    await dropChildPanel({
+      event,
+      context,
+      toId,
+      fromId,
+    })
+    clearDragLaneState()
+    return
+  }
+
+  const toDecoded = decodeCellListId(toId)
+  const fromDecoded = decodeCellListId(fromId)
   const toLaneIndex = Number.isFinite(toDecoded.laneIndex)
     ? toDecoded.laneIndex
     : event.laneIndex
@@ -958,6 +1220,7 @@ const bindClickDrag = () => {
       ".kanban-card-wrapper",
       ".kanban-column-resize-handle",
       ".swimlane-lane-sticky",
+      ".swimlane-cell-spacer",
     ];
     if (ignoreEl.some((el) => e.target.closest(el))) return;
 

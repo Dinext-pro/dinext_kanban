@@ -6,6 +6,8 @@ import {
 
 const DEFAULT_MARGIN = 8
 const DEFAULT_MAX_ATTEMPTS = 8
+/** Allow subpixel / sticky measurement noise when checking card top vs inset. */
+const REVEAL_TOP_SLOP_PX = 2
 
 export function resolveScrollBehavior() {
   return prefersReducedMotion() ? 'auto' : 'smooth'
@@ -35,6 +37,40 @@ export function resolveComponentRootEl(component) {
   return null
 }
 
+const STUCK_LANE_STICKY_TOLERANCE_PX = 2
+const DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX = 40
+
+/**
+ * Lane sticky currently stuck under the column header row (nested ChildPanel hosts
+ * live outside .swimlane-lane, so closest-lane lookup fails).
+ */
+function findStuckLaneSticky(scroller, headerBottom) {
+  if (!scroller?.querySelectorAll || !Number.isFinite(headerBottom)) {
+    return null
+  }
+  const stickies = [...scroller.querySelectorAll('.swimlane-lane-sticky')]
+  return stickies.find((sticky) => {
+    const top = sticky.getBoundingClientRect?.().top
+    return Number.isFinite(top) && Math.abs(top - headerBottom) <= STUCK_LANE_STICKY_TOLERANCE_PX
+  }) || null
+}
+
+function readSwimlaneLaneChromeHeight(scroller) {
+  if (!scroller || typeof globalThis.getComputedStyle !== 'function') {
+    return DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX
+  }
+  try {
+    const raw = globalThis.getComputedStyle(scroller)
+      .getPropertyValue('--swimlane-lane-chrome-height')
+    const parsed = Number.parseFloat(raw)
+    return Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX
+  } catch {
+    return DEFAULT_SWIMLANE_LANE_CHROME_HEIGHT_PX
+  }
+}
+
 /**
  * Bottom edge (viewport Y) of sticky swimlane chrome above cards.
  * Matches KanbanColumn scroll-to-top inset logic.
@@ -50,7 +86,12 @@ export function getLaneStickyBottom(scroller, columnEl) {
   }
   const header = scroller.querySelector?.('.swimlane-header-row')
   if (header) {
-    return header.getBoundingClientRect().bottom
+    const headerBottom = header.getBoundingClientRect().bottom
+    const stuckSticky = findStuckLaneSticky(scroller, headerBottom)
+    if (stuckSticky) {
+      return stuckSticky.getBoundingClientRect().bottom
+    }
+    return headerBottom + readSwimlaneLaneChromeHeight(scroller)
   }
   return scroller.getBoundingClientRect().top
 }
@@ -112,6 +153,40 @@ export function revealMovedCard(cardName, root = globalThis.document) {
   return true
 }
 
+/**
+ * Single-pass vertical reveal inside a child-panel column list.
+ * Does not call scrollIntoView (avoids scrolling board ancestors) and does not retry.
+ */
+export async function revealCardInChildColumn({
+  cardName,
+  cardIndex,
+  root = globalThis.document,
+  getListEl,
+  scrollToCard,
+}) {
+  if (typeof scrollToCard === 'function') {
+    scrollToCard(cardName, cardIndex)
+  }
+  await waitForPaint()
+
+  const listEl = typeof getListEl === 'function' ? getListEl() : null
+  const searchRoot = listEl || root
+  const cardEl = findCardElement(cardName, searchRoot)
+  if (!cardEl || !listEl) {
+    return Boolean(cardEl)
+  }
+  if (isCardVisibleInList(cardEl, listEl)) {
+    return true
+  }
+  scrollCardIntoScroller(cardEl, listEl, {
+    behavior: 'auto',
+    topInset: 0,
+    bottomInset: 0,
+  })
+  await waitForPaint()
+  return isCardVisibleInList(cardEl, listEl)
+}
+
 export function isCardVisibleInList(cardEl, listEl, margin = DEFAULT_MARGIN) {
   if (!cardEl || !listEl) {
     return false
@@ -143,6 +218,34 @@ export function isCardVisibleInScroller(
   return cardRect.bottom > visibleTop && cardRect.top < visibleBottom
 }
 
+/**
+ * Stricter than isCardVisibleInScroller: card top must clear sticky chrome
+ * (visibleTop), not merely intersect the viewport under the inset.
+ */
+export function isCardRevealedInScroller(
+  cardEl,
+  scrollerEl,
+  {
+    margin = DEFAULT_MARGIN,
+    topInset = 0,
+    bottomInset = 0,
+    topSlop = REVEAL_TOP_SLOP_PX,
+  } = {},
+) {
+  if (!cardEl || !scrollerEl) {
+    return false
+  }
+  const cardRect = cardEl.getBoundingClientRect()
+  const scrollerRect = scrollerEl.getBoundingClientRect()
+  const visibleTop = scrollerRect.top + topInset + margin
+  const visibleBottom = scrollerRect.bottom - bottomInset - margin
+  return (
+    cardRect.top >= visibleTop - topSlop
+    && cardRect.top < visibleBottom
+    && cardRect.bottom > visibleTop
+  )
+}
+
 export function scrollCardIntoScroller(
   cardEl,
   scrollerEl,
@@ -172,6 +275,47 @@ export function scrollCardIntoScroller(
   }
 
   const nextTop = Math.max(0, scrollerEl.scrollTop + delta)
+  if (typeof scrollerEl.scrollTo === 'function') {
+    scrollerEl.scrollTo({ top: nextTop, behavior })
+  } else {
+    scrollerEl.scrollTop = nextTop
+  }
+  return true
+}
+
+/**
+ * Align card top to the scroller visible top (topInset + margin), always.
+ * Unlike scrollCardIntoScroller (nearest), this pulls the card as high as possible.
+ */
+export function scrollCardToScrollerTop(
+  cardEl,
+  scrollerEl,
+  {
+    behavior = resolveScrollBehavior(),
+    margin = DEFAULT_MARGIN,
+    topInset = 0,
+  } = {},
+) {
+  if (!cardEl || !scrollerEl) {
+    return false
+  }
+
+  const cardRect = cardEl.getBoundingClientRect()
+  const scrollerRect = scrollerEl.getBoundingClientRect()
+  const visibleTop = scrollerRect.top + topInset + margin
+  const delta = cardRect.top - visibleTop
+  if (Math.abs(delta) < 0.5) {
+    return false
+  }
+
+  const maxScroll = Math.max(
+    0,
+    (scrollerEl.scrollHeight || 0) - (scrollerEl.clientHeight || 0),
+  )
+  const nextTop = Math.min(maxScroll, Math.max(0, scrollerEl.scrollTop + delta))
+  if (Math.abs(nextTop - (scrollerEl.scrollTop || 0)) < 0.5) {
+    return false
+  }
   if (typeof scrollerEl.scrollTo === 'function') {
     scrollerEl.scrollTo({ top: nextTop, behavior })
   } else {
@@ -215,7 +359,16 @@ export async function revealCardInColumn({
   const resolveScrollerEl = () => (
     typeof getScrollerEl === 'function' ? getScrollerEl() : null
   )
+
+  // Freeze topInset after first measure so sticky reflow after scroll cannot
+  // re-trigger align attempts (jitter / group flash).
+  let frozenTopInset = null
+  let frozenBottomInset = null
+
   const resolveInsets = (scrollerEl, cardEl) => {
+    if (frozenTopInset != null) {
+      return { topInset: frozenTopInset, bottomInset: frozenBottomInset || 0 }
+    }
     const columnEl = cardEl?.closest?.('.kanban-column') || resolveListEl()
     const topInset = typeof getTopInset === 'function'
       ? Number(getTopInset(scrollerEl, columnEl)) || 0
@@ -223,15 +376,28 @@ export async function revealCardInColumn({
     const bottomInset = typeof getBottomInset === 'function'
       ? Number(getBottomInset(scrollerEl, columnEl)) || 0
       : 0
+    frozenTopInset = topInset
+    frozenBottomInset = bottomInset
     return { topInset, bottomInset }
   }
 
-  const isVisible = (cardEl, currentListEl, scrollerEl) => {
+  const isRevealed = (cardEl, currentListEl, scrollerEl) => {
     if (scrollerEl) {
       const { topInset, bottomInset } = resolveInsets(scrollerEl, cardEl)
-      return isCardVisibleInScroller(cardEl, scrollerEl, { topInset, bottomInset })
+      return isCardRevealedInScroller(cardEl, scrollerEl, { topInset, bottomInset })
     }
     return isCardVisibleInList(cardEl, currentListEl)
+  }
+
+  const alignCardInScroller = (cardEl, scrollerEl) => {
+    const { topInset, bottomInset } = resolveInsets(scrollerEl, cardEl)
+    // Nearest only — pin-to-top on every attempt fights sticky reflow and jerks the lane.
+    scrollCardIntoScroller(cardEl, scrollerEl, {
+      behavior: 'auto',
+      topInset,
+      bottomInset,
+    })
+    return { topInset, bottomInset }
   }
 
   if (!scrollToCard) {
@@ -241,13 +407,8 @@ export async function revealCardInColumn({
       if (!cardEl) {
         return false
       }
-      const { topInset, bottomInset } = resolveInsets(scrollerEl, cardEl)
-      scrollCardIntoScroller(cardEl, scrollerEl, {
-        behavior: 'auto',
-        topInset,
-        bottomInset,
-      })
-      return isCardVisibleInScroller(cardEl, scrollerEl, { topInset, bottomInset })
+      const { topInset, bottomInset } = alignCardInScroller(cardEl, scrollerEl)
+      return isCardRevealedInScroller(cardEl, scrollerEl, { topInset, bottomInset })
     }
     return revealMovedCard(cardName, root || resolveListEl())
   }
@@ -264,17 +425,12 @@ export async function revealCardInColumn({
       continue
     }
 
-    if (scrollerEl && !isVisible(cardEl, currentListEl, scrollerEl)) {
-      const { topInset, bottomInset } = resolveInsets(scrollerEl, cardEl)
-      scrollCardIntoScroller(cardEl, scrollerEl, {
-        behavior: 'auto',
-        topInset,
-        bottomInset,
-      })
+    if (scrollerEl && !isRevealed(cardEl, currentListEl, scrollerEl)) {
+      alignCardInScroller(cardEl, scrollerEl)
       await waitForPaint()
     }
 
-    if (isVisible(cardEl, currentListEl, scrollerEl)) {
+    if (isRevealed(cardEl, currentListEl, scrollerEl)) {
       return true
     }
   }
@@ -283,14 +439,9 @@ export async function revealCardInColumn({
   const finalScroller = resolveScrollerEl()
   const cardEl = findCardElement(cardName, root || finalListEl || finalScroller)
   if (finalScroller && cardEl) {
-    const { topInset, bottomInset } = resolveInsets(finalScroller, cardEl)
-    scrollCardIntoScroller(cardEl, finalScroller, {
-      behavior: 'auto',
-      topInset,
-      bottomInset,
-    })
+    const { topInset, bottomInset } = alignCardInScroller(cardEl, finalScroller)
     await waitForPaint()
-    return isCardVisibleInScroller(cardEl, finalScroller, { topInset, bottomInset })
+    return isCardRevealedInScroller(cardEl, finalScroller, { topInset, bottomInset })
   }
 
   revealMovedCard(cardName, root || finalListEl)

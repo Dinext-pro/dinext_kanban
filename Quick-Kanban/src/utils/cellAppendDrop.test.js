@@ -4,6 +4,7 @@ import {
   CARD_DRAG_ACTIVE_CLASS,
   CARD_DRAG_FORBIDDEN_CLASS,
   CARD_DROP_HOVER_CLASS,
+  completeAppendDrop,
   completeCellAppendDrop,
   findAppendDropTarget,
   findCardDropHoverTarget,
@@ -13,6 +14,7 @@ import {
   setCardDropHoverElement,
 } from './cellAppendDrop'
 import { encodeCellListId } from './swimlaneBoard'
+import { encodeChildListId } from './childPanelBoard'
 
 function mountCellDom({
   listId,
@@ -101,6 +103,44 @@ describe('findAppendDropTarget', () => {
     const { cell } = mountCellDom({ listId: 0 })
     stubElementsFromPoint([cell])
     expect(findAppendDropTarget(10, 20)).toBeNull()
+  })
+
+  test('finds empty-column drop target on classic flat columns', () => {
+    const column = document.createElement('section')
+    column.className = 'kanban-column'
+    const list = document.createElement('div')
+    list.className = 'kanban-card-list'
+    list.id = '1'
+    const empty = document.createElement('p')
+    empty.className = 'empty-column empty-column--drop-target'
+    empty.textContent = 'No data'
+    list.appendChild(empty)
+    column.appendChild(list)
+    document.body.appendChild(column)
+    stubElementsFromPoint([empty, column])
+
+    const hit = findAppendDropTarget(10, 20)
+    expect(hit?.listId).toBe('1')
+    expect(hit?.laneKey).toBeNull()
+    expect(hit?.target).toBe(empty)
+  })
+
+  test('finds empty-column drop target in child-panel cells', () => {
+    const column = document.createElement('section')
+    column.className = 'kanban-column kanban-column--cell'
+    const list = document.createElement('div')
+    list.className = 'kanban-card-list'
+    list.id = String(encodeChildListId(0, 2))
+    const empty = document.createElement('p')
+    empty.className = 'empty-column empty-column--drop-target'
+    list.appendChild(empty)
+    column.appendChild(list)
+    document.body.appendChild(column)
+    stubElementsFromPoint([empty, column])
+
+    const hit = findAppendDropTarget(10, 20)
+    expect(hit?.listId).toBe(String(encodeChildListId(0, 2)))
+    expect(hit?.target).toBe(empty)
   })
 })
 
@@ -210,6 +250,144 @@ describe('completeCellAppendDrop', () => {
       }),
     ).toBeNull()
     expect(store.state.lanes[0].columns[0].cards.map((c) => c.name)).toEqual(['TASK-1'])
+  })
+})
+
+describe('completeAppendDrop', () => {
+  let store
+  let previousPermissive
+
+  beforeEach(() => {
+    previousPermissive = globalThis.__quickKanbanPermissiveMoves
+    globalThis.__quickKanbanPermissiveMoves = true
+    store = createKanbanStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      fields: ['name', 'status'],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        display_name: 'Open',
+        cards: [{ name: 'TASK-1', status: 'Open' }],
+      },
+      {
+        name: 'done',
+        column_name: 'Done',
+        display_name: 'Done',
+        cards: [],
+      },
+    ])
+  })
+
+  afterEach(() => {
+    globalThis.__quickKanbanPermissiveMoves = previousPermissive
+  })
+
+  test('moves into an empty classic column', () => {
+    const result = completeAppendDrop({
+      store,
+      drag: {
+        cardName: 'TASK-1',
+        fromColumn: 0,
+        fromIndex: 0,
+      },
+      listId: '1',
+    })
+
+    expect(result?.mode).toBe('board')
+    expect(result?.toIndex).toBe(0)
+    expect(store.state.columns[0].cards.map((c) => c.name)).toEqual([])
+    expect(store.state.columns[1].cards.map((c) => c.name)).toEqual(['TASK-1'])
+    expect(result.payload.event).toEqual({
+      from: { id: '0' },
+      to: { id: '1' },
+    })
+  })
+
+  test('moves into an empty child-panel column', () => {
+    const scopeId = '0::PARENT'
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId,
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        {
+          name: 'open',
+          column_name: 'Open',
+          cards: [{ name: 'CHILD-1', status: 'Open' }],
+        },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: {},
+    })
+
+    const toListId = String(encodeChildListId(0, 1))
+    const result = completeAppendDrop({
+      store,
+      drag: {
+        cardName: 'CHILD-1',
+        fromColumn: 0,
+        fromIndex: 0,
+        childScopeId: scopeId,
+      },
+      listId: toListId,
+    })
+
+    expect(result?.mode).toBe('board')
+    expect(store.state.childPanels[scopeId].columns[0].cards.map((c) => c.name)).toEqual([])
+    expect(store.state.childPanels[scopeId].columns[1].cards.map((c) => c.name)).toEqual([
+      'CHILD-1',
+    ])
+    expect(result.payload.event.to.id).toBe(toListId)
+  })
+
+  test('routes swimlane appends with mode swimlane', () => {
+    store.commit('SET_LANES', [
+      {
+        key: 'lane-a',
+        label: 'Lane A',
+        columns: [
+          {
+            name: 'open',
+            column_name: 'Open',
+            cards: [{ name: 'TASK-1' }],
+          },
+          {
+            name: 'done',
+            column_name: 'Done',
+            cards: [],
+          },
+        ],
+      },
+    ])
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      swimlane_mode: 'field',
+      swimlane_field: 'project',
+    })
+
+    const result = completeAppendDrop({
+      store,
+      drag: {
+        cardName: 'TASK-1',
+        fromColumn: 0,
+        fromIndex: 0,
+        fromLaneIndex: 0,
+        fromLaneKey: 'lane-a',
+      },
+      listId: '1',
+      laneKey: 'lane-a',
+    })
+
+    expect(result?.mode).toBe('swimlane')
+    expect(store.state.lanes[0].columns[1].cards.map((c) => c.name)).toEqual(['TASK-1'])
   })
 })
 

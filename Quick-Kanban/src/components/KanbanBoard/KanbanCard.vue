@@ -2,52 +2,93 @@
   <article
     ref="cardRoot"
     class="kanban-card"
-    :class="[moveFlashClasses, cardColorClass, densityClasses, tagDropClasses]"
+    :class="[moveFlashClasses, cardColorClass, densityClasses, tagDropClasses, panelModeClasses]"
     :style="cardAccentStyle"
     role="listitem"
     :aria-busy="pending"
     :data-card-name="card.name"
     @pointerenter="onPointerEnter"
     @pointerleave="onPointerLeave"
+    @click="onPanelDismissCardClick"
     @dblclick="onCardDblclick"
   >
     <header class="kanban-title-area">
-      <InlineCardField
-        class="card-title"
-        field-role="title"
-        display-mode="text"
-        :card="card"
-        :field-meta="titleFieldMeta"
-        :doctype="config.ref_doctype"
-        :display-text="title"
-        :disabled="inlineDisabled"
-      />
-      <span
-        v-if="canDrag"
-        class="drag-handle drag"
-        :aria-label="__('Drag {0}', [title])"
-        role="img"
+      <div class="kanban-title-main">
+        <span
+          v-if="cardDeadlineTone"
+          class="kanban-deadline-icon kanban-title-deadline-icon"
+          :class="[
+            `kanban-deadline-icon--${cardDeadlineTone}`,
+            { 'kanban-title-deadline-icon--visible': isDense },
+          ]"
+          aria-hidden="true"
+        >
+          <svg
+            class="icon icon-sm"
+            aria-hidden="true"
+          >
+            <use
+              :href="cardDeadlineTone === 'overdue'
+                ? '#icon-solid-error'
+                : '#icon-solid-warning'"
+            ></use>
+          </svg>
+        </span>
+        <InlineCardField
+          class="card-title"
+          field-role="title"
+          display-mode="text"
+          :card="card"
+          :field-meta="titleFieldMeta"
+          :doctype="config.ref_doctype"
+          :display-text="title"
+          :disabled="inlineDisabled"
+        />
+      </div>
+      <button
+        v-if="childPanelOpen && showChildCount"
+        type="button"
+        class="kanban-child-count"
+        :aria-label="childCountLabel"
+        :title="childCountLabel"
+        :aria-expanded="String(childPanelOpen)"
+        @click.stop="onChildCountClick"
+        @pointerdown.stop
+        @dblclick.stop
       >
         <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
+          <use href="#icon-collapse"></use>
         </svg>
-        <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
-        </svg>
-      </span>
-      <span
-        v-else
-        class="drag-handle drag-handle-disabled"
-        :aria-label="moveBlockedLabel"
-        role="img"
-      >
-        <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
-        </svg>
-        <svg class="icon icon-sm" aria-hidden="true">
-          <use href="#icon-drag"></use>
-        </svg>
-      </span>
+        <span class="kanban-child-count__value">{{ childCountDisplay }}</span>
+      </button>
+      <template v-else-if="!childPanelOpen">
+        <span
+          v-if="canDrag"
+          class="drag-handle drag"
+          :aria-label="__('Drag {0}', [title])"
+          role="img"
+        >
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+        </span>
+        <span
+          v-else
+          class="drag-handle drag-handle-disabled"
+          :aria-label="moveBlockedLabel"
+          role="img"
+        >
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+          <svg class="icon icon-sm" aria-hidden="true">
+            <use href="#icon-drag"></use>
+          </svg>
+        </span>
+      </template>
     </header>
 
     <div
@@ -59,14 +100,36 @@
         <dl
           v-if="displayFields.length"
           class="kanban-card-fields"
-          :class="{ 'values-only': !config.show_labels }"
         >
-          <template v-for="field in displayFields" :key="field.fieldname">
+          <div
+            v-for="field in displayFields"
+            :key="field.fieldname"
+            class="kanban-card-field"
+            :class="deadlineFieldClass(field)"
+          >
             <dt v-if="config.show_labels">{{ translateFieldLabel(field) }}</dt>
-            <dd
-              :class="{ 'field-without-label': !config.show_labels }"
-              :data-fieldtype="field.fieldtype"
-            >
+            <dd :data-fieldtype="field.fieldtype">
+              <span
+                v-if="deadlineToneForField(field)"
+                class="kanban-deadline-icon"
+                :class="`kanban-deadline-icon--${deadlineToneForField(field)}`"
+                aria-hidden="true"
+              >
+                <svg
+                  v-if="deadlineToneForField(field) === 'overdue'"
+                  class="icon icon-sm"
+                  aria-hidden="true"
+                >
+                  <use href="#icon-solid-error"></use>
+                </svg>
+                <svg
+                  v-else
+                  class="icon icon-sm"
+                  aria-hidden="true"
+                >
+                  <use href="#icon-solid-warning"></use>
+                </svg>
+              </span>
               <InlineCardField
                 field-role="display"
                 display-mode="html"
@@ -78,7 +141,7 @@
                 :disabled="inlineDisabled"
               />
             </dd>
-          </template>
+          </div>
         </dl>
 
         <CardTags
@@ -117,6 +180,28 @@
         :disabled="inlineDisabled"
         :style="highlightStyle"
       />
+
+      <button
+        v-if="showChildCount && !childPanelOpen"
+        type="button"
+        class="kanban-child-count"
+        :aria-label="childCountLabel"
+        :title="childCountLabel"
+        :aria-expanded="String(childPanelOpen)"
+        @click.stop="onChildCountClick"
+        @pointerdown.stop
+        @pointerenter.stop="onChildCountPointerEnter"
+        @pointerleave.stop="onChildCountPointerLeave"
+        @dblclick.stop
+      >
+        <!-- eslint-disable-next-line vue/no-v-html -- theme-aware glyph from childTreeIcon.js -->
+        <span
+          class="kanban-child-count__icon"
+          aria-hidden="true"
+          v-html="childTreeIconSvg"
+        ></span>
+        <span class="kanban-child-count__value">{{ childCountDisplay }}</span>
+      </button>
 
       <div class="kanban-card-actions" @dblclick.stop>
         <div
@@ -182,6 +267,7 @@ import {
   CARD_COLLAPSE_DELAY_MS,
   CARD_DENSITY_ANIMATION_MS,
   CARD_EXPAND_DELAY_MS,
+  CARD_EXPAND_DELAY_OVER_CHILD_COUNT_MS,
   formatCardField,
   getCardFieldDisplayValue,
   getCardTagsHtml,
@@ -193,6 +279,13 @@ import { flashMovedCard } from '../../utils/cardMoveFlash'
 import { applyUserTagFilter } from '../../utils/listNavigation'
 import { navigateToForm } from '../../utils/inlineEditing'
 import { canDropTag, canWriteCardTags } from '../../utils/tagDragDrop'
+import { formatActivityCount } from '../../utils/cardExtraInfo'
+import { deadlineToneForCard } from '../../utils/deadline'
+import { getChildTreeIconSvg } from '../../icons/childTreeIcon'
+
+const childTreeIconSvg = getChildTreeIconSvg()
+
+const CHILD_COUNT_CONTEXT = 'QuickKanban.ChildCount'
 
 const props = defineProps({
   card: { type: Object, required: true },
@@ -200,6 +293,8 @@ const props = defineProps({
   columnIndex: { type: Number, required: true },
   laneIndex: { type: Number, default: null },
   laneKey: { type: [String, Number], default: null },
+  childDepth: { type: Number, default: 0 },
+  childScopeId: { type: String, default: null },
 })
 const store = useStore()
 const scrollToMovedCard = inject('scrollToMovedCard', null)
@@ -234,15 +329,31 @@ useDismissibleMenu({
 const columns = computed(() => store.state.columns)
 const pending = computed(() => store.getters.isMovePending(props.card.name))
 const inlineBusy = computed(() => store.getters.isCardInlineBusy(props.card.name))
-const inlineDisabled = computed(() => pending.value)
 const moveOptionsLoading = computed(() => store.getters.isMoveOptionsLoading)
 const minimizeCards = computed(() => store.state.minimize_cards)
 const forceCollapsed = computed(
   () => Boolean(store.state.densityForceCollapsedCards?.[props.card.name]),
 )
-// Force-collapse from Vuex survives VirtualList remount; local expanded alone cannot.
+const childPanelOpen = computed(() =>
+  store.getters.isChildPanelHostFor(props.card.name, props.childDepth, props.laneKey),
+)
+const panelMode = computed(() =>
+  store.getters.getCardChildPanelMode(props.card.name, props.childDepth, props.laneKey),
+)
+const isPanelInteractionActive = computed(() => panelMode.value === 'active')
+const panelModeClasses = computed(() => ({
+  'kanban-card--panel-inert': panelMode.value === 'inert',
+  'kanban-card--panel-ancestor': panelMode.value === 'ancestor',
+  'kanban-card--panel-host-nested': (
+    panelMode.value === 'ancestor' && Number(props.childDepth) >= 1
+  ),
+}))
+const inlineDisabled = computed(() => pending.value || !isPanelInteractionActive.value)
+// Panel host is always dense (any Minimize checkbox state). Otherwise densify
+// only follows minimize_cards + local/force collapse.
 const isDense = computed(
-  () => minimizeCards.value && (forceCollapsed.value || !expanded.value),
+  () => childPanelOpen.value
+    || (minimizeCards.value && (forceCollapsed.value || !expanded.value)),
 )
 const densityClasses = computed(() => ({
   'kanban-card--minimized': isDense.value,
@@ -285,7 +396,12 @@ function clearForceDensityCollapse() {
 }
 
 function holdExpandedDensity() {
-  if (!minimizeCards.value || !expanded.value || forceCollapsed.value) {
+  if (
+    childPanelOpen.value
+    || !minimizeCards.value
+    || !expanded.value
+    || forceCollapsed.value
+  ) {
     return
   }
   store.commit('SET_DENSITY_HOLD_EXPANDED', props.card.name)
@@ -314,6 +430,9 @@ function onFilesMenuOpen(open) {
 }
 
 function expandIntentionally() {
+  if (childPanelOpen.value || !isPanelInteractionActive.value) {
+    return
+  }
   clearForceDensityCollapse()
   expanded.value = true
 }
@@ -333,8 +452,13 @@ const title = computed(() => {
     props.card,
   ) || props.card.name
 })
-const canDrag = computed(() => store.getters.canDragCard(props.card.name))
-const canMove = computed(() => store.getters.getAllowedDestinations(props.card.name).length > 0)
+const canDrag = computed(() => (
+  isPanelInteractionActive.value && store.getters.canDragCard(props.card.name)
+))
+const canMove = computed(() => (
+  isPanelInteractionActive.value
+  && store.getters.getAllowedDestinations(props.card.name).length > 0
+))
 const allowedDestinations = computed(() =>
   store.getters.getAllowedDestinations(props.card.name)
     .filter((destination) => destination.columnIndex !== props.columnIndex),
@@ -349,6 +473,26 @@ const moveBlockedLabel = computed(() => {
   return __('Move is not available for {0}', [title.value])
 })
 const displayFields = computed(() => props.config.display_fields || [])
+const cardDeadlineTone = computed(() => deadlineToneForCard(props.card, props.config))
+
+function deadlineToneForField(field) {
+  if (!field?.fieldname || field.fieldname !== props.config.deadline_field) {
+    return ''
+  }
+  return deadlineToneForCard(props.card, props.config)
+}
+
+function deadlineFieldClass(field) {
+  const tone = deadlineToneForField(field)
+  if (!tone) {
+    return null
+  }
+  return {
+    'kanban-card-field--deadline': true,
+    [`kanban-card-field--deadline-${tone}`]: true,
+  }
+}
+
 const canEditTags = computed(() =>
   Boolean(
     props.config.show_tags
@@ -372,6 +516,35 @@ const tagFilterHint = computed(() =>
   __('Double-click to filter by tag', null, 'QuickKanban.Tags'),
 )
 const hasHighlightField = computed(() => Boolean(props.config.highlighted_field))
+const childCount = computed(() => Math.max(0, Number(props.card._child_count) || 0))
+const showChildCount = computed(() => childCount.value > 0)
+const childCountDisplay = computed(() => formatActivityCount(childCount.value))
+const childCountLabel = computed(() =>
+  __('Child records', null, CHILD_COUNT_CONTEXT),
+)
+
+function onChildCountClick() {
+  store.dispatch('toggleChildPanel', {
+    parentName: props.card.name,
+    depth: props.childDepth,
+    laneKey: props.laneKey,
+  })
+}
+
+function onPanelDismissCardClick() {
+  if (panelMode.value === 'ancestor') {
+    store.dispatch('toggleChildPanel', {
+      parentName: props.card.name,
+      depth: props.childDepth,
+      laneKey: props.laneKey,
+    })
+    return
+  }
+  if (panelMode.value === 'inert') {
+    store.commit('CLOSE_CHILD_PANELS_FROM_DEPTH', props.childDepth)
+  }
+}
+
 const highlightFieldMeta = computed(() => props.config.highlighted_field_meta || {
   fieldname: props.config.highlighted_field,
   fieldtype: 'Data',
@@ -523,6 +696,18 @@ watch(isDense, (dense) => {
   animateDetailsSlot(dense)
 }, { flush: 'post' })
 
+// Panel host densifies even when Minimize is off; isDense already includes
+// childPanelOpen. Re-run slot animation when entering/leaving host mode so
+// fields collapse/expand in sync with ancestor chrome (meta uses CSS).
+watch(childPanelOpen, (open, wasOpen) => {
+  if (!densityReady || open === wasOpen) {
+    return
+  }
+  if (open || !minimizeCards.value) {
+    animateDetailsSlot(isDense.value)
+  }
+}, { flush: 'post' })
+
 watch(showDetailsSlot, async (show) => {
   if (!show || !densityReady) {
     return
@@ -537,25 +722,53 @@ onMounted(async () => {
   densityReady = true
 })
 
-function onPointerEnter(event) {
-  if (!minimizeCards.value) {
-    return
+function canScheduleHoverExpand(event) {
+  if (!minimizeCards.value || childPanelOpen.value || !isPanelInteractionActive.value) {
+    return false
   }
-  if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
-    return
+  if (event?.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
+    return false
   }
   // Card-move DnD should not expand unrelated cards. Tag-drag allows expand
   // (also driven by tagDragHoverCard when pointerenter is suppressed under button-down).
   if (store.state.activeDrag) {
-    return
+    return false
   }
+  return true
+}
+
+function scheduleHoverExpand(delayMs) {
   clearExpandTimers()
   expandTimer = setTimeout(() => {
     expandTimer = null
     if (!store.state.activeDrag) {
       expandIntentionally()
     }
-  }, CARD_EXPAND_DELAY_MS)
+  }, delayMs)
+}
+
+function onPointerEnter(event) {
+  if (!canScheduleHoverExpand(event)) {
+    return
+  }
+  scheduleHoverExpand(CARD_EXPAND_DELAY_MS)
+}
+
+function onChildCountPointerEnter(event) {
+  if (!canScheduleHoverExpand(event)) {
+    return
+  }
+  scheduleHoverExpand(CARD_EXPAND_DELAY_OVER_CHILD_COUNT_MS)
+}
+
+function onChildCountPointerLeave(event) {
+  if (!canScheduleHoverExpand(event)) {
+    return
+  }
+  if (!isPointerOverCard()) {
+    return
+  }
+  scheduleHoverExpand(CARD_EXPAND_DELAY_MS)
 }
 
 function scheduleCollapseForHoverLeave() {
@@ -644,10 +857,29 @@ watch(forceCollapsed, (forced) => {
   expanded.value = false
 })
 
+watch(childPanelOpen, (open) => {
+  if (!open) {
+    return
+  }
+  clearExpandTimers()
+  expanded.value = false
+  clearDensityHold()
+})
+
+watch(panelMode, (mode) => {
+  if (mode === 'active') {
+    return
+  }
+  if (moveMenuOpen.value) {
+    closeMoveMenu({ restoreFocus: false })
+  }
+  clearExpandTimers()
+})
+
 watch(
   () => store.state.densityHoldExpandedCard,
   (cardName) => {
-    if (!minimizeCards.value) {
+    if (!minimizeCards.value || childPanelOpen.value) {
       return
     }
     if (cardName === props.card.name && !forceCollapsed.value) {
@@ -694,6 +926,9 @@ function formatValue(field) {
 }
 
 function onReadonlyTagDblclick(event) {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   const pill = event.target?.closest?.('.tag-pill')
   if (!pill) {
     return
@@ -706,6 +941,9 @@ function onReadonlyTagDblclick(event) {
 }
 
 function onCardDblclick() {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   navigateToForm(props.config.ref_doctype, props.card.name)
 }
 
@@ -716,7 +954,11 @@ async function moveCard(toColumn) {
   let fromIndex = -1
   // Always insert at top so reveal works in paginated columns.
   const toIndex = 0
-  if (props.laneIndex != null && store.getters.swimlanesEnabled) {
+  const childScopeId = props.childScopeId || null
+  if (childScopeId && store.state.childPanels[childScopeId]) {
+    fromIndex = store.state.childPanels[childScopeId].columns?.[props.columnIndex]
+      ?.cards?.findIndex(({ name }) => name === props.card.name) ?? -1
+  } else if (props.laneIndex != null && store.getters.swimlanesEnabled) {
     const lane = store.state.lanes[props.laneIndex]
     fromIndex = lane?.columns?.[props.columnIndex]?.cards?.findIndex(
       ({ name }) => name === props.card.name,
@@ -737,6 +979,7 @@ async function moveCard(toColumn) {
       fromIndex,
       toIndex,
       fromLaneIndex: props.laneIndex,
+      childScopeId,
     })
     if (moved && scrollToMovedCard) {
       try {
@@ -745,6 +988,7 @@ async function moveCard(toColumn) {
           cardName: props.card.name,
           cardIndex: toIndex,
           laneIndex: props.laneIndex,
+          childScopeId,
         })
       } catch {
         // Reveal is best-effort; move already succeeded.
@@ -765,7 +1009,7 @@ function closeMoveMenu({ restoreFocus = true } = {}) {
 }
 
 function toggleMoveMenu() {
-  if (!canMove.value) {
+  if (!canMove.value || !isPanelInteractionActive.value) {
     return
   }
   if (moveMenuOpen.value) {
@@ -797,6 +1041,9 @@ function toggleMoveMenu() {
 }
 
 function openAssignToDialog() {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   const dialog = new frappe.ui.form.AssignToDialog({
     obj: props.card,
     method: 'frappe.desk.form.assign_to.add',
@@ -808,6 +1055,9 @@ function openAssignToDialog() {
 }
 
 function openAssignmentDialog() {
+  if (!isPanelInteractionActive.value) {
+    return
+  }
   new frappe.ui.form.AssignmentDialog({
     assignments: Object.keys(props.card._assign),
     frm: {
