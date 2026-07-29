@@ -6,9 +6,11 @@ import {
   readCollapsedColumnsPreference,
   readExpandedLanesPreference,
   readMinimizeCardsPreference,
+  readShowChildTasksPreference,
   writeCollapsedColumnsPreference,
   writeExpandedLanesPreference,
   writeMinimizeCardsPreference,
+  writeShowChildTasksPreference,
 } from './utils/kanban'
 
 window.frappe = frappe
@@ -68,6 +70,36 @@ window.setQuickKanbanMinimizeCards = (value, { persist = true } = {}) => {
   return next
 }
 
+function syncShowChildTasksCheckbox(value) {
+  const input = document.querySelector(
+    '.quick-kanban-show-child-tasks-control input[type="checkbox"]',
+  )
+  if (input && input.checked !== value) {
+    input.checked = value
+  }
+}
+
+function applyShowChildTasksPreference(boardName) {
+  const value = readShowChildTasksPreference(boardName)
+  store.commit('SET_SHOW_CHILD_TASKS', value)
+  syncShowChildTasksCheckbox(value)
+  return value
+}
+
+window.setQuickKanbanShowChildTasks = (value, { persist = true } = {}) => {
+  const next = Boolean(value)
+  const previous = Boolean(store.state.show_child_tasks)
+  store.commit('SET_SHOW_CHILD_TASKS', next)
+  if (persist) {
+    writeShowChildTasksPreference(store.state.config.board_name, next)
+  }
+  syncShowChildTasksCheckbox(next)
+  if (previous !== next) {
+    return Promise.resolve(store.dispatch('refreshBoard')).then(() => next)
+  }
+  return next
+}
+
 function applyCollapsedColumnsPreference(boardName) {
   const value = readCollapsedColumnsPreference(boardName)
   store.commit('SET_COLLAPSED_COLUMNS', value)
@@ -104,6 +136,7 @@ store.subscribe((mutation, state) => {
       bindCreateFormHooks(doctype)
     }
     applyMinimizePreference(state.config.board_name)
+    applyShowChildTasksPreference(state.config.board_name)
     applyCollapsedColumnsPreference(state.config.board_name)
     applyExpandedLanePreference(state.config.board_name)
     return
@@ -133,6 +166,7 @@ if (store.state.config?.ref_doctype) {
   bindCreateFormHooks(store.state.config.ref_doctype)
 }
 applyMinimizePreference(store.state.config?.board_name)
+applyShowChildTasksPreference(store.state.config?.board_name)
 applyCollapsedColumnsPreference(store.state.config?.board_name)
 applyExpandedLanePreference(store.state.config?.board_name)
 

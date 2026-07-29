@@ -13,6 +13,9 @@
   >
     <div
       class="swimlane-lane-sticky"
+      :class="{
+        [`swimlane-lane-sticky--deadline-${laneDeadlineTone}`]: laneDeadlineTone,
+      }"
       role="button"
       tabindex="0"
       :aria-expanded="String(expanded)"
@@ -36,7 +39,29 @@
             class="swimlane-lane-avatar"
             aria-hidden="true"
           />
-          <span class="swimlane-lane-title">{{ laneLabel }}</span>
+          <span
+            v-if="laneDeadlineTone"
+            class="kanban-deadline-icon"
+            :class="`kanban-deadline-icon--${laneDeadlineTone}`"
+            aria-hidden="true"
+          >
+            <svg
+              class="icon icon-sm"
+              aria-hidden="true"
+            >
+              <use
+                :href="laneDeadlineTone === 'overdue'
+                  ? '#icon-solid-error'
+                  : '#icon-solid-warning'"
+              ></use>
+            </svg>
+          </span>
+          <span
+            class="swimlane-lane-title"
+            :class="laneDeadlineTone
+              ? `swimlane-lane-title--deadline-${laneDeadlineTone}`
+              : undefined"
+          >{{ laneLabel }}</span>
           <span class="swimlane-lane-count">{{ laneTotalDisplay }}</span>
         </span>
       </header>
@@ -72,19 +97,24 @@
         v-for="(column, columnIndex) in columns"
         :key="`${lane.key}-${column.column_name}`"
       >
+        <!--
+          Keep SwimlaneGroup mounted while collapsed (v-show) so VirtualList /
+          sortable-dnd survive expand. Spacer is the collapsed hit target only.
+        -->
         <div
           v-if="isColumnCollapsed(column)"
           class="swimlane-cell-spacer"
           :data-column-value="column.column_name"
           :style="columnTrackStyle(column)"
           aria-hidden="true"
+          @dblclick="onCollapsedColumnDblclick(column)"
           @pointerenter="onCollapsedColumnPointerEnter(column)"
           @pointerleave="onCollapsedColumnPointerLeave"
           @dragenter="onCollapsedColumnDragEnter(column, $event)"
           @dragleave="onCollapsedColumnDragLeave"
         />
         <SwimlaneGroup
-          v-else
+          v-show="!isColumnCollapsed(column)"
           :lane="lane"
           :laneIndex="laneIndex"
           :column="column"
@@ -118,6 +148,7 @@ import {
   getIndicatorClass,
   LANE_DRAG_EXPAND_DELAY_MS,
 } from '../../utils/kanban'
+import { deadlineLaneTone } from '../../utils/deadline'
 import { prefersReducedMotion } from '../../utils/cardRollbackAnimation'
 import { animateLaneRowHeight } from '../../utils/laneExpandAnimation'
 import {
@@ -162,6 +193,7 @@ let awaitingExpandAnim = false
 const expanded = computed(() => store.getters.isLaneExpanded(props.lane.key))
 const hydrationStatus = computed(() => store.state.laneHydration[String(props.lane.key)])
 const laneLabel = computed(() => props.lane.label || props.lane.key || __('Unassigned'))
+const laneDeadlineTone = computed(() => deadlineLaneTone(props.lane?.key))
 const laneTotal = computed(() => store.getters.getLaneTotal(props.lane.key))
 const laneTotalDisplay = computed(() => (
   Number.isFinite(laneTotal.value) ? String(laneTotal.value) : '…'
@@ -495,6 +527,14 @@ function isLeavingSpacer(event) {
   return !root.contains(related)
 }
 
+function onCollapsedColumnDblclick(column) {
+  const columnKey = getColumnKey(column)
+  if (!columnKey || !store.getters.isColumnCollapsed(columnKey)) {
+    return
+  }
+  store.commit('SET_COLUMN_COLLAPSED', { columnKey, collapsed: false })
+}
+
 function onCollapsedColumnPointerEnter(column) {
   scheduleColumnExpandOnDrag(column)
 }
@@ -561,6 +601,11 @@ watch(
 watch(
   hydrationStatus,
   (status) => {
+    // After CLEAR_LANE_HYDRATION (board refresh), an already-visible expanded lane
+    // must request cards again — intersection may not change.
+    if (status == null || status === 'idle') {
+      maybeHydrateLane()
+    }
     if (!expanded.value || !animationReady.value || !awaitingExpandAnim) {
       return
     }

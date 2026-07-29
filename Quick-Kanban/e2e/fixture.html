@@ -64,6 +64,19 @@
   </head>
   <body>
     <div id="kanbanapp"></div>
+    <script>
+      // Deterministic layout/geometry in Playwright: skip CSS/JS motion paths.
+      window.matchMedia = (query) => ({
+        matches: String(query).includes('prefers-reduced-motion'),
+        media: query,
+        onchange: null,
+        addListener() {},
+        removeListener() {},
+        addEventListener() {},
+        removeEventListener() {},
+        dispatchEvent() { return false },
+      })
+    </script>
     <script type="module">
       window.__ = (message, values = []) =>
         (values || []).reduce(
@@ -239,6 +252,73 @@
               ),
             }
           }
+          if (method === 'quick_kanban.api.get_child_counts') {
+            window.__childCountCalls = window.__childCountCalls || []
+            window.__childCountCalls.push(args)
+            const configured = window.__childCounts || {}
+            return {
+              message: Object.fromEntries(
+                (args.names || []).map((name) => [
+                  name,
+                  configured[name] ?? 0,
+                ]),
+              ),
+            }
+          }
+          if (method === 'quick_kanban.api.get_child_column_totals') {
+            window.__childTotalCalls = window.__childTotalCalls || []
+            window.__childTotalCalls.push(args)
+            const byParent = window.__childColumnTotals?.[args.parent_name] || {
+              Open: 1,
+              Done: 1,
+            }
+            return {
+              message: Object.fromEntries(
+                (args.columns || []).map((column) => [
+                  column,
+                  byParent[column] || 0,
+                ]),
+              ),
+            }
+          }
+          if (method === 'quick_kanban.api.get_child_column_page') {
+            window.__childPageCalls = window.__childPageCalls || []
+            window.__childPageCalls.push(args)
+            const byParent = window.__childColumnPages?.[args.parent_name] || {}
+            const configured = byParent[args.column]
+            if (configured) {
+              return {
+                message: Array.isArray(configured)
+                  ? (configured.shift() || { keys: ['name', 'subject', 'status'], values: [], user_info: {} })
+                  : configured,
+              }
+            }
+            const childName = `${args.parent_name}-CHILD-${args.column}`
+            return {
+              message: {
+                keys: ['name', 'subject', 'status', 'parent_task'],
+                values: args.column === 'Open' || args.column === 'Done'
+                  ? [[
+                    childName,
+                    `Child of ${args.parent_name} in ${args.column}`,
+                    args.column,
+                    args.parent_name,
+                  ]]
+                  : [],
+                user_info: {},
+              },
+            }
+          }
+          if (method === 'quick_kanban.api.get_board_document_names') {
+            return {
+              message: (window.quickKanbanInitialData?.cards || [])
+                .map((card) => card.name)
+                .filter(Boolean),
+            }
+          }
+          if (method === 'quick_kanban.api.get_hidden_board_child_names') {
+            return { message: window.__hiddenBoardChildNames || [] }
+          }
           if (method === 'quick_kanban.api.get_create_options') {
             return {
               message: Object.fromEntries(
@@ -288,12 +368,15 @@
           name: 'Task',
           quick_entry: 1,
           title_field: 'subject',
+          is_tree: window.__quickKanbanIsTree === false ? 0 : 1,
+          nsm_parent_field: 'parent_task',
           fields: [
             { fieldname: 'subject', label: 'Subject', fieldtype: 'Data', reqd: 1, parent: 'Task' },
             { fieldname: 'status', label: 'Status', fieldtype: 'Select', reqd: 1, no_copy: 1, parent: 'Task' },
             { fieldname: 'project', label: 'Project', fieldtype: 'Link', options: 'Project', parent: 'Task' },
             { fieldname: 'priority', label: 'Priority', fieldtype: 'Select', options: 'Low\nMedium\nHigh', parent: 'Task' },
             { fieldname: 'expected_end_date', label: 'Expected End Date', fieldtype: 'Date', parent: 'Task' },
+            { fieldname: 'parent_task', label: 'Parent Task', fieldtype: 'Link', options: 'Task', parent: 'Task' },
           ],
         }),
         get_palette: () => ['--blue-100', '--blue-800'],

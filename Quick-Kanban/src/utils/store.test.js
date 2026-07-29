@@ -79,6 +79,12 @@ beforeEach(() => {
         },
       }
     }
+    if (method === 'quick_kanban.api.get_column_page') {
+      return { message: { keys: ['name', 'subject', 'status'], values: [], user_info: {} } }
+    }
+    if (method === 'quick_kanban.api.get_hidden_board_child_names') {
+      return { message: [] }
+    }
     return { message: {} }
   })
 })
@@ -166,16 +172,16 @@ describe('board loading', () => {
     })
 
     expect(frappe.call).toHaveBeenCalledWith({
-      method: 'frappe.desk.reportview.get',
-      args: {
+      method: 'quick_kanban.api.get_column_page',
+      args: expect.objectContaining({
         doctype: 'Task',
-        filters: [
-          ['priority', '=', 'High'],
-          ['Task', 'status', '=', 'Open'],
-        ],
+        status_field: 'status',
+        column: 'Open',
+        filters: [['priority', '=', 'High']],
         start: 1,
         page_length: 30,
-      },
+        hide_board_children: false,
+      }),
     })
     expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual([
       'TASK-1',
@@ -257,10 +263,40 @@ describe('board loading', () => {
         columns: ['Open', 'Done'],
         filters: [['priority', '=', 'High']],
         or_filters: [['owner', '=', 'user@example.com']],
+        hide_board_children: false,
       },
     })
     expect(frappe.call).toHaveBeenCalledTimes(1)
     expect(store.state.columnTotals).toEqual({ Open: 51, Done: 12 })
+  })
+
+  test('fetchColumnTotals asks server to hide on-board children when preference is off', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue({
+      title_field: 'subject',
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [{ fieldname: 'parent_task', fieldtype: 'Link' }],
+    })
+    await store.dispatch('hydrateFromList', {
+      board: boardDocument,
+      cards: [],
+      args: { page_length: 100 },
+    })
+    store.commit('SET_SHOW_CHILD_TASKS', false)
+    frappe.call.mockClear()
+    frappe.call.mockResolvedValueOnce({ message: { Open: 2, Done: 0 } })
+
+    await store.dispatch('fetchColumnTotals', {
+      args: { doctype: 'Task', filters: [] },
+    })
+
+    expect(frappe.call).toHaveBeenCalledWith({
+      method: 'quick_kanban.api.get_column_totals',
+      args: expect.objectContaining({
+        hide_board_children: true,
+      }),
+    })
   })
 
   test('enables pagination when totals reveal more cards in a hydrated column', async () => {
@@ -320,17 +356,15 @@ describe('board loading', () => {
     expect(store.state.columns[1].cards).toHaveLength(15)
     expect(frappe.call).toHaveBeenCalledTimes(1)
     expect(frappe.call).toHaveBeenCalledWith({
-      method: 'frappe.desk.reportview.get',
-      args: {
+      method: 'quick_kanban.api.get_column_page',
+      args: expect.objectContaining({
         doctype: 'Task',
-        filters: [
-          ['priority', '=', 'High'],
-          ['Task', 'status', '=', 'Done'],
-        ],
+        column: 'Done',
+        filters: [['priority', '=', 'High']],
         or_filters: [['owner', '=', 'user@example.com']],
         start: 5,
         page_length: 10,
-      },
+      }),
     })
   })
 
@@ -468,9 +502,23 @@ describe('board loading', () => {
     store.commit('SET_COLUMN_TOTALS', { Open: 51, Done: 10 })
     seedMoveOptions(store)
     const oldCounts = deferred()
-    frappe.call
-      .mockImplementationOnce(() => oldCounts.promise)
-      .mockResolvedValueOnce({ message: { modified: '2026-07-10 10:01:00' } })
+    let totalsCalls = 0
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_column_totals') {
+        totalsCalls += 1
+        if (totalsCalls === 1) {
+          return oldCounts.promise
+        }
+        return { message: { Open: 50, Done: 11 } }
+      }
+      if (method === 'quick_kanban.api.move_card') {
+        return { message: { modified: '2026-07-10 10:01:00' } }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
 
     const counting = store.dispatch('fetchColumnTotals', { args: {} })
     await store.dispatch('moveCard', {
@@ -480,6 +528,7 @@ describe('board loading', () => {
       fromIndex: 0,
       toIndex: 0,
     })
+    await vi.waitFor(() => expect(totalsCalls).toBeGreaterThanOrEqual(2))
     oldCounts.resolve({ message: { Open: 99, Done: 88 } })
     await counting
 
@@ -590,16 +639,24 @@ describe('board loading', () => {
     })
     frappe.call.mockClear()
     const page = deferred()
-    frappe.call.mockImplementationOnce(() => page.promise)
+    let columnPageCalls = 0
+    frappe.call.mockImplementation(({ method }) => {
+      if (method === 'quick_kanban.api.get_column_page') {
+        columnPageCalls += 1
+        return page.promise
+      }
+      return Promise.resolve({ message: {} })
+    })
 
     const first = store.dispatch('loadColumnPage', { columnIndex: 0, args: {} })
     const second = store.dispatch('loadColumnPage', { columnIndex: 0, args: {} })
-    expect(frappe.call).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(columnPageCalls).toBe(1))
 
     page.resolve({
       message: { keys: [], values: [], user_info: {} },
     })
     await Promise.all([first, second])
+    expect(columnPageCalls).toBe(1)
   })
 
   test('discards a column page requested before a filter refresh', async () => {
@@ -614,15 +671,27 @@ describe('board loading', () => {
       args: { page_length: 2 },
     })
     const stalePage = deferred()
-    frappe.call
-      .mockImplementationOnce(() => stalePage.promise)
-      .mockResolvedValueOnce({
-        message: {
-          keys: ['name', 'subject', 'status'],
-          values: [['TASK-NEW', 'New filter', 'Open']],
-          user_info: {},
-        },
-      })
+    frappe.call.mockImplementation(({ method, args }) => {
+      if (method === 'quick_kanban.api.get_column_page') {
+        const priority = args.filters?.[0]?.at(-1)
+        if (priority === 'Low') {
+          return stalePage.promise
+        }
+        if (args.column === 'Open' && priority === 'High') {
+          return Promise.resolve({
+            message: {
+              keys: ['name', 'subject', 'status'],
+              values: [['TASK-NEW', 'New filter', 'Open']],
+              user_info: {},
+            },
+          })
+        }
+        return Promise.resolve({
+          message: { keys: ['name', 'subject', 'status'], values: [], user_info: {} },
+        })
+      }
+      return Promise.resolve({ message: {} })
+    })
 
     const loadingPage = store.dispatch('loadColumnPage', {
       columnIndex: 0,
@@ -664,24 +733,38 @@ describe('board loading', () => {
       if (method === 'quick_kanban.api.get_column_totals') {
         return Promise.resolve({ message: { Open: 20, Done: 3 } })
       }
-
-      const status = args.filters?.find(
-        (filter) => filter.at(-3) === 'status',
-      )?.at(-1)
-      const count = status === 'Open' ? 14 : status === 'Done' ? 3 : 1
-      const prefix = status === 'Done' ? 'DONE' : 'OPEN'
-      const start = status ? args.start : 0
-      return Promise.resolve({
-        message: {
-          keys: ['name', 'subject', 'status'],
-          values: Array.from({ length: count }, (_, index) => [
-            `${prefix}-${start + index + 1}`,
-            `${status || 'Open'} ${start + index + 1}`,
-            status || 'Open',
-          ]),
-          user_info: {},
-        },
-      })
+      if (method === 'quick_kanban.api.get_column_page') {
+        const column = args.column
+        const pageLength = Number(args.page_length) || 0
+        const start = Number(args.start) || 0
+        let count = 0
+        if (column === 'Open') {
+          count = start > 0 ? 14 : 1
+        } else if (column === 'Done') {
+          count = Math.min(pageLength, 3)
+        }
+        const prefix = column === 'Done' ? 'DONE' : 'OPEN'
+        return Promise.resolve({
+          message: {
+            keys: ['name', 'subject', 'status'],
+            values: Array.from({ length: count }, (_, index) => [
+              `${prefix}-${start + index + 1}`,
+              `${column || 'Open'} ${start + index + 1}`,
+              column || 'Open',
+            ]),
+            user_info: {},
+          },
+        })
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return Promise.resolve({
+          message: { Open: { allowed: true, form_mode: 'quick_entry' } },
+        })
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return Promise.resolve({ message: {} })
+      }
+      return Promise.resolve({ message: {} })
     })
     const store = createStore()
 
@@ -696,11 +779,12 @@ describe('board loading', () => {
 
     expect(store.state.columns[0].cards).toHaveLength(15)
     expect(store.state.columns[1].cards).toHaveLength(3)
-    const columnCalls = frappe.call.mock.calls
+    const topUpCalls = frappe.call.mock.calls
       .map(([request]) => request)
-      .filter(({ method }) => method === 'frappe.desk.reportview.get')
-      .slice(1)
-    expect(columnCalls.map(({ args }) => args.page_length)).toEqual([14, 3])
+      .filter(({ method, args }) => (
+        method === 'quick_kanban.api.get_column_page' && Number(args.start) > 0
+      ))
+    expect(topUpCalls.map(({ args }) => args.page_length)).toEqual([14])
   })
 
   test('does not top up with filters from an obsolete totals request', async () => {
@@ -716,27 +800,40 @@ describe('board loading', () => {
         }
         return Promise.resolve({ message: { Open: 20, Done: 0 } })
       }
-
-      const priority = args.filters?.[0]?.at(-1)
-      const isColumnPage = args.filters?.some(
-        (filter) => filter.at(-3) === 'status',
-      )
-      if (isColumnPage && priority === 'High' && rejectLatestTopUp) {
-        rejectLatestTopUp = false
-        return Promise.reject(new Error('Latest top-up unavailable'))
+      if (method === 'quick_kanban.api.get_column_page') {
+        const priority = args.filters?.[0]?.at(-1)
+        const isTopUp = Number(args.start) > 0 || Number(args.page_length) < 100
+        if (
+          args.column === 'Open'
+          && priority === 'High'
+          && isTopUp
+          && rejectLatestTopUp
+        ) {
+          rejectLatestTopUp = false
+          return Promise.reject(new Error('Latest top-up unavailable'))
+        }
+        const count = isTopUp && args.column === 'Open' ? 14 : 1
+        return Promise.resolve({
+          message: {
+            keys: ['name', 'subject', 'status'],
+            values: Array.from({ length: count }, (_, index) => [
+              `${priority}-${(Number(args.start) || 0) + index + 1}`,
+              `${priority} ${(Number(args.start) || 0) + index + 1}`,
+              args.column || 'Open',
+            ]),
+            user_info: {},
+          },
+        })
       }
-      const count = isColumnPage ? 14 : 1
-      return Promise.resolve({
-        message: {
-          keys: ['name', 'subject', 'status'],
-          values: Array.from({ length: count }, (_, index) => [
-            `${priority}-${args.start + index + 1}`,
-            `${priority} ${args.start + index + 1}`,
-            'Open',
-          ]),
-          user_info: {},
-        },
-      })
+      if (method === 'quick_kanban.api.get_create_options') {
+        return Promise.resolve({
+          message: { Open: { allowed: true, form_mode: 'quick_entry' } },
+        })
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return Promise.resolve({ message: {} })
+      }
+      return Promise.resolve({ message: {} })
     })
     const store = createStore()
     await store.dispatch('hydrateFromList', {
@@ -766,9 +863,9 @@ describe('board loading', () => {
     await staleRefresh
 
     const staleColumnCalls = frappe.call.mock.calls.filter(([request]) =>
-      request.method === 'frappe.desk.reportview.get' &&
+      request.method === 'quick_kanban.api.get_column_page' &&
       request.args.filters?.some((filter) => filter.at(-1) === 'Low') &&
-      request.args.filters?.some((filter) => filter.at(-3) === 'status'),
+      Number(request.args.start) > 0,
     )
     expect(staleColumnCalls).toHaveLength(0)
     expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual([
@@ -782,16 +879,30 @@ describe('board loading', () => {
       `Task ${index + 1}`,
       'Open',
     ])
-    frappe.call
-      .mockResolvedValueOnce({ message: boardDocument })
-      .mockResolvedValueOnce({ message: { Open: { allowed: true, form_mode: 'quick_entry' } } })
-      .mockResolvedValueOnce({
-        message: {
-          keys: ['name', 'subject', 'status'],
-          values: rows,
-          user_info: {},
-        },
-      })
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'frappe.client.get') {
+        return { message: boardDocument }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: { Open: { allowed: true, form_mode: 'quick_entry' } } }
+      }
+      if (method === 'quick_kanban.api.get_column_page') {
+        if (args.column === 'Open') {
+          return {
+            message: {
+              keys: ['name', 'subject', 'status'],
+              values: rows.slice(0, args.page_length || 100),
+              user_info: {},
+            },
+          }
+        }
+        return { message: { keys: ['name', 'subject', 'status'], values: [], user_info: {} } }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
     const store = createStore()
 
     await store.dispatch('ensureBoard', { board_name: 'Task Board' })
@@ -805,10 +916,9 @@ describe('board loading', () => {
       loading: false,
       hasMore: true,
     })
-    expect(frappe.call).toHaveBeenLastCalledWith({
-      method: 'frappe.desk.reportview.get',
-      args: { page_length: 100, start: 0 },
-    })
+    expect(frappe.call.mock.calls.some(
+      ([request]) => request.method === 'quick_kanban.api.get_column_page',
+    )).toBe(true)
     expect(store.state.loading).toBe(false)
   })
 
@@ -960,9 +1070,21 @@ describe('board loading', () => {
     await store.dispatch('ensureBoard', { board_name: 'Task Board' })
     const first = deferred()
     const second = deferred()
-    frappe.call
-      .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise)
+    frappe.call.mockImplementation(({ method, args }) => {
+      if (method !== 'quick_kanban.api.get_column_page') {
+        return Promise.resolve({ message: {} })
+      }
+      const statusFilter = args.filters?.[0]?.at(-1)
+      if (statusFilter === 'Open') {
+        return first.promise
+      }
+      if (statusFilter === 'Done' && args.column === 'Open') {
+        return second.promise
+      }
+      return Promise.resolve({
+        message: { keys: ['name', 'subject', 'status'], values: [], user_info: {} },
+      })
+    })
 
     const firstRequest = store.dispatch('fetchKanban', {
       args: { filters: [['status', '=', 'Open']] },
@@ -1071,7 +1193,18 @@ describe('card moves', () => {
   }
 
   test('optimistically moves a card and persists its status', async () => {
-    frappe.call.mockResolvedValue({ message: { status: 'Done' } })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.move_card') {
+        return { message: { status: 'Done' } }
+      }
+      if (method === 'quick_kanban.api.get_column_totals') {
+        return { message: { Open: 50, Done: 11 } }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
     const store = hydratedStore()
     store.commit('SET_COLUMN_PAGINATION', {
       Open: { offset: 30, loading: false, hasMore: true },
@@ -1087,12 +1220,15 @@ describe('card moves', () => {
       fromIndex: 0,
       toIndex: 0,
     })
+    await vi.waitFor(() => expect(store.state.columnTotals).toEqual({
+      Open: 50,
+      Done: 11,
+    }))
 
     expect(store.state.columns[0].cards).toEqual([])
     expect(store.state.columns[1].cards[0].status).toBe('Done')
     expect(store.state.columnPagination.Open.offset).toBe(29)
     expect(store.state.columnPagination.Done.offset).toBe(11)
-    expect(store.state.columnTotals).toEqual({ Open: 50, Done: 11 })
     expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
       method: 'quick_kanban.api.move_card',
       args: expect.objectContaining({
@@ -2109,6 +2245,7 @@ describe('card creation', () => {
       columnIndex: 0,
       cardIndex: 0,
       laneIndex: null,
+      childScopeId: null,
     })
     expect(store.state.pendingCreate).toBeNull()
   })
@@ -2242,6 +2379,326 @@ describe('card creation', () => {
     })
   })
 
+  test('startCreateCard sets parent_field defaults and prepends into child panel', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'project'],
+    })
+    store.commit('SET_SHOW_CHILD_TASKS', false)
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'PARENT',
+          subject: 'Parent task',
+          status: 'Open',
+          project: 'PROJ-1',
+          _child_count: 1,
+        }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [] },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: { Open: 0, Done: 0 },
+    })
+    frappe.get_meta.mockReturnValue({
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [
+        { fieldname: 'project', fieldtype: 'Link' },
+        { fieldname: 'subject', fieldtype: 'Data' },
+        { fieldname: 'status', fieldtype: 'Select' },
+        { fieldname: 'parent_task', fieldtype: 'Link' },
+      ],
+    })
+    frappe.db.get_value.mockResolvedValue({ message: {} })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: { PARENT: 2 } }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return {
+          message: {
+            Open: {
+              allowed: true,
+              form_mode: 'quick_entry',
+              missing_mandatory: [],
+              missing_fieldnames: [],
+            },
+          },
+        }
+      }
+      return { message: {} }
+    })
+    frappe.model.can_write = vi.fn(() => true)
+    frappe.model.get_new_doc.mockReturnValue({ doctype: 'Task', name: 'new-Task-1' })
+    let capturedDefaults = null
+    frappe.ui.form.make_quick_entry.mockImplementation((_dt, _cb, _init, doc) => {
+      capturedDefaults = { ...doc }
+      return Promise.resolve({})
+    })
+
+    await store.dispatch('startCreateCard', {
+      columnIndex: 0,
+      column: store.state.columns[0],
+      childScopeId: '0::PARENT',
+    })
+
+    expect(store.state.pendingCreate).toMatchObject({
+      column_name: 'Open',
+      childScopeId: '0::PARENT',
+    })
+    expect(capturedDefaults).toMatchObject({
+      status: 'Open',
+      parent_task: 'PARENT',
+      project: 'PROJ-1',
+    })
+    expect(frappe.db.get_value).not.toHaveBeenCalled()
+
+    const created = await store.dispatch('handleCardCreated', {
+      doc: {
+        name: 'CHILD-NEW',
+        subject: 'Child task',
+        status: 'Open',
+        parent_task: 'PARENT',
+        modified: '2026-07-12 12:00:00',
+      },
+    })
+
+    expect(created).toBe(true)
+    expect(store.state.columns[0].cards.map((card) => card.name)).not.toContain('CHILD-NEW')
+    expect(store.state.childPanels['0::PARENT'].columns[0].cards[0].name).toBe('CHILD-NEW')
+    expect(store.state.childPanels['0::PARENT'].columnTotals.Open).toBe(1)
+    expect(store.state.columns[0].cards[0]._child_count).toBe(2)
+    expect(store.state.revealCreatedCard).toEqual({
+      cardName: 'CHILD-NEW',
+      columnIndex: 0,
+      cardIndex: 0,
+      laneIndex: null,
+      childScopeId: '0::PARENT',
+    })
+  })
+
+  test('deleteCard decrements parent _child_count for a child card', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [
+          {
+            name: 'PARENT',
+            subject: 'Parent task',
+            status: 'Open',
+            _child_count: 2,
+          },
+          {
+            name: 'CHILD-1',
+            subject: 'Child task',
+            status: 'Open',
+            parent_task: 'PARENT',
+            modified: '2026-07-12 12:00:00',
+          },
+        ],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_COLUMN_TOTALS', { Open: 2, Done: 0 })
+    frappe.get_meta.mockReturnValue({
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [],
+    })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.delete_card') {
+        return { message: { ok: true } }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: { PARENT: 1 } }
+      }
+      return { message: {} }
+    })
+
+    const deleted = await store.dispatch('deleteCard', { cardName: 'CHILD-1' })
+
+    expect(deleted).toBe(true)
+    expect(store.state.columns[0].cards.map((card) => card.name)).toEqual(['PARENT'])
+    expect(store.state.columns[0].cards[0]._child_count).toBe(1)
+  })
+
+  test('deleteCard removes a card that exists only in a child panel', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [
+          {
+            name: 'PARENT',
+            subject: 'Parent task',
+            status: 'Open',
+            _child_count: 2,
+          },
+        ],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        {
+          name: 'open',
+          column_name: 'Open',
+          cards: [
+            {
+              name: 'CHILD-1',
+              subject: 'Child task',
+              status: 'Open',
+              parent_task: 'PARENT',
+              modified: '2026-07-12 12:00:00',
+            },
+            {
+              name: 'CHILD-2',
+              subject: 'Other child',
+              status: 'Open',
+              parent_task: 'PARENT',
+            },
+          ],
+        },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {
+        Open: { offset: 2, hasMore: false, loading: false },
+      },
+      columnTotals: { Open: 2, Done: 0 },
+    })
+    frappe.get_meta.mockReturnValue({
+      is_tree: 1,
+      nsm_parent_field: 'parent_task',
+      fields: [],
+    })
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.delete_card') {
+        return { message: { ok: true } }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: { PARENT: 1 } }
+      }
+      return { message: {} }
+    })
+
+    const deleted = await store.dispatch('deleteCard', { cardName: 'CHILD-1' })
+
+    expect(deleted).toBe(true)
+    expect(frappe.call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'quick_kanban.api.delete_card',
+        args: expect.objectContaining({ name: 'CHILD-1' }),
+      }),
+    )
+    expect(store.state.columns[0].cards.map((card) => card.name)).toEqual(['PARENT'])
+    expect(store.state.childPanels['0::PARENT'].columns[0].cards.map((card) => card.name)).toEqual([
+      'CHILD-2',
+    ])
+    expect(store.state.childPanels['0::PARENT'].columnTotals.Open).toBe(1)
+    expect(store.state.childPanels['0::PARENT'].columnPagination.Open.offset).toBe(1)
+    expect(store.state.columns[0].cards[0]._child_count).toBe(1)
+  })
+
+  test('startCreateCard fetches missing parent fields via get_value for child create', async () => {
+    const store = hydratedStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'project'],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'PARENT',
+          subject: 'Parent task',
+          status: 'Open',
+        }],
+      },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: { Open: 0 },
+    })
+    frappe.get_meta.mockReturnValue({
+      fields: [
+        { fieldname: 'project', fieldtype: 'Link' },
+        { fieldname: 'subject', fieldtype: 'Data' },
+        { fieldname: 'status', fieldtype: 'Select' },
+      ],
+    })
+    frappe.db.get_value.mockResolvedValue({
+      message: { project: 'PROJ-FETCHED' },
+    })
+    frappe.model.can_write = vi.fn(() => true)
+    frappe.model.get_new_doc.mockReturnValue({ doctype: 'Task', name: 'new-Task-1' })
+    let capturedDefaults = null
+    frappe.ui.form.make_quick_entry.mockImplementation((_dt, _cb, _init, doc) => {
+      capturedDefaults = { ...doc }
+      return Promise.resolve({})
+    })
+
+    await store.dispatch('startCreateCard', {
+      columnIndex: 0,
+      column: store.state.columns[0],
+      childScopeId: '0::PARENT',
+    })
+
+    expect(frappe.db.get_value).toHaveBeenCalledWith(
+      'Task',
+      'PARENT',
+      expect.arrayContaining(['project']),
+    )
+    expect(capturedDefaults).toMatchObject({
+      status: 'Open',
+      parent_task: 'PARENT',
+      project: 'PROJ-FETCHED',
+    })
+  })
+
   test('prepends a created card into the swimlane cell', async () => {
     const store = hydratedStore()
     store.commit('SET_KANBAN_CONFIG', {
@@ -2289,6 +2746,7 @@ describe('card creation', () => {
       columnIndex: 0,
       cardIndex: 0,
       laneIndex: 0,
+      childScopeId: null,
     })
   })
 
@@ -2354,6 +2812,7 @@ describe('card creation', () => {
       columnIndex: 0,
       cardIndex: 0,
       laneIndex: 0,
+      childScopeId: null,
     })
   })
 
@@ -2480,6 +2939,49 @@ describe('column reorder', () => {
     ])
     expect(store.state.lanes[0].columns[0].cards[0].name).toBe('L2')
     expect(store.state.lanes[0].columns[1].cards[0].name).toBe('L1')
+  })
+
+  test('reorders open child panel columns together with board columns', async () => {
+    frappe.call.mockResolvedValue({
+      message: {
+        columns: [
+          { name: 'done', column_name: 'Done' },
+          { name: 'open', column_name: 'Open' },
+          { name: 'review', column_name: 'Review' },
+        ],
+      },
+    })
+    const store = boardStore()
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT',
+      parentName: 'PARENT',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [{ name: 'CHILD-OPEN' }] },
+        { name: 'done', column_name: 'Done', cards: [{ name: 'CHILD-DONE' }] },
+        { name: 'review', column_name: 'Review', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: { Open: 1, Done: 1, Review: 0 },
+    })
+
+    await store.dispatch('updateColumnOrder', ['Done', 'Open', 'Review'])
+
+    expect(store.state.columns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+    const panelColumns = store.state.childPanels['0::PARENT'].columns
+    expect(panelColumns.map((column) => column.column_name)).toEqual([
+      'Done',
+      'Open',
+      'Review',
+    ])
+    expect(panelColumns[0].cards[0].name).toBe('CHILD-DONE')
+    expect(panelColumns[1].cards[0].name).toBe('CHILD-OPEN')
   })
 
   test('rolls back when column reorder fails', async () => {
@@ -3480,6 +3982,225 @@ describe('swimlane expand state', () => {
     expect(store.state.lanes[0].columns[0].cards).toEqual([{ name: 'T1' }])
   })
 
+  test('toggleLaneExpanded collapse closes ChildPanel when depth-0 host is in that lane', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'alice',
+        label: 'Alice',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'PARENT-A', subject: 'Parent A' }] },
+        ],
+      },
+      {
+        key: 'bob',
+        label: 'Bob',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'OTHER', subject: 'Other' }] },
+        ],
+      },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alice', 'bob'])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 1, Done: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A', depth: 0 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A-CHILD', depth: 1 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(true)
+
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'bob' })
+    expect(store.state.expandedLaneKeys).toEqual(['alice'])
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(true)
+
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'alice' })
+    expect(store.state.expandedLaneKeys).toEqual([])
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(false)
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(false)
+    expect(Object.keys(store.state.childPanels)).toEqual([])
+  })
+
+  test('toggleLaneExpanded collapse uses hostLaneKey for multi-lane duplicates', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      swimlane_field: '__assign',
+      swimlane_mode: 'assign',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'alice',
+        label: 'Alice',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'PARENT-A', subject: 'Parent A' }] },
+        ],
+      },
+      {
+        key: 'bob',
+        label: 'Bob',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'PARENT-A', subject: 'Parent A' }] },
+        ],
+      },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alice', 'bob'])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 1, Done: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', {
+      parentName: 'PARENT-A',
+      depth: 0,
+      laneKey: 'bob',
+    })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A-CHILD', depth: 1 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(true)
+
+    // First lane in state is alice — must not close host-on-bob panel.
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'alice' })
+    expect(store.state.expandedLaneKeys).toEqual(['bob'])
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(true)
+
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'bob' })
+    expect(store.state.expandedLaneKeys).toEqual([])
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(false)
+    expect(store.getters.isChildPanelOpenFor('PARENT-A-CHILD', 1)).toBe(false)
+    expect(Object.keys(store.state.childPanels)).toEqual([])
+  })
+
+  test('toggleLaneExpanded expand keeps open ChildPanel for host lane', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      swimlane_field: 'project',
+      swimlane_mode: 'field',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'alice',
+        label: 'Alice',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [{ name: 'PARENT-A' }] },
+        ],
+      },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', [])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        return {
+          message: { keys: ['name', 'subject', 'status'], values: [], user_info: {} },
+        }
+      }
+      return { message: {} }
+    })
+
+    // Open panel while lane is collapsed is unusual; seed panel then expand.
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A', depth: 0 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+
+    await store.dispatch('toggleLaneExpanded', { laneKey: 'alice' })
+    expect(store.state.expandedLaneKeys).toEqual(['alice'])
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+  })
+
   test('ensureLaneHydrated loads lane-wide then tops up cells; second call is no-op', async () => {
     const store = createStore()
     store.commit('SET_KANBAN_CONFIG', {
@@ -3550,6 +4271,7 @@ describe('swimlane expand state', () => {
     )
     expect(laneCalls).toHaveLength(1)
     expect(laneCalls[0][0].args.page_length).toBe(100)
+    expect(laneCalls[0][0].args.board_name).toBe('Task Board')
 
     const openCards = store.state.lanes[0].columns[0].cards
     const doneCards = store.state.lanes[0].columns[1].cards
@@ -3613,7 +4335,7 @@ describe('swimlane expand state', () => {
     })
   })
 
-  test('refreshSwimlaneBoard does not fetch card pages', async () => {
+  test('refreshSwimlaneBoard hydrates expanded lanes only', async () => {
     const store = createStore()
     store.commit('SET_KANBAN_CONFIG', {
       ...store.state.config,
@@ -3629,28 +4351,44 @@ describe('swimlane expand state', () => {
     ])
     store.commit('SET_EXPANDED_LANE_KEYS', ['proj-a'])
 
-    frappe.call.mockImplementation(async ({ method }) => {
+    frappe.call.mockImplementation(async ({ method, args }) => {
       if (method === 'quick_kanban.api.get_swimlane_lanes') {
         return {
-          message: [{ key: 'proj-a', label: 'Proj A' }],
+          message: [
+            { key: 'proj-a', label: 'Proj A' },
+            { key: 'proj-b', label: 'Proj B' },
+          ],
         }
       }
       if (method === 'quick_kanban.api.get_cell_totals') {
-        return { message: { 'proj-a': { Open: 3 } } }
+        return { message: { 'proj-a': { Open: 1 }, 'proj-b': { Open: 1 } } }
+      }
+      if (method === 'quick_kanban.api.get_swimlane_lane_page') {
+        expect(args.lane_key).toBe('proj-a')
+        return {
+          message: {
+            keys: ['name', 'status'],
+            values: [['TASK-1', 'Open']],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
       }
       throw new Error(`Unexpected method ${method}`)
     })
 
     await store.dispatch('refreshSwimlaneBoard', { args: { filters: [] } })
 
-    expect(store.state.lanes).toHaveLength(1)
-    expect(store.state.lanes[0].columns[0].cards).toEqual([])
-    expect(store.state.laneHydration).toEqual({})
+    expect(store.state.lanes).toHaveLength(2)
+    expect(store.state.lanes[0].columns[0].cards.map(({ name }) => name)).toEqual(['TASK-1'])
+    expect(store.state.lanes[1].columns[0].cards).toEqual([])
+    expect(store.state.laneHydration['proj-a']).toBe('ready')
+    expect(store.state.laneHydration['proj-b']).toBeUndefined()
     const methods = frappe.call.mock.calls.map(([payload]) => payload.method)
-    expect(methods).toEqual([
-      'quick_kanban.api.get_swimlane_lanes',
-      'quick_kanban.api.get_cell_totals',
-    ])
+    expect(methods).toContain('quick_kanban.api.get_swimlane_lane_page')
+    expect(methods.filter((method) => method === 'quick_kanban.api.get_swimlane_lane_page')).toHaveLength(1)
   })
 
   test('refreshSwimlaneBoard prefetches user_info for assign lanes', async () => {
@@ -4170,5 +4908,973 @@ describe('swimlane expand state', () => {
       'TASK-3',
     ])
     expect(store.state.dragSyncGeneration).toBe(before)
+  })
+})
+
+describe('show child tasks visibility', () => {
+  const treeMeta = {
+    title_field: 'subject',
+    is_tree: 1,
+    nsm_parent_field: 'parent_task',
+    fields: [
+      { fieldname: 'subject', fieldtype: 'Data' },
+      { fieldname: 'status', fieldtype: 'Select' },
+      { fieldname: 'parent_task', fieldtype: 'Link' },
+    ],
+  }
+
+  test('hydrateFromList hides children whose parent is on the board by default', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue(treeMeta)
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_board_document_names') {
+        return { message: ['PARENT-1', 'CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: { Open: { allowed: true, form_mode: 'quick_entry' } } }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: { 'PARENT-1': 1 } }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('hydrateFromList', {
+      board: boardDocument,
+      cards: [
+        { name: 'PARENT-1', subject: 'Parent', status: 'Open', parent_task: '' },
+        { name: 'CHILD-1', subject: 'Child', status: 'Open', parent_task: 'PARENT-1' },
+        { name: 'ORPHAN-1', subject: 'Orphan', status: 'Open', parent_task: 'OFF-BOARD' },
+      ],
+      args: { page_length: 100, filters: [] },
+    })
+
+    expect(store.state.config.parent_field).toBe('parent_task')
+    expect(store.state.show_child_tasks).toBe(false)
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual([
+      'PARENT-1',
+      'ORPHAN-1',
+    ])
+  })
+
+  test('hydrateFromList keeps children when show_child_tasks is enabled', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue(treeMeta)
+    store.commit('SET_SHOW_CHILD_TASKS', true)
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: { Open: { allowed: true, form_mode: 'quick_entry' } } }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('hydrateFromList', {
+      board: boardDocument,
+      cards: [
+        { name: 'PARENT-1', subject: 'Parent', status: 'Open', parent_task: '' },
+        { name: 'CHILD-1', subject: 'Child', status: 'Open', parent_task: 'PARENT-1' },
+      ],
+      args: { page_length: 100 },
+    })
+
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual([
+      'PARENT-1',
+      'CHILD-1',
+    ])
+    expect(frappe.call.mock.calls.some(
+      ([request]) => request.method === 'quick_kanban.api.get_board_document_names',
+    )).toBe(false)
+  })
+
+  test('fetchKanban requests parent_task and hides on-board children', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue(treeMeta)
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'frappe.client.get') {
+        return { message: boardDocument }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: { Open: { allowed: true, form_mode: 'quick_entry' } } }
+      }
+      if (method === 'quick_kanban.api.get_board_document_names') {
+        return { message: ['PARENT-1', 'CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_hidden_board_child_names') {
+        return { message: ['CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_column_page') {
+        expect(args.hide_board_children).toBe(true)
+        expect(args.fields).toEqual(expect.arrayContaining(['parent_task']))
+        if (args.column !== 'Open') {
+          return { message: { keys: ['name', 'subject', 'status', 'parent_task'], values: [], user_info: {} } }
+        }
+        // Server already excluded on-board children.
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [
+              ['PARENT-1', 'Parent', 'Open', ''],
+              ['ORPHAN-1', 'Orphan', 'Open', 'OFF-BOARD'],
+            ],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+    await store.dispatch('fetchKanban', {
+      args: { fields: ['name', 'subject', 'status'], page_length: 100 },
+    })
+
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual([
+      'PARENT-1',
+      'ORPHAN-1',
+    ])
+  })
+
+  test('loadCellPage hydrates board names before hiding children', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue(treeMeta)
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      title_field: 'subject',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      swimlane_field: '__assign',
+      swimlane_mode: 'assign',
+      highlight_table: [],
+    })
+    store.commit('SET_SHOW_CHILD_TASKS', false)
+    store.commit('SET_BOARD_DOCUMENT_NAMES', [])
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'user@example.com',
+        label: 'User',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+          { name: 'done', column_name: 'Done', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_CELL_PAGINATION', {
+      'user@example.com::Open': { offset: 0, hasMore: true, loading: false },
+    })
+    store.commit('SET_CELL_TOTALS', {
+      'user@example.com': { Open: 3 },
+    })
+
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_board_document_names') {
+        return { message: ['PARENT-1', 'CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_swimlane_column_page') {
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [
+              ['PARENT-1', 'Parent', 'Open', ''],
+              ['CHILD-1', 'Child', 'Open', 'PARENT-1'],
+              ['ORPHAN-1', 'Orphan', 'Open', 'OFF-BOARD'],
+            ],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('loadCellPage', {
+      laneIndex: 0,
+      columnIndex: 0,
+      pageSize: 30,
+    })
+
+    expect(store.state.boardDocumentNames).toEqual(['PARENT-1', 'CHILD-1'])
+    expect(store.state.lanes[0].columns[0].cards.map(({ name }) => name)).toEqual([
+      'PARENT-1',
+      'ORPHAN-1',
+    ])
+  })
+
+  test('refreshBoard without payload reuses current board and hides children', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue(treeMeta)
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    const getCalls = []
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'frappe.client.get') {
+        getCalls.push(args.name)
+        return { message: boardDocument }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: { Open: { allowed: true, form_mode: 'quick_entry' } } }
+      }
+      if (method === 'quick_kanban.api.get_board_document_names') {
+        return { message: ['PARENT-1', 'CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_hidden_board_child_names') {
+        return { message: ['CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_column_page') {
+        expect(args.hide_board_children).toBe(true)
+        if (args.column !== 'Open') {
+          return {
+            message: {
+              keys: ['name', 'subject', 'status', 'parent_task'],
+              values: [],
+              user_info: {},
+            },
+          }
+        }
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [
+              ['PARENT-1', 'Parent', 'Open', ''],
+            ],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_column_totals') {
+        return { message: { Open: 2, Done: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+    getCalls.length = 0
+    store.commit('SET_SHOW_CHILD_TASKS', false)
+
+    await expect(store.dispatch('refreshBoard')).resolves.toBeUndefined()
+
+    expect(getCalls).toEqual([])
+    expect(store.state.config.board_name).toBe('Task Board')
+    expect(store.state.show_child_tasks).toBe(false)
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual(['PARENT-1'])
+  })
+
+  test('toggling show_child_tasks via refreshBoard without payload shows children', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue(treeMeta)
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'frappe.client.get') {
+        return { message: boardDocument }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: { Open: { allowed: true, form_mode: 'quick_entry' } } }
+      }
+      if (method === 'quick_kanban.api.get_board_document_names') {
+        return { message: ['PARENT-1', 'CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_hidden_board_child_names') {
+        return { message: ['CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_column_page') {
+        if (args.column !== 'Open') {
+          return {
+            message: {
+              keys: ['name', 'subject', 'status', 'parent_task'],
+              values: [],
+              user_info: {},
+            },
+          }
+        }
+        const values = args.hide_board_children
+          ? [['PARENT-1', 'Parent', 'Open', '']]
+          : [
+              ['PARENT-1', 'Parent', 'Open', ''],
+              ['CHILD-1', 'Child', 'Open', 'PARENT-1'],
+            ]
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values,
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_column_totals') {
+        return {
+          message: args.hide_board_children
+            ? { Open: 1, Done: 0 }
+            : { Open: 2, Done: 0 },
+        }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+    store.commit('SET_SHOW_CHILD_TASKS', false)
+    await store.dispatch('refreshBoard')
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual(['PARENT-1'])
+
+    store.commit('SET_SHOW_CHILD_TASKS', true)
+    await store.dispatch('refreshBoard')
+    expect(store.state.columns[0].cards.map(({ name }) => name)).toEqual([
+      'PARENT-1',
+      'CHILD-1',
+    ])
+  })
+
+  test('swimlane refreshBoard without payload refills expanded lane and filters children', async () => {
+    const store = createStore()
+    frappe.get_meta.mockReturnValue(treeMeta)
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'frappe.client.get') {
+        return {
+          message: {
+            ...boardDocument,
+            custom_swimlane_field: '__assign',
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_create_options') {
+        return { message: { Open: { allowed: true, form_mode: 'quick_entry' } } }
+      }
+      if (method === 'quick_kanban.api.get_swimlane_lanes') {
+        return { message: [{ key: 'alice@example.com', label: 'Alice' }] }
+      }
+      if (method === 'frappe.desk.form.load.get_user_info_for_viewers') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_cell_totals') {
+        return { message: { 'alice@example.com': { Open: 2, Done: 0 } } }
+      }
+      if (method === 'quick_kanban.api.get_board_document_names') {
+        return { message: ['PARENT-1', 'CHILD-1'] }
+      }
+      if (method === 'quick_kanban.api.get_swimlane_lane_page') {
+        expect(args.lane_key).toBe('alice@example.com')
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [
+              ['PARENT-1', 'Parent', 'Open', ''],
+              ['CHILD-1', 'Child', 'Open', 'PARENT-1'],
+            ],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('ensureBoard', { board_name: 'Task Board' })
+    store.commit('SET_SHOW_CHILD_TASKS', false)
+    store.commit('SET_EXPANDED_LANE_KEYS', ['alice@example.com'])
+
+    await store.dispatch('refreshBoard')
+
+    expect(store.state.lanes[0].columns[0].cards.map(({ name }) => name)).toEqual([
+      'PARENT-1',
+    ])
+    expect(store.state.laneHydration['alice@example.com']).toBe('ready')
+
+    store.commit('SET_SHOW_CHILD_TASKS', true)
+    await store.dispatch('refreshBoard')
+    expect(store.state.lanes[0].columns[0].cards.map(({ name }) => name)).toEqual([
+      'PARENT-1',
+      'CHILD-1',
+    ])
+  })
+
+  test('toggleChildPanel opens one panel per depth and replaces sibling', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 1, Done: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        expect(args.parent_name).toBeTruthy()
+        expect(args.hide_board_children).toBeUndefined()
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: args.column === 'Open'
+              ? [[`${args.parent_name}-CHILD`, 'Child', 'Open', args.parent_name]]
+              : [],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A', depth: 0 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(true)
+    const scopeA = store.getters.getChildPanelScopeId('PARENT-A', 0)
+    expect(store.state.childPanels[scopeA].columns[0].cards[0].name).toBe('PARENT-A-CHILD')
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-B', depth: 0 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-A', 0)).toBe(false)
+    expect(store.getters.isChildPanelOpenFor('PARENT-B', 0)).toBe(true)
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-B-CHILD', depth: 1 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-B', 0)).toBe(true)
+    expect(store.getters.isChildPanelOpenFor('PARENT-B-CHILD', 1)).toBe(true)
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-B', depth: 0 })
+    expect(store.getters.isChildPanelOpenFor('PARENT-B', 0)).toBe(false)
+    expect(store.getters.isChildPanelOpenFor('PARENT-B-CHILD', 1)).toBe(false)
+  })
+
+  test('toggleChildPanel hydrates all columns with first page + top-up, not full drain', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    // Smaller first page so top-up to 15 needs a second request (like flat top-up).
+    store.state.columnPageSize = 10
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    const openTotal = 40
+    const pageCalls = []
+    frappe.call.mockImplementation(async ({ method, args }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: openTotal, Done: 2 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        pageCalls.push({
+          column: args.column,
+          start: args.start,
+          page_length: args.page_length,
+        })
+        const start = Number(args.start) || 0
+        const length = Number(args.page_length) || 10
+        const total = args.column === 'Open' ? openTotal : 2
+        const count = Math.max(0, Math.min(length, total - start))
+        const values = Array.from({ length: count }, (_, index) => ([
+          `${args.parent_name}-${args.column}-${start + index + 1}`,
+          `${args.column} ${start + index + 1}`,
+          args.column,
+          args.parent_name,
+        ]))
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values,
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A', depth: 0 })
+    const scopeId = store.getters.getChildPanelScopeId('PARENT-A', 0)
+    const panel = store.state.childPanels[scopeId]
+    const openCards = panel.columns[0].cards
+    const doneCards = panel.columns[1].cards
+    const openPagination = panel.columnPagination.Open
+    const donePagination = panel.columnPagination.Done
+
+    expect(openCards).toHaveLength(15)
+    expect(doneCards).toHaveLength(2)
+    expect(openPagination.hasMore).toBe(true)
+    expect(openPagination.offset).toBe(15)
+    expect(donePagination.hasMore).toBe(false)
+    expect(pageCalls.filter((call) => call.column === 'Open').length).toBe(2)
+    const firstOpenIdx = pageCalls.findIndex((call) => call.column === 'Open' && call.start === 0)
+    const firstDoneIdx = pageCalls.findIndex((call) => call.column === 'Done' && call.start === 0)
+    const openTopUpIdx = pageCalls.findIndex((call) => call.column === 'Open' && call.start > 0)
+    // First pages for every column are issued together before any top-up page.
+    expect(firstOpenIdx).toBeGreaterThanOrEqual(0)
+    expect(firstDoneIdx).toBeGreaterThanOrEqual(0)
+    expect(openTopUpIdx).toBeGreaterThan(Math.max(firstOpenIdx, firstDoneIdx))
+
+    await store.dispatch('loadChildColumnPage', { scopeId, columnIndex: 0 })
+    expect(store.state.childPanels[scopeId].columns[0].cards.length).toBeGreaterThan(15)
+    expect(store.state.childPanels[scopeId].columns[0].cards.length).toBeLessThan(openTotal)
+  })
+
+  test('getCardChildPanelMode: deepest panel active, ancestors semi-active, others inert', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 1, Done: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    expect(store.getters.maxOpenChildPanelDepth).toBeNull()
+    expect(store.getters.getCardChildPanelMode('BOARD-1', 0)).toBe('active')
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A', depth: 0 })
+    expect(store.getters.maxOpenChildPanelDepth).toBe(0)
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0)).toBe('ancestor')
+    expect(store.getters.getCardChildPanelMode('BOARD-OTHER', 0)).toBe('inert')
+    expect(store.getters.getCardChildPanelMode('PARENT-A-CHILD', 1)).toBe('active')
+    expect(store.getters.getCardChildPanelMode('OTHER-CHILD', 1)).toBe('active')
+
+    await store.dispatch('toggleChildPanel', { parentName: 'PARENT-A-CHILD', depth: 1 })
+    expect(store.getters.maxOpenChildPanelDepth).toBe(1)
+    expect(store.getters.childPanelAncestorNames.has('PARENT-A')).toBe(true)
+    expect(store.getters.childPanelAncestorNames.has('PARENT-A-CHILD')).toBe(true)
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0)).toBe('ancestor')
+    expect(store.getters.getCardChildPanelMode('PARENT-A-CHILD', 1)).toBe('ancestor')
+    expect(store.getters.getCardChildPanelMode('SIBLING-IN-DEPTH0', 1)).toBe('inert')
+    expect(store.getters.getCardChildPanelMode('BOARD-OTHER', 0)).toBe('inert')
+    expect(store.getters.getCardChildPanelMode('NESTED-CHILD', 2)).toBe('active')
+  })
+
+  test('getCardChildPanelMode: swimlane non-host duplicates are inert', async () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'subject', 'status', 'parent_task'],
+      swimlane_mode: 'assign',
+      swimlane_field: '__assign',
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    window.cur_list = {
+      doctype: 'Task',
+      board_name: 'Task Board',
+      get_args: () => ({
+        doctype: 'Task',
+        fields: ['name', 'subject', 'status', 'parent_task'],
+        filters: [],
+        page_length: 100,
+      }),
+    }
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_child_column_totals') {
+        return { message: { Open: 0 } }
+      }
+      if (method === 'quick_kanban.api.get_child_column_page') {
+        return {
+          message: {
+            keys: ['name', 'subject', 'status', 'parent_task'],
+            values: [],
+            user_info: {},
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_child_counts') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    await store.dispatch('toggleChildPanel', {
+      parentName: 'PARENT-A',
+      depth: 0,
+      laneKey: 'alice',
+    })
+    expect(store.getters.isChildPanelHostFor('PARENT-A', 0, 'alice')).toBe(true)
+    expect(store.getters.isChildPanelHostFor('PARENT-A', 0, 'bob')).toBe(false)
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0, 'alice')).toBe('ancestor')
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0, 'bob')).toBe('inert')
+    // Without laneKey, keep ancestor (flat / legacy callers).
+    expect(store.getters.getCardChildPanelMode('PARENT-A', 0)).toBe('ancestor')
+  })
+})
+
+describe('live deadline highlight on field update', () => {
+  test('UPDATE_CARD_FIELD refreshes _deadline_bucket from new date', () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      deadline_field: 'exp_end_date',
+      deadline_enabled: true,
+      deadline_attention_days: 3,
+      deadline_columns: ['Open', 'Working'],
+      display_fields: [{ fieldname: 'exp_end_date', fieldtype: 'Date' }],
+    })
+    store.commit('SET_COLUMNS', [
+      {
+        name: 'open',
+        column_name: 'Open',
+        cards: [{
+          name: 'TASK-D',
+          status: 'Open',
+          exp_end_date: '2026-07-27',
+          _deadline_bucket: 'attention',
+        }],
+      },
+    ])
+
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: '2026-12-31',
+    })
+
+    const card = store.state.columns[0].cards[0]
+    expect(card.exp_end_date).toBe('2026-12-31')
+    expect(card._deadline_bucket).toBe('planned')
+
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: null,
+    })
+    expect(store.state.columns[0].cards[0]._deadline_bucket).toBe('none')
+  })
+})
+
+describe('deadline swimlane relocate on date change', () => {
+  function seedDeadlineLanes(store) {
+    store.commit('SET_KANBAN_CONFIG', {
+      ...store.state.config,
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      deadline_field: 'exp_end_date',
+      deadline_enabled: true,
+      deadline_attention_days: 3,
+      deadline_columns: ['Open', 'Working'],
+      swimlane_mode: 'deadlines',
+      swimlane_field: '__deadlines',
+      display_fields: [{ fieldname: 'exp_end_date', fieldtype: 'Date' }],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+    ])
+    store.commit('SET_LANES', [
+      {
+        key: 'attention',
+        label: 'Approaching',
+        columns: [
+          {
+            name: 'open',
+            column_name: 'Open',
+            cards: [{
+              name: 'TASK-D',
+              status: 'Open',
+              exp_end_date: '2026-07-27',
+              _deadline_bucket: 'attention',
+            }],
+          },
+        ],
+      },
+      {
+        key: 'planned',
+        label: 'On Track',
+        columns: [
+          { name: 'open', column_name: 'Open', cards: [] },
+        ],
+      },
+    ])
+    store.commit('SET_EXPANDED_LANE_KEYS', ['attention'])
+    store.commit('SET_LANE_HYDRATION', { laneKey: 'attention', status: 'ready' })
+    store.commit('SET_LANE_HYDRATION', { laneKey: 'planned', status: 'idle' })
+  }
+
+  test('relocateDeadlineSwimlaneCard moves card to planned top and reveals', async () => {
+    const store = createStore()
+    seedDeadlineLanes(store)
+
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_swimlane_lane_page') {
+        return {
+          message: {
+            keys: ['name', 'status', 'exp_end_date', '_deadline_bucket'],
+            values: [],
+          },
+        }
+      }
+      if (method === 'quick_kanban.api.get_cell_totals') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: '2026-12-31',
+    })
+    expect(store.state.lanes[0].columns[0].cards[0]._deadline_bucket).toBe('planned')
+
+    const moved = await store.dispatch('relocateDeadlineSwimlaneCard', {
+      cardName: 'TASK-D',
+    })
+    expect(moved).toBe(true)
+    expect(store.state.expandedLaneKeys).toContain('planned')
+    expect(store.state.lanes[0].columns[0].cards.map((c) => c.name)).not.toContain('TASK-D')
+    expect(store.state.lanes[1].columns[0].cards[0]?.name).toBe('TASK-D')
+    expect(store.state.lanes[1].columns[0].cards[0]?._deadline_bucket).toBe('planned')
+    expect(store.state.revealCreatedCard).toEqual({
+      cardName: 'TASK-D',
+      laneIndex: 1,
+      columnIndex: 0,
+      cardIndex: 0,
+      flash: true,
+    })
+  })
+
+  test('relocateDeadlineSwimlaneCard no-ops when lane unchanged', async () => {
+    const store = createStore()
+    seedDeadlineLanes(store)
+    store.commit('UPDATE_CARD_FIELD', {
+      cardName: 'TASK-D',
+      fieldname: 'exp_end_date',
+      value: '2026-07-26',
+    })
+    // Without holidays both stay attention if within 3 days from "today" — force bucket
+    store.state.lanes[0].columns[0].cards[0]._deadline_bucket = 'attention'
+
+    const moved = await store.dispatch('relocateDeadlineSwimlaneCard', {
+      cardName: 'TASK-D',
+    })
+    expect(moved).toBe(false)
+    expect(store.state.revealCreatedCard).toBeNull()
+    expect(store.state.lanes[0].columns[0].cards[0]?.name).toBe('TASK-D')
+  })
+
+  test('scheduleMoveOptionsRefresh includes child panel card names', async () => {
+    vi.useFakeTimers()
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [{ name: 'BOARD-1', status: 'Open' }] },
+      { name: 'done', column_name: 'Done', cards: [] },
+    ])
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId: '0::PARENT-A',
+      parentName: 'PARENT-A',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        {
+          name: 'open',
+          column_name: 'Open',
+          cards: [{ name: 'CHILD-ONLY-1', status: 'Open' }],
+        },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: {},
+    })
+
+    frappe.call.mockImplementation(async ({ method }) => {
+      if (method === 'quick_kanban.api.get_move_options') {
+        return { message: {} }
+      }
+      return { message: {} }
+    })
+
+    store.dispatch('scheduleMoveOptionsRefresh')
+    await vi.advanceTimersByTimeAsync(60)
+
+    expect(frappe.call).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'quick_kanban.api.get_move_options',
+      args: expect.objectContaining({
+        names: expect.arrayContaining(['BOARD-1', 'CHILD-ONLY-1']),
+      }),
+    }))
+    vi.useRealTimers()
+  })
+
+  test('RECOVER_CHILD_PANEL_DRAG restores a card leaked onto the board', () => {
+    const store = createStore()
+    store.commit('SET_KANBAN_CONFIG', {
+      board_name: 'Task Board',
+      ref_doctype: 'Task',
+      field_name: 'status',
+      parent_field: 'parent_task',
+      fields: ['name', 'status', 'parent_task'],
+    })
+    store.commit('SET_COLUMNS', [
+      { name: 'open', column_name: 'Open', cards: [] },
+      { name: 'done', column_name: 'Done', cards: [{ name: 'CHILD-1', status: 'Done' }] },
+    ])
+    const scopeId = '0::PARENT-A'
+    store.commit('OPEN_CHILD_PANEL', {
+      scopeId,
+      parentName: 'PARENT-A',
+      depth: 0,
+      hostLaneKey: null,
+      ordinal: 0,
+      columns: [
+        { name: 'open', column_name: 'Open', cards: [] },
+        { name: 'done', column_name: 'Done', cards: [] },
+      ],
+      columnPagination: {},
+      columnTotals: {},
+    })
+
+    const syncBefore = store.state.dragSyncGeneration
+    store.commit('RECOVER_CHILD_PANEL_DRAG', {
+      cardName: 'CHILD-1',
+      fromColumn: 0,
+      fromIndex: 0,
+      childScopeId: scopeId,
+    })
+
+    expect(store.state.columns[1].cards.map((card) => card.name)).not.toContain('CHILD-1')
+    expect(store.state.childPanels[scopeId].columns[0].cards[0]).toMatchObject({
+      name: 'CHILD-1',
+      status: 'Open',
+    })
+    expect(store.state.dragSyncGeneration).toBe(syncBefore + 1)
   })
 })

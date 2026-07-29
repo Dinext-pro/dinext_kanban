@@ -7,6 +7,9 @@ import {
   getAddableColumnCandidates,
   groupCardsByColumn,
   getColumnKey,
+  filterBoardChildCards,
+  filterColumnsChildCards,
+  ensureArgsIncludeParentField,
   isActiveColumn,
   mapAssignments,
   normalizeBoardConfig,
@@ -23,14 +26,19 @@ import {
   laneTotalFromCells,
   normalizeExpandedLaneKeys,
   reconcileCardInstancesAcrossLanes,
+  removeAllCardInstances,
   resolveExpandedLaneKeys,
+  restoreCardInstances,
   sortLanesByOccupancy,
+  findCardInLanes,
 } from './swimlaneBoard'
 import {
   buildMoveFailureAnnouncement,
   showMoveFailureAlert,
 } from './moveFailure'
 import {
+  buildParentCreateDefaults,
+  listParentCreateCandidateFields,
   openCreateForm,
   resolveCreateFormMode,
   showCreateBlockedMessage,
@@ -43,6 +51,16 @@ import {
   canDropTag,
   removeTagFromList,
 } from './tagDragDrop'
+import {
+  buildEmptyChildColumns,
+  childPanelKey,
+  createChildColumnPagination,
+} from './childPanelBoard'
+import {
+  hydrateDeadlineHolidayContext,
+  fieldAffectsDeadlineBucket,
+  refreshCardDeadlineBucket,
+} from './deadline'
 
 const initialColumnCardMinimum = 15
 const moveOptionsDebounceMs = 50
@@ -60,6 +78,7 @@ const emptyConfig = () => ({
   board_name: '',
   ref_doctype: '',
   field_name: '',
+  parent_field: '',
   title_field: 'name',
   title_field_meta: { fieldname: 'name' },
   status_field_meta: { fieldname: '' },
@@ -77,6 +96,10 @@ const emptyConfig = () => ({
   swimlane_mode: 'off',
   swimlane_is_multi: false,
   swimlane_link_field: '',
+  deadline_field: '',
+  deadline_attention_days: 3,
+  deadline_columns: [],
+  deadline_enabled: false,
 })
 
 function withColumnDisplayNames(columns, config) {
@@ -85,6 +108,33 @@ function withColumnDisplayNames(columns, config) {
 
 function visibleBoardColumns(columns) {
   return (columns || []).filter(isActiveColumn)
+}
+
+function applyChildTaskVisibility(columns, state) {
+  return filterColumnsChildCards(columns, {
+    showChildTasks: state.show_child_tasks,
+    parentField: state.config?.parent_field,
+    boardNames: state.boardDocumentNames,
+  })
+}
+
+function filterCardsForChildVisibility(cards, state) {
+  return filterBoardChildCards(cards, {
+    showChildTasks: state.show_child_tasks,
+    parentField: state.config?.parent_field,
+    boardNames: state.boardDocumentNames,
+  })
+}
+
+async function ensureChildFilterReady({ dispatch, state }, args) {
+  if (state.show_child_tasks || !state.config?.parent_field) {
+    return true
+  }
+  if ((state.boardDocumentNames || []).length > 0) {
+    return true
+  }
+  const names = await dispatch('hydrateBoardDocumentNames', { args })
+  return Array.isArray(names) && names.length > 0
 }
 
 function archivedBoardColumns(columns, config) {
@@ -163,6 +213,14 @@ function cacheUserInfo(userInfo) {
   }
 }
 
+function forEachChildPanel(state, visitor) {
+  for (const panel of Object.values(state.childPanels || {})) {
+    if (panel) {
+      visitor(panel)
+    }
+  }
+}
+
 function findCard(state, cardName) {
   if (state.lanes?.length) {
     for (const lane of state.lanes) {
@@ -180,6 +238,14 @@ function findCard(state, cardName) {
       return card
     }
   }
+  for (const panel of Object.values(state.childPanels || {})) {
+    for (const column of panel.columns || []) {
+      const card = column.cards?.find(({ name }) => name === cardName)
+      if (card) {
+        return card
+      }
+    }
+  }
   return null
 }
 
@@ -195,11 +261,17 @@ function isSwimlaneFieldReadOnly(state) {
   if (state.config?.swimlane_mode === 'assign') {
     return false
   }
+  if (state.config?.swimlane_mode === 'deadlines') {
+    return true
+  }
   return Boolean(state.config?.swimlane_field_meta?.read_only)
 }
 
 function canChangeLaneClient(state, _cardName) {
   if (!swimlanesActive(state)) {
+    return false
+  }
+  if (state.config?.swimlane_mode === 'deadlines') {
     return false
   }
   if (isSwimlaneFieldReadOnly(state)) {
@@ -262,6 +334,24 @@ function canPrependReconcileCell(state, laneKey, columnName) {
   return pagination.hasMore === false
 }
 
+/**
+ * Lane key that currently holds a board card by name, or null if not found.
+ */
+function findLaneKeyForCard(state, cardName) {
+  const name = String(cardName || '').trim()
+  if (!name) {
+    return null
+  }
+  for (const lane of state.lanes || []) {
+    for (const column of lane.columns || []) {
+      if ((column.cards || []).some((card) => String(card?.name || '') === name)) {
+        return String(lane.key ?? '')
+      }
+    }
+  }
+  return null
+}
+
 function fieldAffectsSwimlaneLayout(state, fieldname) {
   if (!fieldname) {
     return false
@@ -277,6 +367,14 @@ function fieldAffectsSwimlaneLayout(state, fieldname) {
     && fieldname === state.config?.swimlane_field
   ) {
     return true
+  }
+  if (state.config?.swimlane_mode === 'deadlines') {
+    if (fieldname === state.config?.deadline_field) {
+      return true
+    }
+    if (fieldname === 'project') {
+      return true
+    }
   }
   return false
 }
@@ -300,6 +398,9 @@ function collectVisibleCardNames(state) {
     }
   } else {
     visit(state.columns)
+  }
+  for (const panel of Object.values(state.childPanels || {})) {
+    visit(panel?.columns)
   }
   return [...names]
 }
@@ -528,6 +629,9 @@ export function createKanbanStore() {
       boardPerms: { write: false },
       cardMoveFlash: {},
       minimize_cards: false,
+      show_child_tasks: false,
+      boardDocumentNames: [],
+      hiddenBoardChildNames: [],
       // Card name that should stay expanded across drag remounts (minimize mode).
       densityHoldExpandedCard: null,
       // Cards that must stay minimized after tag-drag until intentional expand.
@@ -544,6 +648,9 @@ export function createKanbanStore() {
       cellTotals: {},
       laneHydration: {},
       dragSourceLaneKey: null,
+      childPanels: {},
+      childPanelByDepth: {},
+      nextChildPanelOrdinal: 0,
     }),
     mutations: {
       SET_MINIMIZE_CARDS(state, minimizeCards) {
@@ -552,6 +659,75 @@ export function createKanbanStore() {
           state.densityHoldExpandedCard = null
           state.densityForceCollapsedCards = {}
         }
+      },
+      SET_SHOW_CHILD_TASKS(state, showChildTasks) {
+        state.show_child_tasks = Boolean(showChildTasks)
+      },
+      OPEN_CHILD_PANEL(state, panel) {
+        if (!panel?.scopeId) {
+          return
+        }
+        state.childPanels = {
+          ...state.childPanels,
+          [panel.scopeId]: panel,
+        }
+        state.childPanelByDepth = {
+          ...state.childPanelByDepth,
+          [panel.depth]: panel.scopeId,
+        }
+      },
+      CLOSE_CHILD_PANELS_FROM_DEPTH(state, depth) {
+        const minDepth = Number(depth)
+        if (!Number.isFinite(minDepth)) {
+          return
+        }
+        const nextByDepth = { ...state.childPanelByDepth }
+        const nextPanels = { ...state.childPanels }
+        for (const [depthKey, scopeId] of Object.entries(nextByDepth)) {
+          if (Number(depthKey) >= minDepth) {
+            delete nextByDepth[depthKey]
+            delete nextPanels[scopeId]
+          }
+        }
+        state.childPanelByDepth = nextByDepth
+        state.childPanels = nextPanels
+      },
+      SET_CHILD_COLUMN_TOTALS(state, { scopeId, totals }) {
+        const panel = state.childPanels[scopeId]
+        if (!panel) {
+          return
+        }
+        panel.columnTotals = { ...(totals || {}) }
+      },
+      SET_CHILD_COLUMN_PAGE_STATE(state, { scopeId, columnName, changes }) {
+        const panel = state.childPanels[scopeId]
+        if (!panel || !columnName) {
+          return
+        }
+        panel.columnPagination = {
+          ...panel.columnPagination,
+          [columnName]: {
+            ...(panel.columnPagination?.[columnName] || {
+              offset: 0,
+              hasMore: true,
+              loading: false,
+            }),
+            ...changes,
+          },
+        }
+      },
+      BUMP_CHILD_PANEL_ORDINAL(state) {
+        state.nextChildPanelOrdinal += 1
+      },
+      SET_BOARD_DOCUMENT_NAMES(state, names) {
+        state.boardDocumentNames = Array.isArray(names)
+          ? names.map((name) => String(name)).filter(Boolean)
+          : []
+      },
+      SET_HIDDEN_BOARD_CHILD_NAMES(state, names) {
+        state.hiddenBoardChildNames = Array.isArray(names)
+          ? names.map((name) => String(name)).filter(Boolean)
+          : []
       },
       SET_COLLAPSED_COLUMNS(state, collapsedColumns) {
         state.collapsedColumns = { ...(collapsedColumns || {}) }
@@ -637,15 +813,39 @@ export function createKanbanStore() {
         for (const lane of state.lanes || []) {
           lane.columns = reorderColumnsByName(lane.columns || [], columnNames)
         }
+        for (const panel of Object.values(state.childPanels || {})) {
+          if (panel?.columns) {
+            panel.columns = reorderColumnsByName(panel.columns, columnNames)
+          }
+        }
       },
-      SET_COLUMN_CARDS(state, { columnIndex, cards, laneIndex = null }) {
+      SET_COLUMN_CARDS(state, {
+        columnIndex,
+        cards,
+        laneIndex = null,
+        childScopeId = null,
+      }) {
+        if (childScopeId && state.childPanels[childScopeId]) {
+          state.childPanels[childScopeId].columns[columnIndex].cards = cards
+          return
+        }
         if (laneIndex != null && state.lanes[laneIndex]) {
           state.lanes[laneIndex].columns[columnIndex].cards = cards
           return
         }
         state.columns[columnIndex].cards = cards
       },
-      APPEND_COLUMN_CARDS(state, { columnIndex, cards, laneIndex = null }) {
+      APPEND_COLUMN_CARDS(state, {
+        columnIndex,
+        cards,
+        laneIndex = null,
+        childScopeId = null,
+      }) {
+        if (childScopeId && state.childPanels[childScopeId]) {
+          const column = state.childPanels[childScopeId].columns[columnIndex]
+          column.cards = mergeCards(column.cards, cards)
+          return
+        }
         if (laneIndex != null && state.lanes[laneIndex]) {
           const column = state.lanes[laneIndex].columns[columnIndex]
           column.cards = mergeCards(column.cards, cards)
@@ -901,10 +1101,15 @@ export function createKanbanStore() {
         state.tagDragHoverCard = null
         state.densityHoldExpandedCard = null
         state.densityForceCollapsedCards = {}
+        state.boardDocumentNames = []
+        state.hiddenBoardChildNames = []
         state.activeInlineEdit = null
         state.pendingFieldUpdates = {}
         state.linkTitlesVersion = 0
         state.revealCreatedCard = null
+        state.childPanels = {}
+        state.childPanelByDepth = {}
+        state.nextChildPanelOrdinal = 0
       },
       SET_ACTIVE_INLINE_EDIT(state, payload) {
         state.activeInlineEdit = payload
@@ -931,11 +1136,26 @@ export function createKanbanStore() {
         state.pendingFieldUpdates = pendingFieldUpdates
       },
       UPDATE_CARD_FIELD(state, { cardName, fieldname, value, modified }) {
+        const refreshDeadline = fieldAffectsDeadlineBucket(state.config, fieldname)
         forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
           card[fieldname] = value
           if (modified) {
             card.modified = modified
           }
+          if (refreshDeadline) {
+            refreshCardDeadlineBucket(card, state.config)
+          }
+        })
+        forEachChildPanel(state, (panel) => {
+          forEachCardInstance(null, panel.columns, cardName, (card) => {
+            card[fieldname] = value
+            if (modified) {
+              card.modified = modified
+            }
+            if (refreshDeadline) {
+              refreshCardDeadlineBucket(card, state.config)
+            }
+          })
         })
       },
       APPLY_ATTACHMENT_COUNTS(state, counts = {}) {
@@ -952,9 +1172,40 @@ export function createKanbanStore() {
           for (const lane of state.lanes) {
             apply(lane.columns)
           }
+        } else {
+          apply(state.columns)
+        }
+        forEachChildPanel(state, (panel) => apply(panel.columns))
+      },
+      APPLY_CHILD_COUNTS(state, counts = {}) {
+        const apply = (columns) => {
+          for (const column of columns || []) {
+            for (const card of column.cards || []) {
+              if (card?.name && Object.prototype.hasOwnProperty.call(counts, card.name)) {
+                card._child_count = Number(counts[card.name]) || 0
+              }
+            }
+          }
+        }
+        if (state.lanes?.length) {
+          for (const lane of state.lanes) {
+            apply(lane.columns)
+          }
+        } else {
+          apply(state.columns)
+        }
+        forEachChildPanel(state, (panel) => apply(panel.columns))
+      },
+      ADJUST_CHILD_COUNT(state, { cardName, delta = 0 } = {}) {
+        const name = String(cardName || '').trim()
+        if (!name || !Number.isFinite(delta) || delta === 0) {
           return
         }
-        apply(state.columns)
+        const card = findCard(state, name)
+        if (!card) {
+          return
+        }
+        card._child_count = Math.max(0, (Number(card._child_count) || 0) + delta)
       },
       SET_DATA_REQUEST_ID(state, requestId) {
         state.dataRequestId = requestId
@@ -1028,25 +1279,46 @@ export function createKanbanStore() {
         delete cardMoveFlash[cardName]
         state.cardMoveFlash = cardMoveFlash
       },
-      MOVE_CARD(state, { cardName, fromColumn, toColumn, fromIndex, toIndex }) {
-        const source = state.columns[fromColumn]?.cards || []
+      MOVE_CARD(state, {
+        cardName,
+        fromColumn,
+        toColumn,
+        fromIndex,
+        toIndex,
+        childScopeId = null,
+      }) {
+        const columns = childScopeId && state.childPanels[childScopeId]
+          ? state.childPanels[childScopeId].columns
+          : state.columns
+        const source = columns[fromColumn]?.cards || []
         const sourceIndex = source.findIndex(({ name }) => name === cardName)
         const [card] = source.splice(sourceIndex >= 0 ? sourceIndex : fromIndex, 1)
         if (!card) return
 
-        card[state.config.field_name] = state.columns[toColumn].column_name
-        state.columns[toColumn].cards.splice(toIndex ?? state.columns[toColumn].cards.length, 0, card)
-        state.columns[fromColumn].cards = [...state.columns[fromColumn].cards]
-        state.columns[toColumn].cards = [...state.columns[toColumn].cards]
+        const toMeta = columns[toColumn]
+        if (!toMeta) return
+        card[state.config.field_name] = toMeta.column_name
+        columns[toColumn].cards.splice(toIndex ?? columns[toColumn].cards.length, 0, card)
+        columns[fromColumn].cards = [...columns[fromColumn].cards]
+        columns[toColumn].cards = [...columns[toColumn].cards]
         state.dragSyncGeneration += 1
       },
-      ROLLBACK_CARD_MOVE(state, { cardName, fromColumn, toColumn, fromIndex }) {
+      ROLLBACK_CARD_MOVE(state, {
+        cardName,
+        fromColumn,
+        toColumn,
+        fromIndex,
+        childScopeId = null,
+      }) {
+        const columns = childScopeId && state.childPanels[childScopeId]
+          ? state.childPanels[childScopeId].columns
+          : state.columns
         let destinationColumnIndex = toColumn
-        let destination = state.columns[toColumn]?.cards || []
+        let destination = columns[toColumn]?.cards || []
         let destinationIndex = destination.findIndex(({ name }) => name === cardName)
 
         if (destinationIndex < 0) {
-          destinationColumnIndex = state.columns.findIndex((column) =>
+          destinationColumnIndex = columns.findIndex((column) =>
             column.cards.some(({ name }) => name === cardName),
           )
           if (destinationColumnIndex < 0) {
@@ -1056,7 +1328,7 @@ export function createKanbanStore() {
             state.dragSyncGeneration += 1
             return
           }
-          destination = state.columns[destinationColumnIndex].cards
+          destination = columns[destinationColumnIndex].cards
           destinationIndex = destination.findIndex(({ name }) => name === cardName)
           if (destinationIndex < 0) {
             return
@@ -1064,10 +1336,86 @@ export function createKanbanStore() {
         }
 
         const [card] = destination.splice(destinationIndex, 1)
-        card[state.config.field_name] = state.columns[fromColumn].column_name
-        state.columns[fromColumn].cards.splice(fromIndex, 0, card)
-        state.columns[fromColumn].cards = [...state.columns[fromColumn].cards]
-        state.columns[destinationColumnIndex].cards = [...destination]
+        card[state.config.field_name] = columns[fromColumn].column_name
+        columns[fromColumn].cards.splice(fromIndex, 0, card)
+        columns[fromColumn].cards = [...columns[fromColumn].cards]
+        columns[destinationColumnIndex].cards = [...destination]
+        state.dragSyncGeneration += 1
+      },
+      /**
+       * Restore a child-panel card after an invalid Sortable drop
+       * (e.g. leaked onto the main board under an overlapping list).
+       */
+      RECOVER_CHILD_PANEL_DRAG(state, {
+        cardName,
+        fromColumn,
+        fromIndex,
+        childScopeId,
+      }) {
+        const panel = childScopeId ? state.childPanels[childScopeId] : null
+        if (!panel?.columns?.[fromColumn] || !cardName) {
+          return
+        }
+
+        const alreadyAt = panel.columns[fromColumn].cards.findIndex(
+          ({ name }) => name === cardName,
+        )
+        if (alreadyAt >= 0) {
+          state.dragSyncGeneration += 1
+          return
+        }
+
+        let card = null
+        for (let columnIndex = 0; columnIndex < panel.columns.length; columnIndex += 1) {
+          const cards = panel.columns[columnIndex].cards || []
+          const index = cards.findIndex(({ name }) => name === cardName)
+          if (index >= 0) {
+            ;[card] = cards.splice(index, 1)
+            panel.columns[columnIndex].cards = [...cards]
+            break
+          }
+        }
+
+        if (!card) {
+          for (const column of state.columns || []) {
+            const cards = column.cards || []
+            const index = cards.findIndex(({ name }) => name === cardName)
+            if (index >= 0) {
+              ;[card] = cards.splice(index, 1)
+              column.cards = [...cards]
+              break
+            }
+          }
+        }
+
+        if (!card && state.lanes?.length) {
+          for (const lane of state.lanes) {
+            for (const column of lane.columns || []) {
+              const cards = column.cards || []
+              const index = cards.findIndex(({ name }) => name === cardName)
+              if (index >= 0) {
+                ;[card] = cards.splice(index, 1)
+                column.cards = [...cards]
+                break
+              }
+            }
+            if (card) {
+              break
+            }
+          }
+        }
+
+        if (!card) {
+          state.dragSyncGeneration += 1
+          return
+        }
+
+        const insertAt = Number.isFinite(fromIndex)
+          ? Math.max(0, Math.min(fromIndex, panel.columns[fromColumn].cards.length))
+          : panel.columns[fromColumn].cards.length
+        card[state.config.field_name] = panel.columns[fromColumn].column_name
+        panel.columns[fromColumn].cards.splice(insertAt, 0, card)
+        panel.columns[fromColumn].cards = [...panel.columns[fromColumn].cards]
         state.dragSyncGeneration += 1
       },
       UPDATE_COLUMN_INDICATOR(state, { columnIndex, indicator }) {
@@ -1113,6 +1461,36 @@ export function createKanbanStore() {
         forEachCardInstance(state.lanes, state.columns, cardName, (card) => {
           card.modified = modified
         })
+        forEachChildPanel(state, (panel) => {
+          forEachCardInstance(null, panel.columns, cardName, (card) => {
+            card.modified = modified
+          })
+        })
+      },
+      REMOVE_CARD(state, payload) {
+        const cardName = typeof payload === 'string' ? payload : payload?.cardName
+        const snapshot = removeAllCardInstances(
+          state.lanes,
+          state.columns,
+          cardName,
+          state.childPanels,
+        )
+        if (snapshot && payload && typeof payload === 'object') {
+          payload.snapshot = snapshot
+        }
+        if (snapshot) {
+          state.dragSyncGeneration += 1
+        }
+      },
+      RESTORE_CARD(state, snapshot) {
+        if (restoreCardInstances(
+          state.lanes,
+          state.columns,
+          snapshot,
+          state.childPanels,
+        )) {
+          state.dragSyncGeneration += 1
+        }
       },
       SET_CREATE_OPTIONS_BY_COLUMN(state, options) {
         state.createOptionsByColumn = options || {}
@@ -1201,6 +1579,32 @@ export function createKanbanStore() {
         column.cards = cards
         state.dragSyncGeneration += 1
       },
+      PREPEND_CREATED_CARD_TO_CHILD(state, {
+        childScopeId,
+        columnIndex,
+        card,
+        incrementTotal = true,
+      }) {
+        const panel = childScopeId ? state.childPanels[childScopeId] : null
+        const column = panel?.columns?.[columnIndex]
+        if (!panel || !column) return
+
+        const cards = [...(column.cards || [])]
+        const existingIndex = cards.findIndex(({ name }) => name === card.name)
+        if (existingIndex >= 0) {
+          cards.splice(existingIndex, 1)
+        } else if (incrementTotal) {
+          const colKey = column.column_name
+          const totals = { ...(panel.columnTotals || {}) }
+          if (Number.isFinite(totals[colKey])) {
+            totals[colKey] += 1
+            panel.columnTotals = totals
+          }
+        }
+        cards.unshift(card)
+        column.cards = cards
+        state.dragSyncGeneration += 1
+      },
     },
     actions: {
       async hydrateFromList({ commit, dispatch, state }, {
@@ -1238,6 +1642,8 @@ export function createKanbanStore() {
           return
         }
 
+        await dispatch('hydrateBoardDocumentNames', { args })
+
         const columnsByName = new Map(
           columns.map((column) => [column.column_name, column]),
         )
@@ -1250,30 +1656,36 @@ export function createKanbanStore() {
           column.cards.push(card)
         }
 
+        const visibleColumns = applyChildTaskVisibility(columns, state)
+
         promoteRecentCreatesToTop(
-          columns,
+          visibleColumns,
           state.recentCreatedCards,
           config.field_name,
         )
 
         const pageSize = Number(args.page_length) || state.pageSize
-        commit('SET_COLUMNS', columns)
+        commit('SET_COLUMNS', visibleColumns)
         commit(
           'SET_COLUMN_PAGINATION',
-          createColumnPagination(columns, cards.length >= pageSize),
+          createColumnPagination(visibleColumns, cards.length >= pageSize),
         )
         dispatch('scheduleMoveOptionsRefresh')
         dispatch('fetchMoveOptions', { names: collectVisibleCardNames({
           ...state,
-          columns,
+          columns: visibleColumns,
           config,
         }) })
         dispatch('hydrateCardLinkTitles', {
-          cards: flattenCardsFromColumns(columns),
+          cards: flattenCardsFromColumns(visibleColumns),
           boardGeneration: state.boardGeneration,
         })
         dispatch('hydrateAttachmentCounts', {
-          cards: flattenCardsFromColumns(columns),
+          cards: flattenCardsFromColumns(visibleColumns),
+          boardGeneration: state.boardGeneration,
+        })
+        dispatch('hydrateChildCounts', {
+          cards: flattenCardsFromColumns(visibleColumns),
           boardGeneration: state.boardGeneration,
         })
       },
@@ -1323,6 +1735,102 @@ export function createKanbanStore() {
           return true
         } catch {
           return false
+        }
+      },
+      async hydrateChildCounts(
+        { commit, state },
+        {
+          cards,
+          boardGeneration = state.boardGeneration,
+          dataRequestId = null,
+          columnRequestGeneration = null,
+        } = {},
+      ) {
+        const doctype = state.config.ref_doctype
+        const meta = doctype && globalThis.frappe?.get_meta?.(doctype)
+        if (!meta?.is_tree || !meta?.nsm_parent_field) {
+          return false
+        }
+        const names = [...new Set(
+          (cards || [])
+            .map((card) => card?.name)
+            .filter(Boolean)
+            .map((name) => String(name)),
+        )]
+        if (!doctype || !names.length) {
+          return false
+        }
+
+        try {
+          const counts = {}
+          for (const chunk of chunkList(names, 100)) {
+            const response = await frappe.call({
+              method: 'quick_kanban.api.get_child_counts',
+              args: { doctype, names: chunk },
+            })
+            Object.assign(counts, response.message || {})
+          }
+          if (
+            state.boardGeneration !== boardGeneration
+            || (dataRequestId != null && state.dataRequestId !== dataRequestId)
+            || (
+              columnRequestGeneration != null
+              && state.columnRequestGeneration !== columnRequestGeneration
+            )
+          ) {
+            return false
+          }
+          commit('APPLY_CHILD_COUNTS', counts)
+          return true
+        } catch {
+          return false
+        }
+      },
+      async hydrateBoardDocumentNames({ commit, state }, { args } = {}) {
+        if (state.show_child_tasks || !state.config?.parent_field) {
+          commit('SET_BOARD_DOCUMENT_NAMES', [])
+          commit('SET_HIDDEN_BOARD_CHILD_NAMES', [])
+          return []
+        }
+        const doctype = state.config.ref_doctype
+        const fieldName = state.config.field_name
+        const columnValues = visibleBoardColumns(state.columns)
+          .map((column) => column.column_name)
+          .filter(Boolean)
+        if (!doctype || !fieldName || !columnValues.length) {
+          commit('SET_BOARD_DOCUMENT_NAMES', [])
+          commit('SET_HIDDEN_BOARD_CHILD_NAMES', [])
+          return []
+        }
+        const sourceArgs = args || globalThis.window?.cur_list?.get_args?.() || {}
+        const sharedArgs = {
+          doctype,
+          filters: sourceArgs.filters || [],
+          field_name: fieldName,
+          column_values: columnValues,
+        }
+        if (sourceArgs.or_filters !== undefined && sourceArgs.or_filters !== null) {
+          sharedArgs.or_filters = sourceArgs.or_filters
+        }
+        try {
+          const [namesResponse, hiddenResponse] = await Promise.all([
+            frappe.call({
+              method: 'quick_kanban.api.get_board_document_names',
+              args: sharedArgs,
+            }),
+            frappe.call({
+              method: 'quick_kanban.api.get_hidden_board_child_names',
+              args: sharedArgs,
+            }),
+          ])
+          const names = namesResponse.message || []
+          commit('SET_BOARD_DOCUMENT_NAMES', names)
+          commit('SET_HIDDEN_BOARD_CHILD_NAMES', hiddenResponse.message || [])
+          return names
+        } catch {
+          commit('SET_BOARD_DOCUMENT_NAMES', [])
+          commit('SET_HIDDEN_BOARD_CHILD_NAMES', [])
+          return []
         }
       },
       async hydrateCardLinkTitles(
@@ -1424,13 +1932,6 @@ export function createKanbanStore() {
           sourceArgs.page_length ?? sourceArgs.limit_page_length ?? 0,
         )
         const pageSize = Math.max(requestedPageSize, state.pageSize)
-        const requestArgs = {
-          ...sourceArgs,
-          start: 0,
-          page_length: pageSize,
-        }
-        delete requestArgs.limit_start
-        delete requestArgs.limit_page_length
         const requestId = state.dataRequestId + 1
         const boardGeneration = state.boardGeneration
         commit('SET_DATA_REQUEST_ID', requestId)
@@ -1438,34 +1939,60 @@ export function createKanbanStore() {
         commit('SET_ERROR', '')
 
         try {
-          const response = await frappe.call({
-            method: 'frappe.desk.reportview.get',
-            args: requestArgs,
-          })
+          // Only await when tree parent filtering is active — an extra yield here
+          // would reorder concurrent frappe.call registrations in race tests / dual fetch.
+          if (!state.show_child_tasks && state.config?.parent_field) {
+            await dispatch('hydrateBoardDocumentNames', { args: sourceArgs })
+            if (
+              state.dataRequestId !== requestId ||
+              state.boardGeneration !== boardGeneration
+            ) return false
+          } else {
+            commit('SET_BOARD_DOCUMENT_NAMES', [])
+            commit('SET_HIDDEN_BOARD_CHILD_NAMES', [])
+          }
+          const pageResponses = await Promise.all(
+            state.columns.map((column) => frappe.call({
+              method: 'quick_kanban.api.get_column_page',
+              args: buildFlatColumnPageArgs(
+                state,
+                column.column_name,
+                sourceArgs,
+                { start: 0, pageLength: pageSize },
+              ),
+            })),
+          )
           if (
             state.dataRequestId !== requestId ||
             state.boardGeneration !== boardGeneration
           ) return false
-          const board = response.message || {}
-          cacheUserInfo(board.user_info)
-          const pageColumns = groupCardsByColumn({
-            columns: state.columns,
-            keys: board.keys,
-            values: board.values,
-            statusField: state.config.field_name,
-            userInfo: board.user_info,
+          const resultCounts = []
+          const pageColumns = state.columns.map((column, index) => {
+            const page = pageResponses[index]?.message || {}
+            cacheUserInfo(page.user_info)
+            resultCounts.push(page.values?.length || 0)
+            const cards = filterCardsForChildVisibility(
+              cardsFromPageMessage(page, page.user_info),
+              state,
+            )
+            return { ...column, cards }
           })
           const columns = promoteRecentCreatesToTop(
             pageColumns,
             state.recentCreatedCards,
             state.config.field_name,
           )
-          const resultCount = board.values?.length || 0
 
+          if (state.config?.deadline_enabled) {
+            const projects = flattenCardsFromColumns(columns)
+              .map((card) => card.project)
+              .filter(Boolean)
+            await hydrateDeadlineHolidayContext(projects)
+          }
           commit('SET_COLUMNS', columns)
           commit(
             'SET_COLUMN_PAGINATION',
-            createColumnPagination(columns, resultCount >= pageSize),
+            createColumnPaginationFromLoaded(columns, pageSize, resultCounts),
           )
           dispatch('scheduleMoveOptionsRefresh')
           dispatch('hydrateCardLinkTitles', {
@@ -1474,6 +2001,11 @@ export function createKanbanStore() {
             dataRequestId: requestId,
           })
           dispatch('hydrateAttachmentCounts', {
+            cards: flattenCardsFromColumns(columns),
+            boardGeneration,
+            dataRequestId: requestId,
+          })
+          dispatch('hydrateChildCounts', {
             cards: flattenCardsFromColumns(columns),
             boardGeneration,
             dataRequestId: requestId,
@@ -1495,11 +2027,13 @@ export function createKanbanStore() {
           }
         }
       },
-      async refreshBoard({ dispatch, state }, { board_name, args, forceConfig = false }) {
+      async refreshBoard({ dispatch, state }, { board_name, args, forceConfig = false } = {}) {
         if (forceConfig) {
           await dispatch('resetBoard')
         }
-        const ready = await dispatch('ensureBoard', { board_name })
+        const targetBoard =
+          board_name || state.config.board_name || window.cur_list?.board_name
+        const ready = await dispatch('ensureBoard', { board_name: targetBoard })
         if (ready === false) return
         if (state.config.swimlane_mode && state.config.swimlane_mode !== 'off') {
           await dispatch('refreshSwimlaneBoard', { args })
@@ -1523,6 +2057,7 @@ export function createKanbanStore() {
               swimlane_field: state.config.swimlane_field,
               filters: sourceArgs.filters,
               or_filters: sourceArgs.or_filters,
+              board_name: state.config.board_name,
             },
           })
           const laneRows = lanesResponse.message || []
@@ -1554,9 +2089,20 @@ export function createKanbanStore() {
           )
           commit('SET_DRAG_EXPANDED_LANE', null)
 
+          await dispatch('hydrateBoardDocumentNames', { args: sourceArgs })
           // Card pages load lazily via ensureLaneHydrated when a lane is expanded
-          // and visible in the board scroller.
+          // and visible in the board scroller. Expanded lanes must refill immediately
+          // after a refresh — IntersectionObserver alone does not re-fire when a lane
+          // stays on screen while hydration state is cleared.
           await dispatch('fetchCellTotals', { args: sourceArgs })
+          const expandedKeys = [...(state.expandedLaneKeys || [])]
+          if (expandedKeys.length) {
+            await Promise.all(
+              expandedKeys.map((laneKey) =>
+                dispatch('ensureLaneHydrated', { laneKey, args: sourceArgs }),
+              ),
+            )
+          }
         } catch (error) {
           commit('SET_ERROR', getErrorMessage(error))
           throw error
@@ -1579,6 +2125,8 @@ export function createKanbanStore() {
             lane_keys: state.lanes.map((lane) => lane.key),
             filters: sourceArgs.filters,
             or_filters: sourceArgs.or_filters,
+            hide_board_children: shouldHideBoardChildren(state),
+            board_name: state.config.board_name,
           },
         })
         if (
@@ -1616,6 +2164,7 @@ export function createKanbanStore() {
         if (laneIndex < 0) return false
 
         const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        await ensureChildFilterReady({ dispatch, state }, sourceArgs)
         const requestedPageSize = Number(
           sourceArgs.page_length ?? sourceArgs.limit_page_length ?? 0,
         )
@@ -1635,6 +2184,8 @@ export function createKanbanStore() {
             or_filters: sourceArgs.or_filters,
             start: 0,
             page_length: pageSize,
+            board_name: state.config.board_name,
+            ...buildSwimlanePageHideArgs(state, sourceArgs),
           },
         })
         if (
@@ -1650,13 +2201,22 @@ export function createKanbanStore() {
         const page = response.message || {}
         cacheUserInfo(page.user_info)
         const laneColumns = state.lanes[resolvedLaneIndex].columns
-        const grouped = groupCardsByColumn({
-          columns: laneColumns.map(({ cards: _c, ...meta }) => ({ ...meta, cards: [] })),
-          keys: page.keys,
-          values: page.values,
-          statusField: state.config.field_name,
-          userInfo: page.user_info,
-        })
+        const grouped = applyChildTaskVisibility(
+          groupCardsByColumn({
+            columns: laneColumns.map(({ cards: _c, ...meta }) => ({ ...meta, cards: [] })),
+            keys: page.keys,
+            values: page.values,
+            statusField: state.config.field_name,
+            userInfo: page.user_info,
+          }),
+          state,
+        )
+        if (state.config?.deadline_enabled) {
+          const projects = flattenCardsFromColumns(grouped)
+            .map((card) => card.project)
+            .filter(Boolean)
+          await hydrateDeadlineHolidayContext(projects)
+        }
         const resultCount = page.values?.length || 0
         const pageWasFull = resultCount >= pageSize
 
@@ -1693,6 +2253,11 @@ export function createKanbanStore() {
           columnRequestGeneration,
         })
         dispatch('hydrateAttachmentCounts', {
+          cards: flatCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        dispatch('hydrateChildCounts', {
           cards: flatCards,
           boardGeneration,
           columnRequestGeneration,
@@ -1770,6 +2335,20 @@ export function createKanbanStore() {
         }
         // Collapse only toggles UI preference; cards and laneHydration stay cached
         // so re-expand can show previously loaded data without refetch.
+        // Child panels hosted by a card in this lane must close with the lane.
+        if (!state.expandedLaneKeys.includes(key)) {
+          const depth0ScopeId = state.childPanelByDepth?.[0]
+          const depth0Panel = depth0ScopeId ? state.childPanels?.[depth0ScopeId] : null
+          if (depth0Panel) {
+            const hostKey = depth0Panel.hostLaneKey != null
+              && String(depth0Panel.hostLaneKey).trim() !== ''
+              ? String(depth0Panel.hostLaneKey)
+              : findLaneKeyForCard(state, depth0Panel.parentName)
+            if (hostKey === key) {
+              commit('CLOSE_CHILD_PANELS_FROM_DEPTH', 0)
+            }
+          }
+        }
       },
       async setDragExpandedLane({ commit, dispatch, state }, { laneKey, args } = {}) {
         if (laneKey == null) {
@@ -1810,6 +2389,7 @@ export function createKanbanStore() {
         if (!pagination || pagination.loading || (!reset && !pagination.hasMore)) return
 
         const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        await ensureChildFilterReady({ dispatch, state }, sourceArgs)
         const boardGeneration = state.boardGeneration
         const columnRequestGeneration = state.columnRequestGeneration
         commit('SET_CELL_PAGE_STATE', { key, changes: { loading: true } })
@@ -1828,6 +2408,8 @@ export function createKanbanStore() {
               or_filters: sourceArgs.or_filters,
               start: reset ? 0 : pagination.offset,
               page_length: pageSize,
+              board_name: state.config.board_name,
+              ...buildSwimlanePageHideArgs(state, sourceArgs),
             },
           })
           if (
@@ -1843,7 +2425,15 @@ export function createKanbanStore() {
           if (resolvedLaneIndex < 0) return
           const page = response.message || {}
           cacheUserInfo(page.user_info)
-          const cards = cardsFromPageMessage(page, page.user_info)
+          const cards = filterCardsForChildVisibility(
+            cardsFromPageMessage(page, page.user_info),
+            state,
+          )
+          if (state.config?.deadline_enabled) {
+            await hydrateDeadlineHolidayContext(
+              cards.map((card) => card.project).filter(Boolean),
+            )
+          }
           const resultCount = page.values?.length || 0
           const nextOffset = (reset ? 0 : pagination.offset) + resultCount
           const total = state.cellTotals?.[laneKey]?.[column.column_name]
@@ -1880,6 +2470,11 @@ export function createKanbanStore() {
             columnRequestGeneration,
           })
           dispatch('hydrateAttachmentCounts', {
+            cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateChildCounts', {
             cards,
             boardGeneration,
             columnRequestGeneration,
@@ -2053,6 +2648,7 @@ export function createKanbanStore() {
             commit('CLEAR_CARD_MOVE_OPTIONS', cardName)
           }
           commit('INVALIDATE_COUNT_RESPONSES')
+          dispatch('hydrateBoardDocumentNames')
           dispatch('fetchCellTotals')
           dispatch('scheduleMoveOptionsRefresh')
           frappe.show_alert({
@@ -2080,7 +2676,7 @@ export function createKanbanStore() {
 
         const response = await frappe.call({
           method: 'quick_kanban.api.get_column_totals',
-          args: buildColumnTotalsArgs(sourceArgs, state.config, state.columns),
+          args: buildColumnTotalsArgs(sourceArgs, state.config, state.columns, state),
         })
         if (
           state.boardGeneration !== boardGeneration ||
@@ -2134,14 +2730,6 @@ export function createKanbanStore() {
         if (!pagination || pagination.loading || !pagination.hasMore) return
 
         const sourceArgs = args || window.cur_list.get_args()
-        const requestArgs = {
-          ...sourceArgs,
-          filters: buildColumnFilters(sourceArgs.filters, state.config, column),
-          start: pagination.offset,
-          page_length: pageSize,
-        }
-        delete requestArgs.limit_start
-        delete requestArgs.limit_page_length
         const boardGeneration = state.boardGeneration
         const columnRequestGeneration = state.columnRequestGeneration
         commit('SET_COLUMN_PAGE_STATE', {
@@ -2150,30 +2738,49 @@ export function createKanbanStore() {
         })
 
         try {
+          await ensureChildFilterReady({ dispatch, state }, sourceArgs)
+          if (
+            state.boardGeneration !== boardGeneration ||
+            state.columnRequestGeneration !== columnRequestGeneration
+          ) {
+            commit('SET_COLUMN_PAGE_STATE', {
+              key,
+              changes: { loading: false },
+            })
+            return
+          }
           const response = await frappe.call({
-            method: 'frappe.desk.reportview.get',
-            args: requestArgs,
+            method: 'quick_kanban.api.get_column_page',
+            args: buildFlatColumnPageArgs(
+              state,
+              column.column_name,
+              sourceArgs,
+              { start: pagination.offset, pageLength: pageSize },
+            ),
           })
           if (
             state.boardGeneration !== boardGeneration ||
             state.columnRequestGeneration !== columnRequestGeneration
-          ) return
+          ) {
+            commit('SET_COLUMN_PAGE_STATE', {
+              key,
+              changes: { loading: false },
+            })
+            return
+          }
           const page = response.message || {}
           cacheUserInfo(page.user_info)
-          const pageColumn = groupCardsByColumn({
-            columns: [column],
-            keys: page.keys,
-            values: page.values,
-            statusField: state.config.field_name,
-            userInfo: page.user_info,
-          })[0]
+          const visibleCards = filterCardsForChildVisibility(
+            cardsFromPageMessage(page, page.user_info),
+            state,
+          )
           const resultCount = page.values?.length || 0
           const nextOffset = pagination.offset + resultCount
           const total = state.columnTotals[key]
 
           commit('APPEND_COLUMN_CARDS', {
             columnIndex,
-            cards: pageColumn.cards,
+            cards: visibleCards,
           })
           // Incremental append: do not remount VirtualList (sticky Add flicker).
           commit('SET_COLUMN_PAGE_STATE', {
@@ -2188,12 +2795,17 @@ export function createKanbanStore() {
           })
           dispatch('scheduleMoveOptionsRefresh')
           dispatch('hydrateCardLinkTitles', {
-            cards: pageColumn.cards,
+            cards: visibleCards,
             boardGeneration,
             columnRequestGeneration,
           })
           dispatch('hydrateAttachmentCounts', {
-            cards: pageColumn.cards,
+            cards: visibleCards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateChildCounts', {
+            cards: visibleCards,
             boardGeneration,
             columnRequestGeneration,
           })
@@ -2204,6 +2816,381 @@ export function createKanbanStore() {
           ) {
             commit('SET_COLUMN_PAGE_STATE', {
               key,
+              changes: { loading: false },
+            })
+            commit('SET_ERROR', getErrorMessage(error))
+          }
+          throw error
+        }
+      },
+      async toggleChildPanel(
+        { commit, dispatch, state, getters },
+        { parentName, depth = 0, laneKey = null, args } = {},
+      ) {
+        const parent = String(parentName || '').trim()
+        if (!parent || !state.config?.parent_field) {
+          return false
+        }
+        const level = Math.max(0, Number(depth) || 0)
+        const existingScopeId = state.childPanelByDepth[level]
+        const existing = existingScopeId ? state.childPanels[existingScopeId] : null
+        if (existing?.parentName === parent) {
+          commit('CLOSE_CHILD_PANELS_FROM_DEPTH', level)
+          return false
+        }
+        commit('CLOSE_CHILD_PANELS_FROM_DEPTH', level)
+        commit('BUMP_CHILD_PANEL_ORDINAL')
+        const scopeId = childPanelKey(parent, level)
+        const columns = buildEmptyChildColumns(state.columns)
+        let hostLaneKey = null
+        if (
+          level === 0
+          && getters.swimlanesEnabled
+          && laneKey != null
+          && String(laneKey).trim() !== ''
+        ) {
+          hostLaneKey = String(laneKey)
+        }
+        commit('OPEN_CHILD_PANEL', {
+          scopeId,
+          parentName: parent,
+          depth: level,
+          hostLaneKey,
+          ordinal: state.nextChildPanelOrdinal,
+          columns,
+          columnPagination: createChildColumnPagination(columns, true),
+          columnTotals: {},
+        })
+        // Flat-style: wait for all first pages, then one sync paint (not per-column).
+        await dispatch('fetchChildPanelFirstPages', { scopeId, args })
+        await dispatch('topUpInitialChildColumns', { scopeId, args })
+        return true
+      },
+      closeChildPanelsFromDepth({ commit }, depth = 0) {
+        commit('CLOSE_CHILD_PANELS_FROM_DEPTH', depth)
+      },
+      async fetchChildColumnTotals({ commit, state }, { scopeId, args } = {}) {
+        const panel = state.childPanels[scopeId]
+        if (!panel || !state.config?.parent_field) {
+          return false
+        }
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        const boardGeneration = state.boardGeneration
+        const response = await frappe.call({
+          method: 'quick_kanban.api.get_child_column_totals',
+          args: {
+            doctype: state.config.ref_doctype,
+            fieldname: state.config.field_name,
+            columns: state.columns.map((column) => column.column_name),
+            parent_name: panel.parentName,
+            parent_field: state.config.parent_field,
+            filters: Array.isArray(sourceArgs.filters) ? sourceArgs.filters : [],
+            or_filters: sourceArgs.or_filters,
+          },
+        })
+        if (state.boardGeneration !== boardGeneration || !state.childPanels[scopeId]) {
+          return false
+        }
+        const counts = response.message || {}
+        const totals = Object.fromEntries(
+          state.columns.map((column) => [
+            column.column_name,
+            Number(counts[column.column_name]) || 0,
+          ]),
+        )
+        commit('SET_CHILD_COLUMN_TOTALS', { scopeId, totals })
+        return true
+      },
+      /**
+       * Like fetchKanban: parallel get_child_column_page for every column, then
+       * commit all cards/pagination in one sync pass so columns paint together.
+       * Totals run in parallel so hasMore can use counts at commit time.
+       */
+      async fetchChildPanelFirstPages({ commit, dispatch, state }, { scopeId, args } = {}) {
+        const panel = state.childPanels[scopeId]
+        if (!panel || !state.config?.parent_field) {
+          return false
+        }
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        const pageSize = state.columnPageSize
+        const boardGeneration = state.boardGeneration
+        const columnRequestGeneration = state.columnRequestGeneration
+        const filters = Array.isArray(sourceArgs.filters) ? sourceArgs.filters : []
+        const columnValues = activeColumnValues(state)
+
+        for (const column of panel.columns) {
+          commit('SET_CHILD_COLUMN_PAGE_STATE', {
+            scopeId,
+            columnName: column.column_name,
+            changes: { loading: true },
+          })
+        }
+
+        let pageResponses
+        try {
+          const [, responses] = await Promise.all([
+            dispatch('fetchChildColumnTotals', { scopeId, args: sourceArgs }),
+            Promise.all(
+              panel.columns.map((column) => frappe.call({
+                method: 'quick_kanban.api.get_child_column_page',
+                args: {
+                  doctype: state.config.ref_doctype,
+                  status_field: state.config.field_name,
+                  column: column.column_name,
+                  parent_name: panel.parentName,
+                  parent_field: state.config.parent_field,
+                  fields: state.config.fields,
+                  filters,
+                  or_filters: sourceArgs.or_filters,
+                  start: 0,
+                  page_length: pageSize,
+                  column_values: columnValues,
+                },
+              })),
+            ),
+          ])
+          pageResponses = responses
+        } catch (error) {
+          if (
+            state.boardGeneration === boardGeneration
+            && state.columnRequestGeneration === columnRequestGeneration
+            && state.childPanels[scopeId]
+          ) {
+            for (const column of panel.columns) {
+              commit('SET_CHILD_COLUMN_PAGE_STATE', {
+                scopeId,
+                columnName: column.column_name,
+                changes: { loading: false },
+              })
+            }
+          }
+          throw error
+        }
+
+        if (
+          state.boardGeneration !== boardGeneration
+          || state.columnRequestGeneration !== columnRequestGeneration
+          || !state.childPanels[scopeId]
+        ) {
+          return false
+        }
+
+        const hydrated = state.childPanels[scopeId]
+        const allCards = []
+        for (let columnIndex = 0; columnIndex < hydrated.columns.length; columnIndex += 1) {
+          const column = hydrated.columns[columnIndex]
+          const columnName = column.column_name
+          const page = pageResponses[columnIndex]?.message || {}
+          cacheUserInfo(page.user_info)
+          const cards = cardsFromPageMessage(page, page.user_info)
+          const resultCount = page.values?.length || 0
+          const total = hydrated.columnTotals?.[columnName]
+          commit('SET_COLUMN_CARDS', {
+            childScopeId: scopeId,
+            columnIndex,
+            cards,
+          })
+          commit('SET_CHILD_COLUMN_PAGE_STATE', {
+            scopeId,
+            columnName,
+            changes: {
+              offset: resultCount,
+              loading: false,
+              hasMore:
+                resultCount >= pageSize
+                && (!Number.isFinite(total) || resultCount < total),
+            },
+          })
+          allCards.push(...cards)
+        }
+        commit('BUMP_DRAG_SYNC')
+        dispatch('scheduleMoveOptionsRefresh')
+        dispatch('hydrateCardLinkTitles', {
+          cards: allCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        dispatch('hydrateAttachmentCounts', {
+          cards: allCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        dispatch('hydrateChildCounts', {
+          cards: allCards,
+          boardGeneration,
+          columnRequestGeneration,
+        })
+        return true
+      },
+      /**
+       * After first pages: top-up each column to initialColumnCardMinimum.
+       * Remaining pages load on column scroll via loadChildColumnPage.
+       */
+      async topUpInitialChildColumns({ dispatch, state }, { scopeId, args } = {}) {
+        const hydrated = state.childPanels[scopeId]
+        if (!hydrated) {
+          return
+        }
+        await Promise.allSettled(
+          hydrated.columns.map(async (column, columnIndex) => {
+            const columnName = column.column_name
+            const total = hydrated.columnTotals?.[columnName]
+            if (!Number.isFinite(total) || total <= 0) {
+              return
+            }
+            const target = Math.min(initialColumnCardMinimum, total)
+            let loaded = column.cards?.length || 0
+            while (loaded < target) {
+              const current = state.childPanels[scopeId]
+              if (!current) {
+                return
+              }
+              const pagination = current.columnPagination?.[columnName]
+              if (!pagination?.hasMore || pagination.loading) {
+                return
+              }
+              const previousOffset = pagination.offset
+              await dispatch('loadChildColumnPage', {
+                scopeId,
+                columnIndex,
+                args,
+                pageSize: target - loaded,
+              })
+              loaded = state.childPanels[scopeId]?.columns?.[columnIndex]?.cards?.length || 0
+              if (state.childPanels[scopeId]?.columnPagination?.[columnName]?.offset === previousOffset) {
+                return
+              }
+            }
+          }),
+        )
+      },
+      async loadChildColumnPage(
+        { commit, dispatch, state },
+        {
+          scopeId,
+          columnIndex,
+          args,
+          pageSize = state.columnPageSize,
+          reset = false,
+        } = {},
+      ) {
+        const panel = state.childPanels[scopeId]
+        const column = panel?.columns?.[columnIndex]
+        if (!panel || !column || !state.config?.parent_field) {
+          return
+        }
+        const columnName = column.column_name
+        if (reset) {
+          commit('SET_COLUMN_CARDS', {
+            childScopeId: scopeId,
+            columnIndex,
+            cards: [],
+          })
+          commit('SET_CHILD_COLUMN_PAGE_STATE', {
+            scopeId,
+            columnName,
+            changes: { offset: 0, hasMore: true, loading: false },
+          })
+        }
+        const pagination = panel.columnPagination?.[columnName]
+        if (!pagination || pagination.loading || (!reset && !pagination.hasMore)) {
+          return
+        }
+
+        const sourceArgs = args || window.cur_list?.get_args?.() || {}
+        const boardGeneration = state.boardGeneration
+        const columnRequestGeneration = state.columnRequestGeneration
+        commit('SET_CHILD_COLUMN_PAGE_STATE', {
+          scopeId,
+          columnName,
+          changes: { loading: true },
+        })
+
+        try {
+          const response = await frappe.call({
+            method: 'quick_kanban.api.get_child_column_page',
+            args: {
+              doctype: state.config.ref_doctype,
+              status_field: state.config.field_name,
+              column: columnName,
+              parent_name: panel.parentName,
+              parent_field: state.config.parent_field,
+              fields: state.config.fields,
+              filters: Array.isArray(sourceArgs.filters) ? sourceArgs.filters : [],
+              or_filters: sourceArgs.or_filters,
+              start: reset ? 0 : pagination.offset,
+              page_length: pageSize,
+              column_values: activeColumnValues(state),
+            },
+          })
+          if (
+            state.boardGeneration !== boardGeneration
+            || state.columnRequestGeneration !== columnRequestGeneration
+            || !state.childPanels[scopeId]
+          ) {
+            commit('SET_CHILD_COLUMN_PAGE_STATE', {
+              scopeId,
+              columnName,
+              changes: { loading: false },
+            })
+            return
+          }
+          const page = response.message || {}
+          cacheUserInfo(page.user_info)
+          const cards = cardsFromPageMessage(page, page.user_info)
+          const resultCount = page.values?.length || 0
+          const nextOffset = (reset ? 0 : pagination.offset) + resultCount
+          const total = panel.columnTotals?.[columnName]
+
+          if (reset) {
+            commit('SET_COLUMN_CARDS', {
+              childScopeId: scopeId,
+              columnIndex,
+              cards,
+            })
+            commit('BUMP_DRAG_SYNC')
+          } else {
+            commit('APPEND_COLUMN_CARDS', {
+              childScopeId: scopeId,
+              columnIndex,
+              cards,
+            })
+          }
+          commit('SET_CHILD_COLUMN_PAGE_STATE', {
+            scopeId,
+            columnName,
+            changes: {
+              offset: nextOffset,
+              loading: false,
+              hasMore:
+                resultCount >= pageSize
+                && (!Number.isFinite(total) || nextOffset < total),
+            },
+          })
+          dispatch('scheduleMoveOptionsRefresh')
+          dispatch('hydrateCardLinkTitles', {
+            cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateAttachmentCounts', {
+            cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+          dispatch('hydrateChildCounts', {
+            cards,
+            boardGeneration,
+            columnRequestGeneration,
+          })
+        } catch (error) {
+          if (
+            state.boardGeneration === boardGeneration
+            && state.columnRequestGeneration === columnRequestGeneration
+          ) {
+            commit('SET_CHILD_COLUMN_PAGE_STATE', {
+              scopeId,
+              columnName,
               changes: { loading: false },
             })
             commit('SET_ERROR', getErrorMessage(error))
@@ -2239,7 +3226,10 @@ export function createKanbanStore() {
           commit('SET_CREATE_OPTIONS_BY_COLUMN', {})
         }
       },
-      startCreateCard({ commit, dispatch, state }, { columnIndex, column, laneKey = null }) {
+      async startCreateCard(
+        { commit, dispatch, state },
+        { columnIndex, column, laneKey = null, childScopeId = null },
+      ) {
         const formMode = resolveCreateFormMode(
           column,
           state.config,
@@ -2254,10 +3244,51 @@ export function createKanbanStore() {
           return false
         }
 
+        const scopeId = childScopeId ? String(childScopeId) : null
+        const panel = scopeId ? state.childPanels?.[scopeId] : null
+        const parentName = panel?.parentName ? String(panel.parentName) : null
+        const parentField = state.config?.parent_field
+
+        let parentDefaults = {}
+        if (scopeId && parentName && state.config?.ref_doctype) {
+          const card = findCard(state, parentName) || { name: parentName }
+          const candidates = listParentCreateCandidateFields(state.config)
+          const missing = candidates.filter((fieldname) => {
+            const value = card[fieldname]
+            return value == null || value === ''
+          })
+          let fetched = {}
+          if (missing.length && typeof frappe?.db?.get_value === 'function') {
+            try {
+              if (typeof frappe?.model?.with_doctype === 'function') {
+                await frappe.model.with_doctype(state.config.ref_doctype)
+              }
+              const response = await frappe.db.get_value(
+                state.config.ref_doctype,
+                parentName,
+                missing,
+              )
+              fetched = response?.message && typeof response.message === 'object'
+                ? response.message
+                : {}
+            } catch {
+              fetched = {}
+            }
+          }
+          parentDefaults = buildParentCreateDefaults(
+            { ...card, ...fetched },
+            state.config,
+          )
+        }
+
         const swimlanePlan = buildSwimlaneCreateDefaults(state.config, laneKey)
         const defaults = {
           [state.config.field_name]: column.column_name,
+          ...parentDefaults,
           ...swimlanePlan.defaults,
+        }
+        if (scopeId && parentName && parentField) {
+          defaults[parentField] = parentName
         }
         commit('SET_PENDING_CREATE', {
           column_name: column.column_name,
@@ -2266,6 +3297,7 @@ export function createKanbanStore() {
           form_mode: formMode.mode,
           laneKey: laneKey != null ? String(laneKey) : null,
           assign_to: swimlanePlan.assignTo,
+          childScopeId: scopeId,
         })
 
         return openCreateForm({
@@ -2304,6 +3336,18 @@ export function createKanbanStore() {
         }
 
         const card = docToCard(doc, state.config)
+        const childScopeId = pending?.childScopeId || null
+        if (
+          !childScopeId
+          && !filterCardsForChildVisibility([card], state).length
+        ) {
+          commit('CLEAR_PENDING_CREATE')
+          return false
+        }
+        if (childScopeId && !state.childPanels?.[childScopeId]) {
+          commit('CLEAR_PENDING_CREATE')
+          return false
+        }
 
         const assignTo = pending?.assign_to
         if (assignTo && state.config.swimlane_mode === 'assign') {
@@ -2328,8 +3372,18 @@ export function createKanbanStore() {
           }
         }
 
-        const columnName = state.columns[columnIndex]?.column_name || statusValue
-        if (swimlanesActive(state) && pending?.laneKey != null) {
+        const columnName = childScopeId
+          ? (state.childPanels[childScopeId]?.columns?.[columnIndex]?.column_name
+            || state.columns[columnIndex]?.column_name
+            || statusValue)
+          : (state.columns[columnIndex]?.column_name || statusValue)
+        if (childScopeId) {
+          commit('PREPEND_CREATED_CARD_TO_CHILD', {
+            childScopeId,
+            columnIndex,
+            card,
+          })
+        } else if (swimlanesActive(state) && pending?.laneKey != null) {
           if (!cardMatchesLane(card, pending.laneKey, state.config)) {
             commit('CLEAR_PENDING_CREATE')
             return false
@@ -2347,7 +3401,7 @@ export function createKanbanStore() {
           columnName,
         })
         let laneIndex = null
-        if (pending?.laneKey != null) {
+        if (!childScopeId && pending?.laneKey != null) {
           const found = (state.lanes || []).findIndex(
             (lane) => String(lane.key ?? '') === String(pending.laneKey),
           )
@@ -2358,13 +3412,27 @@ export function createKanbanStore() {
           columnIndex,
           cardIndex: 0,
           laneIndex,
+          childScopeId,
         })
         commit('CLEAR_PENDING_CREATE')
+        if (childScopeId) {
+          const parentName = String(
+            state.childPanels[childScopeId]?.parentName || '',
+          ).trim()
+          if (parentName) {
+            commit('ADJUST_CHILD_COUNT', { cardName: parentName, delta: 1 })
+            dispatch('hydrateChildCounts', { cards: [{ name: parentName }] })
+          }
+        }
         dispatch('scheduleMoveOptionsRefresh')
         dispatch('hydrateCardLinkTitles', {
           cards: [card],
           boardGeneration: state.boardGeneration,
         })
+        dispatch('hydrateBoardDocumentNames')
+        if (!childScopeId && !swimlanesActive(state)) {
+          dispatch('fetchColumnTotals')
+        }
         return true
       },
       scheduleMoveOptionsRefresh({ dispatch, state }) {
@@ -2475,13 +3543,122 @@ export function createKanbanStore() {
       preflightMove({ commit, state }, payload) {
         return runPreflightMove(state, commit, payload)
       },
+      async deleteCard({ commit, dispatch, state }, { cardName } = {}) {
+        if (!cardName || state.pendingMoves[cardName]) {
+          return false
+        }
+        const card = findCard(state, cardName)
+        if (!card) {
+          return false
+        }
+        const parentField = state.config?.parent_field
+        const parentName = parentField
+          ? String(card[parentField] || '').trim()
+          : ''
+        const expectedModified = card.modified
+        const boardGeneration = state.boardGeneration
+        const removal = { cardName }
+        commit('SET_MOVE_PENDING', { cardName, pending: true })
+        commit('REMOVE_CARD', removal)
+        const snapshot = removal.snapshot
+        if (!snapshot) {
+          commit('SET_MOVE_PENDING', { cardName, pending: false })
+          return false
+        }
+        try {
+          await frappe.call({
+            method: 'quick_kanban.api.delete_card',
+            args: {
+              board_name: state.config.board_name,
+              name: cardName,
+              expected_modified: expectedModified || undefined,
+            },
+          })
+          if (state.boardGeneration !== boardGeneration) {
+            return true
+          }
+          commit('CLEAR_CARD_MOVE_OPTIONS', cardName)
+          commit('INVALIDATE_COUNT_RESPONSES')
+          for (const placement of snapshot.placements) {
+            if (placement.type === 'column') {
+              commit('ADJUST_COLUMN_OFFSET', {
+                columnIndex: placement.columnIndex,
+                delta: -1,
+              })
+              commit('ADJUST_COLUMN_TOTAL', {
+                columnIndex: placement.columnIndex,
+                delta: -1,
+              })
+            } else if (placement.type === 'child') {
+              const panel = state.childPanels?.[placement.scopeId]
+              const column = panel?.columns?.[placement.columnIndex]
+              const columnName = column?.column_name
+              if (panel && columnName) {
+                if (Number.isFinite(panel.columnTotals?.[columnName])) {
+                  commit('SET_CHILD_COLUMN_TOTALS', {
+                    scopeId: placement.scopeId,
+                    totals: {
+                      ...panel.columnTotals,
+                      [columnName]: Math.max(0, panel.columnTotals[columnName] - 1),
+                    },
+                  })
+                }
+                const pagination = panel.columnPagination?.[columnName]
+                if (pagination && Number.isFinite(pagination.offset)) {
+                  commit('SET_CHILD_COLUMN_PAGE_STATE', {
+                    scopeId: placement.scopeId,
+                    columnName,
+                    changes: {
+                      offset: Math.max(0, pagination.offset - 1),
+                    },
+                  })
+                }
+              }
+            }
+          }
+          if (parentName) {
+            commit('ADJUST_CHILD_COUNT', { cardName: parentName, delta: -1 })
+            dispatch('hydrateChildCounts', { cards: [{ name: parentName }] })
+          }
+          if (typeof frappe.show_alert === 'function') {
+            frappe.show_alert({
+              message: __('Card deleted', null, 'QuickKanban.ExtraInfo'),
+              indicator: 'green',
+            })
+          }
+          dispatch('scheduleMoveOptionsRefresh')
+          dispatch('hydrateBoardDocumentNames')
+          if (swimlanesActive(state)) {
+            dispatch('fetchCellTotals')
+          } else {
+            dispatch('fetchColumnTotals')
+          }
+          return true
+        } catch (error) {
+          if (state.boardGeneration === boardGeneration) {
+            commit('RESTORE_CARD', snapshot)
+            if (typeof frappe.show_alert === 'function') {
+              frappe.show_alert({
+                message: __('Could not delete the card.', null, 'QuickKanban.ExtraInfo'),
+                indicator: 'red',
+              })
+            }
+          }
+          return false
+        } finally {
+          if (state.boardGeneration === boardGeneration) {
+            commit('SET_MOVE_PENDING', { cardName, pending: false })
+          }
+        }
+      },
       async persistMove(
         { commit, dispatch, state },
         { cardName, fromColumn, toColumn, fromIndex, workflowAction = null },
       ) {
         const boardGeneration = state.boardGeneration
         commit('SET_MOVE_PENDING', { cardName, pending: true })
-        const card = state.columns[toColumn].cards.find(({ name }) => name === cardName)
+        const card = findCard(state, cardName)
+          || state.columns[toColumn]?.cards?.find(({ name }) => name === cardName)
         try {
           const response = await frappe.call({
             method: 'quick_kanban.api.move_card',
@@ -2530,6 +3707,12 @@ export function createKanbanStore() {
             __('Card moved to {0}', [destinationLabel]),
           )
           dispatch('scheduleMoveOptionsRefresh')
+          dispatch('hydrateBoardDocumentNames')
+          dispatch('fetchColumnTotals')
+          // Refresh open child panel totals so column hasMore stays accurate.
+          for (const scopeId of Object.keys(state.childPanels || {})) {
+            dispatch('fetchChildColumnTotals', { scopeId })
+          }
         } catch (error) {
           if (state.boardGeneration === boardGeneration) {
             commit('ROLLBACK_CARD_MOVE', {
@@ -2549,6 +3732,53 @@ export function createKanbanStore() {
       },
       async moveCard({ commit, dispatch, state }, payload) {
         if (state.pendingMoves[payload.cardName]) return false
+
+        if (payload.childScopeId && state.childPanels[payload.childScopeId]) {
+          const panel = state.childPanels[payload.childScopeId]
+          const fromColumn = payload.fromColumn
+          const toColumn = payload.toColumn
+          if (!panel.columns[fromColumn] || !panel.columns[toColumn]) {
+            return false
+          }
+          if (fromColumn === toColumn) {
+            return false
+          }
+          const boardPayload = {
+            ...payload,
+            // Map to board column indices by column_name for policy/persist.
+            fromColumn: state.columns.findIndex(
+              (column) => column.column_name === panel.columns[fromColumn].column_name,
+            ),
+            toColumn: state.columns.findIndex(
+              (column) => column.column_name === panel.columns[toColumn].column_name,
+            ),
+          }
+          if (boardPayload.fromColumn < 0 || boardPayload.toColumn < 0) {
+            return false
+          }
+          const preflight = runPreflightMove(state, commit, boardPayload)
+          if (!preflight.allowed) {
+            reportMoveFailure(commit, preflight, state.config)
+            return false
+          }
+          let workflowAction = payload.workflowAction || null
+          const policy = preflight.policy
+          if (policy?.mode === 'workflow' && (policy.actions?.length || 0) > 1) {
+            try {
+              workflowAction = await dispatch('resolveWorkflowAction', {
+                cardName: payload.cardName,
+                column: state.columns[boardPayload.toColumn],
+              })
+            } catch {
+              return false
+            }
+          } else if (policy?.actions?.length === 1) {
+            workflowAction = policy.actions[0].action
+          }
+          commit('MOVE_CARD', { ...payload, workflowAction })
+          await dispatch('persistMove', { ...boardPayload, workflowAction })
+          return true
+        }
 
         if (swimlanesActive(state) && state.lanes?.length) {
           const fromLaneIndex = Number.isFinite(payload.fromLaneIndex)
@@ -2622,6 +3852,121 @@ export function createKanbanStore() {
         return true
       },
       async persistMovedCard({ commit, dispatch, state }, payload) {
+        if (payload.childScopeId && state.childPanels[payload.childScopeId]) {
+          const panel = state.childPanels[payload.childScopeId]
+          const childFrom = payload.fromColumn
+          const childTo = payload.toColumn
+          const boardFrom = state.columns.findIndex(
+            (column) => column.column_name === panel.columns[childFrom]?.column_name,
+          )
+          const boardTo = state.columns.findIndex(
+            (column) => column.column_name === panel.columns[childTo]?.column_name,
+          )
+          if (boardFrom < 0 || boardTo < 0) {
+            commit('ROLLBACK_CARD_MOVE', payload)
+            return buildDragMoveFailureResult(payload)
+          }
+          const boardPayload = {
+            cardName: payload.cardName,
+            fromColumn: boardFrom,
+            toColumn: boardTo,
+            fromIndex: payload.fromIndex,
+            toIndex: payload.toIndex,
+            workflowAction: payload.workflowAction || null,
+          }
+          if (state.pendingMoves[payload.cardName]) {
+            commit('ROLLBACK_CARD_MOVE', payload)
+            return buildDragMoveFailureResult(payload)
+          }
+          const preflight = runPreflightMove(state, commit, boardPayload)
+          if (!preflight.allowed) {
+            commit('ROLLBACK_CARD_MOVE', payload)
+            reportMoveFailure(commit, preflight, state.config)
+            return buildDragMoveFailureResult(payload, preflight)
+          }
+          let workflowAction = boardPayload.workflowAction
+          const policy = preflight.policy
+          if (policy?.mode === 'workflow' && (policy.actions?.length || 0) > 1) {
+            try {
+              workflowAction = await dispatch('resolveWorkflowAction', {
+                cardName: payload.cardName,
+                column: state.columns[boardTo],
+              })
+            } catch {
+              commit('ROLLBACK_CARD_MOVE', payload)
+              return {
+                ok: false,
+                cancelled: true,
+                needsAnimatedRollback: true,
+                payload,
+              }
+            }
+          } else if (policy?.actions?.length === 1) {
+            workflowAction = policy.actions[0].action
+          }
+          const movePayload = { ...boardPayload, workflowAction }
+          const recheck = runPreflightMove(state, commit, movePayload)
+          if (!recheck.allowed) {
+            commit('ROLLBACK_CARD_MOVE', payload)
+            reportMoveFailure(commit, recheck, state.config)
+            return buildDragMoveFailureResult(payload, recheck)
+          }
+          try {
+            const card = panel.columns[childTo]?.cards?.find(
+              ({ name }) => name === payload.cardName,
+            )
+            if (card) {
+              card[state.config.field_name] = state.columns[boardTo].column_name
+            }
+            const boardGeneration = state.boardGeneration
+            commit('SET_MOVE_PENDING', { cardName: payload.cardName, pending: true })
+            try {
+              const response = await frappe.call({
+                method: 'quick_kanban.api.move_card',
+                args: {
+                  board_name: state.config.board_name,
+                  name: payload.cardName,
+                  value: state.columns[boardTo].column_name,
+                  expected_modified: card?.modified,
+                  workflow_action: workflowAction || undefined,
+                },
+              })
+              if (state.boardGeneration !== boardGeneration) {
+                return { ok: true }
+              }
+              if (response?.message?.modified) {
+                commit('UPDATE_CARD_MODIFIED', {
+                  cardName: payload.cardName,
+                  modified: response.message.modified,
+                })
+              }
+              commit('CLEAR_CARD_MOVE_OPTIONS', payload.cardName)
+              commit('INVALIDATE_COUNT_RESPONSES')
+              const destinationColumn = state.columns[boardTo]
+              const destinationLabel = destinationColumn.display_name
+                || destinationColumn.column_name
+              frappe.show_alert({
+                message: __('Card moved to {0}', [destinationLabel]),
+                indicator: 'green',
+              })
+              commit(
+                'SET_ANNOUNCEMENT',
+                __('Card moved to {0}', [destinationLabel]),
+              )
+              dispatch('scheduleMoveOptionsRefresh')
+              dispatch('fetchChildColumnTotals', { scopeId: payload.childScopeId })
+              return { ok: true }
+            } finally {
+              if (state.boardGeneration === boardGeneration) {
+                commit('SET_MOVE_PENDING', { cardName: payload.cardName, pending: false })
+              }
+            }
+          } catch (error) {
+            commit('ROLLBACK_CARD_MOVE', payload)
+            reportMoveFailure(commit, null, state.config, error)
+            return buildDragMoveFailureResult(payload, null, error)
+          }
+        }
         if (state.pendingMoves[payload.cardName]) {
           commit('ROLLBACK_CARD_MOVE', payload)
           return buildDragMoveFailureResult(payload)
@@ -2705,8 +4050,76 @@ export function createKanbanStore() {
           commit('RECONCILE_CARD_INSTANCES', cardName)
         }
       },
+      async relocateDeadlineSwimlaneCard({ commit, dispatch, state }, { cardName } = {}) {
+        if (
+          state.config?.swimlane_mode !== 'deadlines'
+          || !cardName
+          || !state.lanes?.length
+        ) {
+          return false
+        }
+        const found = findCardInLanes(state.lanes, cardName)
+        if (!found) {
+          return false
+        }
+        const template = { ...found.card }
+        refreshCardDeadlineBucket(template, state.config)
+        const targetKey = String(template._deadline_bucket ?? 'none')
+        const sourceKey = String(found.lane.key ?? '')
+        if (targetKey === sourceKey) {
+          return false
+        }
+
+        const statusField = state.config.field_name
+        const columnName = template[statusField]
+        if (!columnName) {
+          return false
+        }
+
+        commit('ADD_EXPANDED_LANE', targetKey)
+        await dispatch('ensureLaneHydrated', { laneKey: targetKey })
+
+        if (state.lanes.findIndex((lane) => String(lane.key) === targetKey) < 0) {
+          return false
+        }
+
+        // Re-read after hydrate; always re-place at top of target column.
+        const latest = findCard(state, cardName)
+        const card = latest ? { ...latest } : template
+        refreshCardDeadlineBucket(card, state.config)
+        const finalTarget = String(card._deadline_bucket ?? 'none')
+        commit('REMOVE_CARD', cardName)
+        commit('PREPEND_CREATED_CARD_TO_CELL', {
+          laneKey: finalTarget,
+          columnName,
+          card,
+          incrementTotal: false,
+        })
+
+        const laneIndex = state.lanes.findIndex(
+          (lane) => String(lane.key) === finalTarget,
+        )
+        const columnIndex = laneIndex >= 0
+          ? (state.lanes[laneIndex].columns || []).findIndex(
+            (column) => column.column_name === columnName,
+          )
+          : -1
+        if (laneIndex >= 0 && columnIndex >= 0) {
+          commit('SET_REVEAL_CREATED_CARD', {
+            cardName,
+            laneIndex,
+            columnIndex,
+            cardIndex: 0,
+            flash: true,
+          })
+        }
+        commit('INVALIDATE_COUNT_RESPONSES')
+        dispatch('fetchCellTotals')
+        dispatch('scheduleMoveOptionsRefresh')
+        return true
+      },
       async updateCardField(
-        { commit, state },
+        { commit, dispatch, state },
         { cardName, fieldname, value, previousValue },
       ) {
         const card = findCard(state, cardName)
@@ -2749,6 +4162,12 @@ export function createKanbanStore() {
             && fieldAffectsSwimlaneLayout(state, fieldname)
           ) {
             commit('RECONCILE_CARD_INSTANCES', cardName)
+          }
+          if (
+            state.config.swimlane_mode === 'deadlines'
+            && fieldAffectsSwimlaneLayout(state, fieldname)
+          ) {
+            await dispatch('relocateDeadlineSwimlaneCard', { cardName })
           }
           if (typeof frappe.model?.clear_doc === 'function') {
             frappe.model.clear_doc(state.config.ref_doctype, cardName)
@@ -3395,6 +4814,98 @@ export function createKanbanStore() {
       }),
       getConfig: (state) => state.config,
       isMinimizeCards: (state) => state.minimize_cards,
+      isShowChildTasks: (state) => state.show_child_tasks,
+      getChildPanel: (state) => (scopeId) => state.childPanels[scopeId] || null,
+      getChildPanelAtDepth: (state) => (depth) => {
+        const scopeId = state.childPanelByDepth[depth]
+        return scopeId ? state.childPanels[scopeId] || null : null
+      },
+      isChildPanelOpenFor: (state) => (parentName, depth = 0) => {
+        const scopeId = state.childPanelByDepth[depth]
+        const panel = scopeId ? state.childPanels[scopeId] : null
+        return Boolean(panel && panel.parentName === String(parentName || ''))
+      },
+      isChildPanelHostFor: (state) => (parentName, depth = 0, laneKey = null) => {
+        const scopeId = state.childPanelByDepth[depth]
+        const panel = scopeId ? state.childPanels[scopeId] : null
+        if (!panel || panel.parentName !== String(parentName || '')) {
+          return false
+        }
+        const hostKey = panel.hostLaneKey != null && String(panel.hostLaneKey).trim() !== ''
+          ? String(panel.hostLaneKey)
+          : null
+        if (hostKey == null) {
+          return true
+        }
+        if (laneKey == null || String(laneKey).trim() === '') {
+          return false
+        }
+        return String(laneKey) === hostKey
+      },
+      getChildPanelScopeId: (state) => (parentName, depth = 0) => {
+        const scopeId = state.childPanelByDepth[depth]
+        const panel = scopeId ? state.childPanels[scopeId] : null
+        if (panel && panel.parentName === String(parentName || '')) {
+          return scopeId
+        }
+        return null
+      },
+      maxOpenChildPanelDepth: (state) => {
+        const depths = Object.keys(state.childPanelByDepth || {})
+          .map((key) => Number(key))
+          .filter((depth) => Number.isFinite(depth))
+        return depths.length ? Math.max(...depths) : null
+      },
+      childPanelAncestorNames: (state) => {
+        const names = new Set()
+        for (const scopeId of Object.values(state.childPanelByDepth || {})) {
+          const panel = scopeId ? state.childPanels?.[scopeId] : null
+          const parentName = String(panel?.parentName || '').trim()
+          if (parentName) {
+            names.add(parentName)
+          }
+        }
+        return names
+      },
+      getCardChildPanelMode: (state, getters) => (cardName, childDepth = 0, laneKey = null) => {
+        const maxDepth = getters.maxOpenChildPanelDepth
+        if (maxDepth == null) {
+          return 'active'
+        }
+        const name = String(cardName || '').trim()
+        if (name && getters.childPanelAncestorNames.has(name)) {
+          let hostLaneKey = null
+          for (const scopeId of Object.values(state.childPanelByDepth || {})) {
+            const panel = scopeId ? state.childPanels?.[scopeId] : null
+            if (panel && String(panel.parentName || '').trim() === name) {
+              hostLaneKey = panel.hostLaneKey != null && String(panel.hostLaneKey).trim() !== ''
+                ? String(panel.hostLaneKey)
+                : null
+              break
+            }
+          }
+          if (
+            hostLaneKey != null
+            && laneKey != null
+            && String(laneKey).trim() !== ''
+            && String(laneKey) !== hostLaneKey
+          ) {
+            return 'inert'
+          }
+          return 'ancestor'
+        }
+        if (Number(childDepth) === maxDepth + 1) {
+          return 'active'
+        }
+        return 'inert'
+      },
+      getChildColumnPagination: (state) => (scopeId, columnName) => (
+        state.childPanels[scopeId]?.columnPagination?.[columnName] || {
+          offset: 0,
+          hasMore: false,
+          loading: false,
+        }
+      ),
       isColumnCollapsed: (state) => (columnKey) => Boolean(state.collapsedColumns[columnKey]),
       canEditBoard: (state) => Boolean(state.boardPerms?.write),
       isMovePending: (state) => (cardName) => Boolean(state.pendingMoves[cardName]),
@@ -3530,6 +5041,59 @@ function mergeCards(existingCards, newCards) {
   return [...cards.values()]
 }
 
+function activeColumnValues(state) {
+  return (state.columns || []).map((column) => column.column_name).filter(Boolean)
+}
+
+function buildFlatColumnPageArgs(state, columnName, sourceArgs, { start, pageLength }) {
+  const args = {
+    doctype: state.config.ref_doctype,
+    status_field: state.config.field_name,
+    column: columnName,
+    fields: state.config.fields,
+    filters: Array.isArray(sourceArgs.filters) ? sourceArgs.filters : [],
+    start,
+    page_length: pageLength,
+    hide_board_children: shouldHideBoardChildren(state),
+    column_values: activeColumnValues(state),
+    board_name: state.config.board_name,
+  }
+  if (sourceArgs.or_filters !== undefined && sourceArgs.or_filters !== null) {
+    args.or_filters = sourceArgs.or_filters
+  }
+  return args
+}
+
+function buildSwimlanePageHideArgs(state, sourceArgs) {
+  const args = {
+    hide_board_children: shouldHideBoardChildren(state),
+    column_values: activeColumnValues(state),
+  }
+  if (sourceArgs.or_filters !== undefined && sourceArgs.or_filters !== null) {
+    args.or_filters = sourceArgs.or_filters
+  }
+  return args
+}
+
+function createColumnPaginationFromLoaded(columns, pageSize, resultCounts) {
+  return Object.fromEntries(
+    columns.map((column, index) => {
+      const loaded = column.cards?.length || 0
+      const resultCount = Number.isFinite(resultCounts?.[index])
+        ? resultCounts[index]
+        : loaded
+      return [
+        getColumnKey(column),
+        {
+          offset: loaded,
+          loading: false,
+          hasMore: resultCount >= pageSize,
+        },
+      ]
+    }),
+  )
+}
+
 function createColumnPagination(columns, hasMore) {
   return Object.fromEntries(
     columns.map((column) => [
@@ -3561,7 +5125,7 @@ function buildColumnFilters(filters, config, column) {
   ]
 }
 
-function buildColumnTotalsArgs(sourceArgs, config, columns) {
+function buildColumnTotalsArgs(sourceArgs, config, columns, state = null) {
   const args = {
     doctype: sourceArgs.doctype || config.ref_doctype,
     fieldname: config.field_name,
@@ -3573,7 +5137,14 @@ function buildColumnTotalsArgs(sourceArgs, config, columns) {
       args[key] = sourceArgs[key]
     }
   }
+  if (state) {
+    args.hide_board_children = shouldHideBoardChildren(state)
+  }
   return args
+}
+
+function shouldHideBoardChildren(state) {
+  return Boolean(!state.show_child_tasks && state.config?.parent_field)
 }
 
 export default createKanbanStore()

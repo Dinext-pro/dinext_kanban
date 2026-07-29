@@ -2,10 +2,15 @@ import { expect, test, vi, beforeEach } from 'vitest'
 import {
   COLUMN_SORTABLE_CHOSEN_CLASS,
   COLUMN_SORTABLE_DRAG_CLASS,
+  COLUMN_SORTABLE_DRAGGING_CLASS,
   COLUMN_SORTABLE_GHOST_CLASS,
   clearColumnSortableArtifacts,
+  clearColumnSortableDraggingClass,
+  columnSortableOnMove,
   createColumnSortable,
   destroyColumnSortable,
+  reparentColumnSortableFallback,
+  setColumnSortableDraggingClass,
 } from './columnSortable'
 
 const swimlaneSync = {
@@ -52,11 +57,118 @@ test('creates Sortable with the column drag handle and reports reorder', () => {
     ghostClass: COLUMN_SORTABLE_GHOST_CLASS,
     dragClass: COLUMN_SORTABLE_DRAG_CLASS,
     chosenClass: COLUMN_SORTABLE_CHOSEN_CLASS,
+    forceFallback: true,
+    fallbackOnBody: true,
+    fallbackTolerance: 5,
+    onMove: columnSortableOnMove,
   }))
   expect(createSwimlaneColumnDragSync).not.toHaveBeenCalled()
 
   sortable.options.onEnd({ oldIndex: 0, newIndex: 1, item: null })
   expect(onReorder).toHaveBeenCalledWith(['Done', 'Open'])
+})
+
+test('always enables forceFallback for floating collapsed title drags', () => {
+  const previous = globalThis.__quickKanbanForceColumnSortableFallback
+  globalThis.__quickKanbanForceColumnSortableFallback = false
+  try {
+    const container = document.createElement('div')
+    createColumnSortable(container, { onReorder: vi.fn() })
+    expect(Sortable.create).toHaveBeenCalledWith(
+      container,
+      expect.objectContaining({
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackTolerance: 5,
+      }),
+    )
+  } finally {
+    globalThis.__quickKanbanForceColumnSortableFallback = previous
+  }
+})
+
+test('onMove inserts before add-column-control and child-panel-portal', () => {
+  const add = document.createElement('div')
+  add.className = 'add-column-control'
+  expect(columnSortableOnMove({ related: add })).toBe(-1)
+
+  const portal = document.createElement('div')
+  portal.className = 'child-panel-portal'
+  expect(columnSortableOnMove({ related: portal })).toBe(-1)
+
+  const nested = document.createElement('div')
+  add.appendChild(nested)
+  expect(columnSortableOnMove({ related: nested })).toBe(-1)
+
+  const column = document.createElement('section')
+  column.className = 'kanban-column'
+  expect(columnSortableOnMove({ related: column })).toBe(true)
+})
+
+test('dragging class is set on start and cleared on end', () => {
+  document.documentElement.classList.remove(COLUMN_SORTABLE_DRAGGING_CLASS)
+  const container = document.createElement('div')
+  const sortable = createColumnSortable(container, { onReorder: vi.fn() })
+
+  sortable.options.onStart()
+  expect(document.documentElement.classList.contains(COLUMN_SORTABLE_DRAGGING_CLASS)).toBe(true)
+
+  sortable.options.onEnd({ oldIndex: 0, newIndex: 0, item: null })
+  expect(document.documentElement.classList.contains(COLUMN_SORTABLE_DRAGGING_CLASS)).toBe(false)
+})
+
+test('set and clear dragging class helpers', () => {
+  clearColumnSortableDraggingClass()
+  setColumnSortableDraggingClass()
+  expect(document.documentElement.classList.contains(COLUMN_SORTABLE_DRAGGING_CLASS)).toBe(true)
+  clearColumnSortableDraggingClass()
+  expect(document.documentElement.classList.contains(COLUMN_SORTABLE_DRAGGING_CLASS)).toBe(false)
+})
+
+test('reparentColumnSortableFallback moves body mirror under #kanbanapp', () => {
+  const app = document.createElement('div')
+  app.id = 'kanbanapp'
+  document.body.appendChild(app)
+
+  const fallback = document.createElement('section')
+  fallback.className = 'kanban-column sortable-fallback'
+  document.body.appendChild(fallback)
+
+  expect(reparentColumnSortableFallback(app)).toBe(fallback)
+  expect(fallback.parentElement).toBe(app)
+  expect(reparentColumnSortableFallback(app)).toBe(null)
+
+  fallback.remove()
+  app.remove()
+})
+
+test('reparentColumnSortableFallback is a no-op without host or mirror', () => {
+  expect(reparentColumnSortableFallback(null)).toBe(null)
+  expect(reparentColumnSortableFallback(document.createElement('div'))).toBe(null)
+})
+
+test('onStart reparents fallbackOnBody mirror into #kanbanapp', () => {
+  const app = document.createElement('div')
+  app.id = 'kanbanapp'
+  const boardRoot = document.createElement('div')
+  app.appendChild(boardRoot)
+  document.body.appendChild(app)
+
+  const fallback = document.createElement('section')
+  fallback.className = 'kanban-column sortable-fallback'
+  document.body.appendChild(fallback)
+
+  const container = document.createElement('div')
+  const sortable = createColumnSortable(container, {
+    onReorder: vi.fn(),
+    boardRoot,
+  })
+  sortable.options.onStart()
+
+  expect(fallback.parentElement).toBe(app)
+
+  fallback.remove()
+  app.remove()
 })
 
 test('ignores unchanged column drag ends', () => {

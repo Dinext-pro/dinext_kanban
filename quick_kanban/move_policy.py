@@ -518,9 +518,12 @@ def assert_move_allowed(doc, context, value, workflow_action=None):
 
 def assert_lane_change_allowed(doc, swimlane_field, mode):
 	"""Enforce field/workflow/assign rules before swimlane membership changes."""
-	from quick_kanban.swimlane import SWIMLANE_ASSIGN
+	from quick_kanban.swimlane import SWIMLANE_ASSIGN, SWIMLANE_DEADLINES
 
 	doc.check_permission("write")
+
+	if mode == "deadlines" or swimlane_field == SWIMLANE_DEADLINES:
+		frappe.throw(_("Deadline swimlanes cannot be changed by dragging."))
 
 	if mode == "assign" or swimlane_field == SWIMLANE_ASSIGN:
 		# Assign To uses Desk assign APIs; require document write (already checked).

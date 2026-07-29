@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   buildFormUrl,
   canDeleteAttachment,
+  canDeleteCard,
   confirmDeleteAttachment,
+  confirmDeleteCard,
   copyFormLink,
   DELETE_ATTACHMENT_CONFIRM_MESSAGE,
+  DELETE_CARD_CONFIRM_MESSAGE,
   formatActivityCount,
   getAttachmentCount,
   getCommentCount,
@@ -94,6 +97,13 @@ describe('cardExtraInfo helpers', () => {
     expect(canDeleteAttachment({ canWrite: false })).toBe(false)
   })
 
+  test('canDeleteCard requires delete permission and hides submitted docs', () => {
+    expect(canDeleteCard({ canDelete: true, docstatus: 0 })).toBe(true)
+    expect(canDeleteCard({ canDelete: true, docstatus: 2 })).toBe(true)
+    expect(canDeleteCard({ canDelete: true, docstatus: 1 })).toBe(false)
+    expect(canDeleteCard({ canDelete: false, docstatus: 0 })).toBe(false)
+  })
+
   test('buildFormUrl and copyFormLink use Desk helpers', () => {
     expect(buildFormUrl('Task', 'TASK-1')).toBe('https://desk.example/app/task/TASK-1')
     expect(copyFormLink('Task', 'TASK-1')).toBe(true)
@@ -161,5 +171,19 @@ describe('cardExtraInfo helpers', () => {
 
     frappe.confirm.mockImplementation((_message, _onYes, onNo) => onNo())
     await expect(confirmDeleteAttachment()).resolves.toBe(false)
+  })
+
+  test('confirmDeleteCard uses card label in the prompt', async () => {
+    frappe.confirm.mockImplementation((_message, onYes) => onYes())
+    await expect(confirmDeleteCard('First task')).resolves.toBe(true)
+    expect(frappe.confirm).toHaveBeenCalledWith(
+      'Are you sure you want to delete First task?',
+      expect.any(Function),
+      expect.any(Function),
+    )
+    expect(DELETE_CARD_CONFIRM_MESSAGE).toContain('{0}')
+
+    frappe.confirm.mockImplementation((_message, _onYes, onNo) => onNo())
+    await expect(confirmDeleteCard('First task')).resolves.toBe(false)
   })
 })

@@ -9,7 +9,12 @@ from frappe.tests.utils import FrappeTestCase, patch_hooks
 from frappe.utils import get_datetime
 
 from quick_kanban.api import (
+    delete_card,
     get_attachment_counts,
+    get_board_document_names,
+    get_child_column_page,
+    get_child_column_totals,
+    get_child_counts,
     get_column_totals,
     move_card,
     set_column_widths,
@@ -123,6 +128,67 @@ class TestMoveCard(FrappeTestCase):
 
         with self.assertRaises(frappe.PermissionError):
             move_card(BOARD_NAME, "TASK-1", "Done")
+
+
+class TestDeleteCard(FrappeTestCase):
+    def test_delete_card_allows_only_post_requests(self):
+        self.assertEqual(
+            frappe.allowed_http_methods_for_whitelisted_func[delete_card],
+            ["POST"],
+        )
+
+    def make_doc(self):
+        doc = Mock()
+        doc.name = "TASK-1"
+        doc.modified = datetime(2026, 7, 10, 10, 0, 0)
+        return doc
+
+    def test_delete_real_document(self):
+        frappe.set_user("Administrator")
+        board_name = ensure_todo_kanban_board()
+        todo = frappe.get_doc(
+            {
+                "doctype": "ToDo",
+                "description": "Quick Kanban delete test",
+                "status": "Open",
+            }
+        ).insert()
+        name = todo.name
+
+        result = delete_card(board_name, name, str(todo.modified))
+
+        self.assertEqual(result["name"], name)
+        self.assertFalse(frappe.db.exists("ToDo", name))
+
+    @patch("quick_kanban.api.BoardContext")
+    @patch("quick_kanban.api.frappe.get_doc")
+    def test_delete_card_checks_permission_and_deletes(self, get_doc, board_context):
+        doc = self.make_doc()
+        get_doc.return_value = doc
+        board_context.return_value = SimpleNamespace(ref_doctype="Task")
+
+        result = delete_card(
+            BOARD_NAME,
+            "TASK-1",
+            "2026-07-10 10:00:00",
+        )
+
+        doc.check_permission.assert_called_once_with("delete")
+        doc.delete.assert_called_once()
+        self.assertEqual(result["name"], "TASK-1")
+
+    @patch("quick_kanban.api.BoardContext")
+    @patch("quick_kanban.api.frappe.get_doc")
+    def test_delete_card_rejects_stale_documents(self, get_doc, board_context):
+        get_doc.return_value = self.make_doc()
+        board_context.return_value = SimpleNamespace(ref_doctype="Task")
+
+        with self.assertRaises(frappe.TimestampMismatchError):
+            delete_card(
+                BOARD_NAME,
+                "TASK-1",
+                "2026-07-10 11:00:00",
+            )
 
 
 class TestMoveCardLifecycle(FrappeTestCase):
@@ -377,6 +443,87 @@ class TestColumnTotals(FrappeTestCase):
         )
         self.assertEqual(result, {"Open": 5, "Done": 0})
 
+    @patch("quick_kanban.api.get_board_document_names", return_value=["PARENT-1", "CHILD-1", "ORPHAN-1"])
+    @patch("quick_kanban.api.frappe.get_list")
+    @patch("quick_kanban.api.frappe.get_meta")
+    @patch("quick_kanban.api.frappe.has_permission", return_value=True)
+    def test_hide_board_children_excludes_on_board_children(
+        self,
+        _has_permission,
+        get_meta,
+        get_list,
+        get_board_names,
+    ):
+        meta = Mock()
+        meta.is_tree = 1
+        meta.nsm_parent_field = "parent_task"
+        meta.get_field.return_value = SimpleNamespace(fieldname="status", permlevel=0)
+        get_meta.return_value = meta
+        get_list.return_value = [
+            {"name": "PARENT-1", "status": "Open", "parent_task": ""},
+            {"name": "CHILD-1", "status": "Open", "parent_task": "PARENT-1"},
+            {"name": "ORPHAN-1", "status": "Open", "parent_task": "OFF-BOARD"},
+            {"name": "DONE-1", "status": "Done", "parent_task": ""},
+        ]
+
+        result = get_column_totals(
+            "Task",
+            "status",
+            ["Open", "Done"],
+            filters=[],
+            hide_board_children=True,
+        )
+
+        get_board_names.assert_called_once()
+        get_list.assert_called_once_with(
+            "Task",
+            fields=["status", "parent_task", "name"],
+            filters=[],
+            or_filters=[],
+            limit_page_length=0,
+        )
+        self.assertEqual(result, {"Open": 2, "Done": 1})
+
+
+class TestHiddenBoardChildNames(FrappeTestCase):
+    @patch("quick_kanban.board_children.frappe.get_list")
+    @patch("quick_kanban.api.get_board_document_names", return_value=["PARENT-1", "CHILD-1", "ORPHAN-1"])
+    @patch("quick_kanban.board_children.tree_parent_field", return_value="parent_task")
+    def test_returns_only_children_whose_parent_is_on_board(
+        self,
+        _tree_parent,
+        _board_names,
+        get_list,
+    ):
+        from quick_kanban.api import get_hidden_board_child_names
+
+        get_list.return_value = [
+            {"name": "PARENT-1", "parent_task": ""},
+            {"name": "CHILD-1", "parent_task": "PARENT-1"},
+            {"name": "ORPHAN-1", "parent_task": "OFF-BOARD"},
+        ]
+        names = get_hidden_board_child_names(
+            "Task",
+            filters=[],
+            field_name="status",
+            column_values=["Open"],
+        )
+        self.assertEqual(names, ["CHILD-1"])
+
+    @patch("quick_kanban.board_children.tree_parent_field", return_value=None)
+    def test_non_tree_returns_empty(self, _tree_parent):
+        from quick_kanban.api import get_hidden_board_child_names
+
+        self.assertEqual(
+            get_hidden_board_child_names(
+                "ToDo",
+                filters=[],
+                field_name="status",
+                column_values=["Open"],
+            ),
+            [],
+        )
+
 
 class TestColumnWidths(FrappeTestCase):
     def setUp(self):
@@ -495,6 +642,269 @@ class TestGetAttachmentCounts(FrappeTestCase):
                 get_attachment_counts("ToDo", ["TASK-1"])
 
 
+class TestGetChildCounts(FrappeTestCase):
+    def test_empty_names_returns_empty_dict(self):
+        self.assertEqual(get_child_counts("ToDo", []), {})
+        self.assertEqual(get_child_counts("ToDo", "[]"), {})
+
+    def test_non_tree_doctype_returns_empty_dict(self):
+        meta = SimpleNamespace(is_tree=0, nsm_parent_field=None)
+        with patch("quick_kanban.api.frappe.get_meta", return_value=meta):
+            self.assertEqual(get_child_counts("ToDo", ["DOC-1"]), {})
+
+    def test_counts_direct_children_for_tree_doctype(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        rows = [
+            {"parent_task": "PARENT-A"},
+            {"parent_task": "PARENT-A"},
+            {"parent_task": "PARENT-B"},
+        ]
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=True),
+            patch("quick_kanban.api.frappe.get_list", return_value=rows) as get_list,
+        ):
+            counts = get_child_counts("Task", ["PARENT-A", "PARENT-B", "PARENT-C"])
+
+        self.assertEqual(counts["PARENT-A"], 2)
+        self.assertEqual(counts["PARENT-B"], 1)
+        self.assertEqual(counts["PARENT-C"], 0)
+        get_list.assert_called_once_with(
+            "Task",
+            filters={"parent_task": ("in", ["PARENT-A", "PARENT-B", "PARENT-C"])},
+            fields=["parent_task"],
+            limit_page_length=0,
+            ignore_permissions=False,
+        )
+
+    def test_requires_read_permission_on_tree_doctype(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=False),
+        ):
+            with self.assertRaises(frappe.PermissionError):
+                get_child_counts("Task", ["TASK-1"])
+
+
+class TestGetChildColumnTotals(FrappeTestCase):
+    def test_injects_parent_filter_and_disables_hide_children(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        with (
+            patch("quick_kanban.board_children.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.get_column_totals", return_value={"Open": 2}) as totals,
+        ):
+            result = get_child_column_totals(
+                "Task",
+                "status",
+                ["Open"],
+                "PARENT-1",
+                parent_field="parent_task",
+                filters=[["project", "=", "PROJ"]],
+            )
+
+        self.assertEqual(result, {"Open": 2})
+        totals.assert_called_once()
+        kwargs = totals.call_args.kwargs
+        self.assertEqual(kwargs["hide_board_children"], False)
+        self.assertIn(
+            ["Task", "parent_task", "=", "PARENT-1"],
+            kwargs["filters"],
+        )
+
+    def test_child_column_page_injects_parent_filter(self):
+        meta = SimpleNamespace(is_tree=1, nsm_parent_field="parent_task")
+        with (
+            patch("quick_kanban.board_children.frappe.get_meta", return_value=meta),
+            patch(
+                "quick_kanban.api.get_column_page",
+                return_value={"keys": ["name"], "values": []},
+            ) as page,
+        ):
+            get_child_column_page(
+                "Task",
+                "status",
+                "Open",
+                "PARENT-1",
+                parent_field="parent_task",
+                filters=[],
+            )
+
+        page.assert_called_once()
+        kwargs = page.call_args.kwargs
+        self.assertEqual(kwargs["hide_board_children"], False)
+        self.assertIn(
+            ["Task", "parent_task", "=", "PARENT-1"],
+            kwargs["filters"],
+        )
+
+
+class TestGetBoardDocumentNames(FrappeTestCase):
+    def test_empty_columns_returns_empty_list(self):
+        with patch("quick_kanban.api.frappe.has_permission", return_value=True):
+            self.assertEqual(
+                get_board_document_names("Task", filters=[], field_name="status", column_values=[]),
+                [],
+            )
+
+    def test_returns_names_for_active_columns(self):
+        meta = SimpleNamespace(get_field=Mock(return_value=SimpleNamespace(fieldname="status")))
+        rows = [{"name": "TASK-1"}, {"name": "TASK-2"}]
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=True),
+            patch("quick_kanban.api.frappe.get_list", return_value=rows) as get_list,
+        ):
+            names = get_board_document_names(
+                "Task",
+                filters=[["project", "=", "PROJ"]],
+                field_name="status",
+                column_values=["Open", "Working"],
+            )
+
+        self.assertEqual(names, ["TASK-1", "TASK-2"])
+        get_list.assert_called_once_with(
+            "Task",
+            filters=[["project", "=", "PROJ"], ["status", "in", ["Open", "Working"]]],
+            or_filters=[],
+            fields=["name"],
+            limit_page_length=0,
+            ignore_permissions=False,
+        )
+
+    def test_requires_read_permission(self):
+        with patch("quick_kanban.api.frappe.has_permission", return_value=False):
+            with self.assertRaises(frappe.PermissionError):
+                get_board_document_names(
+                    "Task",
+                    filters=[],
+                    field_name="status",
+                    column_values=["Open"],
+                )
+
+    def test_passes_or_filters_to_get_list(self):
+        meta = SimpleNamespace(get_field=Mock(return_value=SimpleNamespace(fieldname="status")))
+        with (
+            patch("quick_kanban.api.frappe.get_meta", return_value=meta),
+            patch("quick_kanban.api.frappe.has_permission", return_value=True),
+            patch("quick_kanban.api.frappe.get_list", return_value=[]) as get_list,
+        ):
+            get_board_document_names(
+                "Task",
+                filters=[["project", "=", "PROJ"]],
+                field_name="status",
+                column_values=["Open"],
+                or_filters=[["subject", "like", "%x%"]],
+            )
+
+        get_list.assert_called_once_with(
+            "Task",
+            filters=[["project", "=", "PROJ"], ["status", "in", ["Open"]]],
+            or_filters=[["subject", "like", "%x%"]],
+            fields=["name"],
+            limit_page_length=0,
+            ignore_permissions=False,
+        )
+
+
+class TestGetColumnPage(FrappeTestCase):
+    @patch("quick_kanban.api.frappe.has_permission", return_value=True)
+    @patch("quick_kanban.swimlane.frappe.get_meta")
+    @patch("quick_kanban.swimlane._matching_parent_names")
+    @patch("quick_kanban.api.frappe.get_list")
+    def test_slices_after_server_side_child_exclude(
+        self,
+        get_list,
+        matching_names,
+        get_meta,
+        _has_permission,
+    ):
+        from quick_kanban.api import get_column_page
+
+        meta = Mock()
+        meta.is_tree = 1
+        meta.nsm_parent_field = "parent_task"
+        meta.title_field = "subject"
+        get_meta.return_value = meta
+        matching_names.return_value = ["PARENT-1", "CHILD-1", "ORPHAN-1"]
+        get_list.side_effect = [
+            [
+                {"name": "PARENT-1", "parent_task": ""},
+                {"name": "CHILD-1", "parent_task": "PARENT-1"},
+                {"name": "ORPHAN-1", "parent_task": "OFF-BOARD"},
+            ],
+            [
+                {
+                    "name": "PARENT-1",
+                    "subject": "Parent",
+                    "status": "Open",
+                    "parent_task": "",
+                    "_assign": None,
+                    "_user_tags": None,
+                    "_comments": None,
+                    "_liked_by": None,
+                },
+                {
+                    "name": "ORPHAN-1",
+                    "subject": "Orphan",
+                    "status": "Open",
+                    "parent_task": "OFF-BOARD",
+                    "_assign": None,
+                    "_user_tags": None,
+                    "_comments": None,
+                    "_liked_by": None,
+                },
+            ],
+        ]
+
+        with patch(
+            "quick_kanban.board_children.board_name_set_for_hide",
+            return_value=("parent_task", {"PARENT-1", "CHILD-1", "ORPHAN-1"}),
+        ):
+            page = get_column_page(
+                "Task",
+                "status",
+                "Open",
+                fields=["name", "subject", "status"],
+                filters=[],
+                start=0,
+                page_length=10,
+                hide_board_children=True,
+                column_values=["Open", "Done"],
+            )
+
+        name_idx = page["keys"].index("name")
+        names = [row[name_idx] for row in page["values"]]
+        self.assertEqual(names, ["PARENT-1", "ORPHAN-1"])
+        self.assertIn("parent_task", page["keys"])
+        paged_call = get_list.call_args_list[-1]
+        self.assertEqual(
+            set(paged_call.kwargs["filters"]["name"][1]),
+            {"PARENT-1", "ORPHAN-1"},
+        )
+        self.assertEqual(paged_call.kwargs["start"], 0)
+        self.assertEqual(paged_call.kwargs["page_length"], 10)
+
+    @patch("quick_kanban.api.frappe.has_permission", return_value=True)
+    @patch("quick_kanban.swimlane.frappe.get_meta")
+    def test_ensure_fields_include_tree_parent(self, get_meta, _has_permission):
+        from quick_kanban.swimlane import _ensure_card_fetch_fields
+
+        meta = Mock()
+        meta.is_tree = 1
+        meta.nsm_parent_field = "parent_task"
+        meta.title_field = "subject"
+        get_meta.return_value = meta
+
+        fields = _ensure_card_fetch_fields(
+            ["name", "subject"],
+            doctype="Task",
+            status_field="status",
+        )
+        self.assertIn("parent_task", fields)
+        self.assertIn("status", fields)
+
+
 class TestSwimlaneApi(FrappeTestCase):
     def setUp(self):
         frappe.set_user("Administrator")
@@ -505,6 +915,47 @@ class TestSwimlaneApi(FrappeTestCase):
         options = get_swimlane_field_options("ToDo")
         values = {row["value"] for row in options}
         self.assertIn("__assign", values)
+        self.assertNotIn("__deadlines", values)
+
+    def test_get_swimlane_field_options_deadlines_gated_by_board(self):
+        from quick_kanban.api import get_swimlane_field_options
+
+        board_name = ensure_todo_kanban_board()
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "")
+        without = get_swimlane_field_options("ToDo", board_name=board_name)
+        self.assertNotIn("__deadlines", {row["value"] for row in without})
+
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "date")
+        with_field = get_swimlane_field_options("ToDo", board_name=board_name)
+        self.assertIn("__deadlines", {row["value"] for row in with_field})
+
+        explicit = get_swimlane_field_options("ToDo", include_deadlines=1)
+        self.assertIn("__deadlines", {row["value"] for row in explicit})
+
+    def test_get_swimlane_field_options_excludes_column_field(self):
+        from quick_kanban.api import get_swimlane_field_options
+
+        board_name = ensure_todo_kanban_board()
+        self.assertEqual(
+            frappe.db.get_value("Kanban Board", board_name, "field_name"),
+            "status",
+        )
+
+        without_context = get_swimlane_field_options("ToDo")
+        self.assertIn("status", {row["value"] for row in without_context})
+
+        by_board = get_swimlane_field_options("ToDo", board_name=board_name)
+        self.assertNotIn("status", {row["value"] for row in by_board})
+
+        by_explicit = get_swimlane_field_options("ToDo", column_field="status")
+        self.assertNotIn("status", {row["value"] for row in by_explicit})
+
+    def test_set_swimlane_field_rejects_column_field(self):
+        from quick_kanban.api import set_swimlane_field
+
+        board_name = ensure_todo_kanban_board()
+        with self.assertRaises(frappe.ValidationError):
+            set_swimlane_field(board_name, "status")
 
     def test_set_swimlane_field_sets_and_clears(self):
         from quick_kanban.api import set_swimlane_field
@@ -530,6 +981,19 @@ class TestSwimlaneApi(FrappeTestCase):
         board_name = ensure_todo_kanban_board()
         with self.assertRaises(frappe.ValidationError):
             set_swimlane_field(board_name, "not_a_real_field_xyz")
+
+    def test_set_swimlane_field_rejects_deadlines_without_deadline_field(self):
+        from quick_kanban.api import set_swimlane_field
+
+        board_name = ensure_todo_kanban_board()
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "")
+        with self.assertRaises(frappe.ValidationError):
+            set_swimlane_field(board_name, "__deadlines")
+
+        frappe.db.set_value("Kanban Board", board_name, "custom_deadline_field", "date")
+        result = set_swimlane_field(board_name, "__deadlines")
+        self.assertEqual(result["custom_swimlane_field"], "__deadlines")
+        set_swimlane_field(board_name, "")
 
     def test_set_swimlane_field_requires_write(self):
         from quick_kanban.api import set_swimlane_field

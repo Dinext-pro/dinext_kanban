@@ -7,7 +7,9 @@ import {
   getExpandedLaneKeys,
   measureColumnContentHeight,
   reconcileCardInstancesAcrossLanes,
+  removeAllCardInstances,
   resolveExpandedLaneKeys,
+  restoreCardInstances,
   sortLanesByOccupancy,
 } from './swimlaneBoard'
 import {
@@ -322,5 +324,69 @@ describe('column stick-room equalize', () => {
     cell.append(list, footer, dropzone)
 
     expect(measureColumnContentHeight(cell)).toBe(240)
+  })
+})
+
+describe('removeAllCardInstances', () => {
+  test('removes flat-board cards and restores them', () => {
+    const columns = [
+      {
+        column_name: 'Open',
+        cards: [{ name: 'TASK-1', subject: 'One' }, { name: 'TASK-2', subject: 'Two' }],
+      },
+    ]
+    const snapshot = removeAllCardInstances([], columns, 'TASK-1')
+    expect(snapshot.card.name).toBe('TASK-1')
+    expect(columns[0].cards.map(({ name }) => name)).toEqual(['TASK-2'])
+    expect(restoreCardInstances([], columns, snapshot)).toBe(true)
+    expect(columns[0].cards.map(({ name }) => name)).toEqual(['TASK-1', 'TASK-2'])
+  })
+
+  test('removes card copies from every swimlane', () => {
+    const lanes = [
+      {
+        key: 'a',
+        columns: [{ column_name: 'Open', cards: [{ name: 'TASK-1', subject: 'One' }] }],
+      },
+      {
+        key: 'b',
+        columns: [{ column_name: 'Open', cards: [{ name: 'TASK-1', subject: 'One' }] }],
+      },
+    ]
+    const snapshot = removeAllCardInstances(lanes, [], 'TASK-1')
+    expect(snapshot.placements).toHaveLength(2)
+    expect(lanes[0].columns[0].cards).toEqual([])
+    expect(lanes[1].columns[0].cards).toEqual([])
+    restoreCardInstances(lanes, [], snapshot)
+    expect(lanes[0].columns[0].cards[0].name).toBe('TASK-1')
+    expect(lanes[1].columns[0].cards[0].name).toBe('TASK-1')
+  })
+
+  test('removes and restores cards inside child panels', () => {
+    const columns = [
+      { column_name: 'Open', cards: [{ name: 'PARENT', subject: 'Parent' }] },
+    ]
+    const childPanels = {
+      '0::PARENT': {
+        columns: [
+          {
+            column_name: 'Open',
+            cards: [{ name: 'CHILD-1', subject: 'Child' }, { name: 'CHILD-2', subject: 'Other' }],
+          },
+        ],
+      },
+    }
+    const snapshot = removeAllCardInstances([], columns, 'CHILD-1', childPanels)
+    expect(snapshot).toMatchObject({
+      card: { name: 'CHILD-1' },
+      placements: [{ type: 'child', scopeId: '0::PARENT', columnIndex: 0, cardIndex: 0 }],
+    })
+    expect(childPanels['0::PARENT'].columns[0].cards.map(({ name }) => name)).toEqual(['CHILD-2'])
+    expect(columns[0].cards.map(({ name }) => name)).toEqual(['PARENT'])
+    expect(restoreCardInstances([], columns, snapshot, childPanels)).toBe(true)
+    expect(childPanels['0::PARENT'].columns[0].cards.map(({ name }) => name)).toEqual([
+      'CHILD-1',
+      'CHILD-2',
+    ])
   })
 })
