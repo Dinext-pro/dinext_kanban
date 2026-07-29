@@ -70,6 +70,21 @@ describe('child panel geometry CSS', () => {
     expect(styleCss).not.toMatch(/\.child-panel-scroll\s*\{[^}]*padding(?:-top)?:\s*8px/s)
   })
 
+  test('child panel stick-room is removed from flow when column has cards', () => {
+    expect(styleCss).toMatch(
+      /\.child-panel\s+\.column-stick-room-dropzone\s*\{[^}]*min-height:\s*24px/s,
+    )
+    expect(styleCss).toMatch(
+      /\.child-panel\s+\.column-stick-room-dropzone\s*\{[^}]*flex:\s*1\s+1\s+auto/s,
+    )
+    expect(styleCss).toMatch(
+      /\.child-panel\s+\.kanban-column--has-cards\s+\.column-stick-room-dropzone\s*\{[^}]*display:\s*none/s,
+    )
+    expect(styleCss).toMatch(
+      /\.child-panel\s+\.kanban-column--has-cards\s+\.kanban-card-list[^{]*\{[^}]*flex:\s*0\s+1\s+auto/s,
+    )
+  })
+
   test('inert cards are dimmed; ancestor cards are compact and accept body click', () => {
     expect(styleCss).toMatch(
       /\.kanban-card--panel-inert\s*\{[^}]*opacity:\s*0\.45/s,
