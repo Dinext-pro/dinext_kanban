@@ -2351,6 +2351,27 @@ html.kanban-tag-drag-move * {
   height: auto;
 }
 
+/*
+ * Filled columns: match flat packing — Add sits under cards, not under a
+ * flex-grown empty strip. Stick-room leaves the flex flow (display:none);
+ * the list sizes to content and only shrinks/scrolls when it would overflow.
+ * Class comes from cards.length so virtualization cannot miss the rule.
+ */
+#kanbanapp .child-panel .kanban-column--has-cards .kanban-card-list,
+#kanbanapp .child-panel .kanban-column--has-cards .kanban-card-list.kanban-card-list--external-scroller {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto !important;
+}
+
+#kanbanapp .child-panel .kanban-column--has-cards .column-stick-room-dropzone {
+  display: none;
+}
+
+#kanbanapp .child-panel .kanban-column--has-cards .column-footer-actions {
+  order: 2;
+}
+
 #kanbanapp .child-panel .column-footer-actions {
   order: 3;
   flex: 0 0 auto;

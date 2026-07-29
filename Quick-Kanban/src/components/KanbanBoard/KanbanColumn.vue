@@ -734,6 +734,7 @@ const columnClasses = computed(() => ({
   'kanban-column--external-scroller': Boolean(props.externalScroller),
   'kanban-column--swimlane-shell': hasCustomBody.value,
   'kanban-column--child-panel-host': isChildPanelHostColumn.value,
+  'kanban-column--has-cards': props.column.cards.length > 0,
 }))
 const showForbiddenOverlay = computed(() => {
   if (hasCustomBody.value || props.headerOnly) {
