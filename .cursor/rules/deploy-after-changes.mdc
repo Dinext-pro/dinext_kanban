@@ -1,5 +1,5 @@
 ---
-description: После любых правок, влияющих на UI/ассеты, сразу собирать quick_kanban на сайте
+description: После любых правок, влияющих на UI/ассеты, сразу собирать dinext_kanban на сайте
 alwaysApply: true
 ---
 
@@ -9,15 +9,15 @@ alwaysApply: true
 
 ## Обязательно
 
-После каждой завершённой порции правок, которые затрагивают поведение или внешний вид на сайте (Vue/JS/CSS в `Quick-Kanban/`, public assets, client scripts, и т.п.), **сразу** выкатить сборку — не ждать отдельной просьбы пользователя.
+После каждой завершённой порции правок, которые затрагивают поведение или внешний вид на сайте (Vue/JS/CSS в `frontend/`, public assets, client scripts, и т.п.), **сразу** выкатить сборку — не ждать отдельной просьбы пользователя.
 
-Из каталога `Quick-Kanban/`:
+Из каталога `frontend/`:
 
 ```bash
 yarn build
 ```
 
-Это делает `vite build` → копирует в `quick_kanban/public/` → `bench build --app quick_kanban`.
+Это делает `vite build` → копирует в `dinext_kanban/public/` → `bench build --app dinext_kanban`.
 
 ## Не нужно
 

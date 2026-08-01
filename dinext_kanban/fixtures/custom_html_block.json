@@ -1,0 +1,13 @@
+[
+ {
+  "docstatus": 0,
+  "doctype": "Custom HTML Block",
+  "html": "Загрузка...",
+  "modified": "2026-02-08 19:29:08.355975",
+  "name": "My Kanban",
+  "private": 0,
+  "roles": [],
+  "script": "frappe.route_options = {\r\n    modified: ['>=', frappe.datetime.add_months(frappe.datetime.now_date(),-3) ],\r\n    _assign: ['like', \"%\" + frappe.session.user + \"%\" ]\r\n};\r\n\r\ndebugger;    \r\nhistory.replaceState(null, null, frappe.router.make_url( frappe.get_prev_route() ) );\r\nfrappe.set_route(\"List\", \"Task\", \"Kanban\", \"Все задачи\");",
+  "style": null
+ }
+]

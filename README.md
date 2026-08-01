@@ -2,7 +2,7 @@
 
 ## 📖 Обзор
 
-Dinext Kanban — приложение для Frappe Framework, которое дополняет стандартное Kanban-представление интерфейсом на Vue 3. Репозиторий называется `dinext_kanban`, а внутреннее имя устанавливаемого Frappe-приложения — `quick_kanban`.
+Dinext Kanban — приложение для Frappe Framework, которое дополняет стандартное Kanban-представление интерфейсом на Vue 3. Репозиторий называется `dinext_kanban`, а внутреннее имя устанавливаемого Frappe-приложения — `dinext_kanban`.
 
 Новый интерфейс включается конфигурацией сайта и может быть доступен всем пользователям либо заданному списку. Если конфигурацию или frontend bundle загрузить не удаётся, приложение возвращается к стандартному Kanban Frappe.
 
@@ -46,7 +46,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 
 ## 🚀 Установка
 
-Репозиторий называется `dinext_kanban`, но в bench приложение клонируется в каталог **`apps/quick_kanban`**, а Frappe app name — **`quick_kanban`**.
+Репозиторий называется `dinext_kanban`, но в bench приложение клонируется в каталог **`apps/dinext_kanban`**, а Frappe app name — **`dinext_kanban`**.
 
 ### Установка на новый сайт
 
@@ -57,17 +57,17 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 ```bash
 cd <bench-root>
 
-bench get-app quick_kanban \
+bench get-app dinext_kanban \
   https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git \
   --branch <branch-name>
 ```
 
-Параметр `--branch` опционален (если не указан — default branch репозитория). Если каталог `apps/quick_kanban` уже существует и нужно заменить исходники, используйте `--overwrite` или вручную переключите remote и checkout нужной ветки в `apps/quick_kanban`.
+Параметр `--branch` опционален (если не указан — default branch репозитория). Если каталог `apps/dinext_kanban` уже существует и нужно заменить исходники, используйте `--overwrite` или вручную переключите remote и checkout нужной ветки в `apps/dinext_kanban`.
 
 **2. Установить frontend-зависимости**
 
 ```bash
-cd apps/quick_kanban
+cd apps/dinext_kanban
 yarn install --frozen-lockfile
 ```
 
@@ -75,24 +75,24 @@ yarn install --frozen-lockfile
 
 ```bash
 cd <bench-root>
-bench --site <site-name> install-app quick_kanban
+bench --site <site-name> install-app dinext_kanban
 ```
 
 **4. Собрать frontend**
 
-Frappe Desk отдаёт **хешированные** bundles из `quick_kanban/public/dist/` через `sites/assets/assets.json`. Одной сборки Vite недостаточно: нужны copy в `public/` и `bench build`.
+Frappe Desk отдаёт **хешированные** bundles из `dinext_kanban/public/dist/` через `sites/assets/assets.json`. Одной сборки Vite недостаточно: нужны copy в `public/` и `bench build`.
 
-Команда workspace уже выполняет полный цикл (`vite build` → copy в `quick_kanban/public/` → `bench build --app quick_kanban`):
+Команда workspace уже выполняет полный цикл (`vite build` → copy в `dinext_kanban/public/` → `bench build --app dinext_kanban`):
 
 ```bash
-cd apps/quick_kanban
-yarn workspace quick_kanban build
+cd apps/dinext_kanban
+yarn workspace dinext_kanban build
 ```
 
-Отдельный `bench build --app quick_kanban` нужен только если собирали Vite/copy без этого скрипта. Альтернатива шагу `bench build` — Frappe esbuild напрямую:
+Отдельный `bench build --app dinext_kanban` нужен только если собирали Vite/copy без этого скрипта. Альтернатива шагу `bench build` — Frappe esbuild напрямую:
 
 ```bash
-cd apps/frappe && yarn run production --apps quick_kanban
+cd apps/frappe && yarn run production --apps dinext_kanban
 ```
 
 **5. Применить изменения на сайте**
@@ -104,7 +104,7 @@ bench --site <site-name> clear-cache
 bench restart
 ```
 
-`migrate` подтягивает переводы из `quick_kanban/translations/`. `bench restart` нужен на production/staging bench с supervisor.
+`migrate` подтягивает переводы из `dinext_kanban/translations/`. `bench restart` нужен на production/staging bench с supervisor.
 
 **6. Включить новый Kanban**
 
@@ -125,12 +125,12 @@ bench --site <site-name> clear-cache
 
 ```bash
 # 1–3: загрузка и install-app
-bench get-app quick_kanban https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git --branch <branch-name>
-cd apps/quick_kanban && yarn install --frozen-lockfile && cd ../..
-bench --site <site-name> install-app quick_kanban
+bench get-app dinext_kanban https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git --branch <branch-name>
+cd apps/dinext_kanban && yarn install --frozen-lockfile && cd ../..
+bench --site <site-name> install-app dinext_kanban
 
 # 4–5: сборка assets (vite + copy + bench build) и применение
-cd apps/quick_kanban && yarn workspace quick_kanban build && cd ../..
+cd apps/dinext_kanban && yarn workspace dinext_kanban build && cd ../..
 bench --site <site-name> migrate
 bench --site <site-name> clear-cache
 bench restart
@@ -142,14 +142,14 @@ bench --site <site-name> clear-cache
 
 ### Обновление на существующем сайте
 
-Если `quick_kanban` уже установлен, **`install-app` повторно не нужен** (пока нет новых DocType/patches). Достаточно обновить исходники, пересобрать assets и применить на сайте:
+Если `dinext_kanban` уже установлен, **`install-app` повторно не нужен** (пока нет новых DocType/patches). Достаточно обновить исходники, пересобрать assets и применить на сайте:
 
 ```bash
-cd apps/quick_kanban
+cd apps/dinext_kanban
 git fetch && git checkout <branch-name> && git pull
 
 yarn install --frozen-lockfile
-yarn workspace quick_kanban build
+yarn workspace dinext_kanban build
 
 cd <bench-root>
 bench --site <site-name> migrate
@@ -157,7 +157,7 @@ bench --site <site-name> clear-cache
 bench restart
 ```
 
-`yarn workspace quick_kanban build` уже включает `bench build --app quick_kanban`. `bench restart` **не заменяет** сборку assets — без неё Desk продолжит отдавать старые hashed bundles.
+`yarn workspace dinext_kanban build` уже включает `bench build --app dinext_kanban`. `bench restart` **не заменяет** сборку assets — без неё Desk продолжит отдавать старые hashed bundles.
 
 ### Если `bench` падает с `ImportError: _check_nested_chain`
 
@@ -183,8 +183,8 @@ print('cache cleared')
 "
 
 # Сборка assets без CLI bench (vite + copy, затем Frappe esbuild)
-cd apps/quick_kanban && yarn vite build && yarn copy-js
-cd ../frappe && yarn run production --apps quick_kanban
+cd apps/dinext_kanban && yarn vite build && yarn copy-js
+cd ../frappe && yarn run production --apps dinext_kanban
 ```
 
 ## 🛠️ Использование
@@ -207,9 +207,9 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 Для полей `Link` / `Dynamic Link` на карточке подтягиваются title-подписи связанных записей (`hydrateLinkTitles`). Поля `Percent` отображаются progress bar (значение clamp 0–100), а не сырым числом.
 
-Карточку можно переместить drag-and-drop или через действие `Move to`. Перед перемещением клиент запрашивает `quick_kanban.api.get_move_options` и локально проверяет обязательные поля (`reqd`, `mandatory_depends_on`) для preview целевого состояния. Запрещённые назначения не показываются в меню и не принимают drop. При нескольких Workflow actions для одной колонки открывается диалог выбора action.
+Карточку можно переместить drag-and-drop или через действие `Move to`. Перед перемещением клиент запрашивает `dinext_kanban.api.get_move_options` и локально проверяет обязательные поля (`reqd`, `mandatory_depends_on`) для preview целевого состояния. Запрещённые назначения не показываются в меню и не принимают drop. При нескольких Workflow actions для одной колонки открывается диалог выбора action.
 
-На **обычной** доске (без swimlane) сохранение выполняется через `quick_kanban.api.move_card` с `board_name`, именем документа, целевой колонкой, `expected_modified` и опциональным `workflow_action`. Сервер повторяет проверки Workflow-прав и mandatory rules, затем либо применяет `apply_workflow`, либо вызывает полный `doc.save()` с lifecycle hooks целевого DocType.
+На **обычной** доске (без swimlane) сохранение выполняется через `dinext_kanban.api.move_card` с `board_name`, именем документа, целевой колонкой, `expected_modified` и опциональным `workflow_action`. Сервер повторяет проверки Workflow-прав и mandatory rules, затем либо применяет `apply_workflow`, либо вызывает полный `doc.save()` с lifecycle hooks целевого DocType.
 
 После успешного перемещения сжатая колонка (и при необходимости дорожка) раскрывается, список прокручивается к карточке, краткая подсветка подтверждает успех; при ошибке позиция откатывается с анимацией. Поведение анимаций учитывает `prefers-reduced-motion`.
 
@@ -217,7 +217,7 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 В заголовке колонки (иконка `+`) и в футере (**Add {DocType}**) доступно создание записи в целевой колонке, если политика создания это разрешает.
 
-При загрузке доски клиент запрашивает `quick_kanban.api.get_create_options` (политика в `quick_kanban.move_policy`). Для каждой колонки сервер возвращает:
+При загрузке доски клиент запрашивает `dinext_kanban.api.get_create_options` (политика в `dinext_kanban.move_policy`). Для каждой колонки сервер возвращает:
 
 | `form_mode` | Поведение |
 |-------------|-----------|
@@ -233,13 +233,13 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 ### Show child tasks / дочерние задачи
 
-Для DocType с `is_tree` и `nsm_parent_field` (у Task — `parent_task`) на панели инструментов Desk появляется чекбокс **Show child tasks** / **Показывать дочерние задачи** (между **Минимизировать** и **Group By**). Состояние хранится в `localStorage` (`quick_kanban:show_child_tasks:{board_name}`), по умолчанию выключено.
+Для DocType с `is_tree` и `nsm_parent_field` (у Task — `parent_task`) на панели инструментов Desk появляется чекбокс **Show child tasks** / **Показывать дочерние задачи** (между **Минимизировать** и **Group By**). Состояние хранится в `localStorage` (`dinext_kanban:show_child_tasks:{board_name}`), по умолчанию выключено.
 
 #### Семантика
 
 Когда чекбокс **выключен**, с доски скрываются карточки, у которых **прямой** родитель (значение `nsm_parent_field`) тоже входит в membership доски: текущие фильтры + активные колонки (+ `or_filters`). Корневые записи и «сироты» (родитель вне доски) остаются видимыми. Скрытие на самой доске не отменяет [child panel](#child-panel--область-дочерних-данных): дочерние записи по-прежнему можно открыть с карточки родителя в отдельной области.
 
-Переключение чекбокса вызывает `setQuickKanbanShowChildTasks` → `refreshBoard`. После create/move membership и счётчики пересчитываются (`hydrateBoardDocumentNames`, `fetchColumnTotals` / cell totals).
+Переключение чекбокса вызывает `setDinextKanbanShowChildTasks` → `refreshBoard`. После create/move membership и счётчики пересчитываются (`hydrateBoardDocumentNames`, `fetchColumnTotals` / cell totals).
 
 #### Загрузка и счётчики
 
@@ -247,7 +247,7 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 | Путь | API | Поведение |
 |------|-----|-----------|
-| Плоская доска | `quick_kanban.api.get_column_page` | candidate names по колонке → exclude on-board children → `start` / `page_length` |
+| Плоская доска | `dinext_kanban.api.get_column_page` | candidate names по колонке → exclude on-board children → `start` / `page_length` |
 | Swimlane | `get_swimlane_column_page` / `get_swimlane_lane_page` | то же с флагом `hide_board_children` |
 | Счётчики | `get_column_totals` / `get_cell_totals` | `hide_board_children=True` при скрытии детей |
 | Membership | `get_board_document_names` / `get_hidden_board_child_names` | с теми же `filters` / `or_filters` / колонками |
@@ -260,7 +260,7 @@ cd ../frappe && yarn run production --apps quick_kanban
 
 ### Child panel / область дочерних данных
 
-Для tree DocType (`is_tree` + `nsm_parent_field`, в конфиге доски — `parent_field`) на карточке с ненулевым числом прямых детей показывается badge (**Child records**): иконка списка и счётчик (`_child_count` через `quick_kanban.api.get_child_counts`).
+Для tree DocType (`is_tree` + `nsm_parent_field`, в конфиге доски — `parent_field`) на карточке с ненулевым числом прямых детей показывается badge (**Child records**): иконка списка и счётчик (`_child_count` через `dinext_kanban.api.get_child_counts`).
 
 #### Открытие и вложенность
 
@@ -296,7 +296,7 @@ Swimlane разбивает доску на горизонтальные дор�
 - На форме `Kanban Board` выберите значение Autocomplete **Swimlane Field**, либо
 - в панели инструментов Desk (рядом с **Минимизировать**, при праве **write** на `Kanban Board`) откройте **Group By** / **Группировать** и выберите поле или **No Grouping** / **Без группировки**.
 
-Сохранение идёт через `quick_kanban.api.set_swimlane_field`; список допустимых полей — `quick_kanban.api.get_swimlane_field_options`.
+Сохранение идёт через `dinext_kanban.api.set_swimlane_field`; список допустимых полей — `dinext_kanban.api.get_swimlane_field_options`.
 
 #### Режимы группировки
 
@@ -314,7 +314,7 @@ Swimlane разбивает доску на горизонтальные дор�
 
 - Один общий скроллер по горизонтали и вертикали (`kanban--swimlanes`); колонки выровнены по сетке во всех дорожках.
 - Sticky-ряд заголовков колонок сверху и sticky-chrome каждой дорожки (название, счётчик, для assign — аватар).
-- Дорожки сворачиваются/разворачиваются кликом по chrome; раскрытые ключи хранятся в `localStorage` (`quick_kanban:expanded_lanes:{board_name}`).
+- Дорожки сворачиваются/разворачиваются кликом по chrome; раскрытые ключи хранятся в `localStorage` (`dinext_kanban:expanded_lanes:{board_name}`).
 - При перетаскивании карточки над свёрнутой дорожкой она автоматически раскрывается после задержки (~400 ms), аналогично auto-expand сжатых колонок.
 - Дорожки с карточками (по счётчикам ячеек) поднимаются выше пустых (`sortLanesByOccupancy`).
 - Сжатие, ресайз и скрытие колонок работают и в swimlane: сжатая колонка занимает узкий трек во всех дорожках; **Добавить колонку** остаётся в sticky-заголовке.
@@ -331,7 +331,7 @@ Swimlane разбивает доску на горизонтальные дор�
 
 #### Перемещение карточек
 
-Drag-and-drop и меню **Move to** работают между колонками и/или дорожками. Сохранение при смене колонки и/или дорожки — `quick_kanban.api.move_card_to_cell` с `to_column`, опциональными `from_lane` / `to_lane`, `expected_modified` и `workflow_action` (не `move_card`):
+Drag-and-drop и меню **Move to** работают между колонками и/или дорожками. Сохранение при смене колонки и/или дорожки — `dinext_kanban.api.move_card_to_cell` с `to_column`, опциональными `from_lane` / `to_lane`, `expected_modified` и `workflow_action` (не `move_card`):
 
 - **колонка** — как обычно: Workflow / `doc.save()`, обязательные поля, optimistic update и откат;
 - **дорожка `field`** — запись значения swimlane-поля (пустое → Unassigned);
@@ -343,7 +343,7 @@ Drag-and-drop и меню **Move to** работают между колонка
 
 ### Отслеживание сроков (Deadlines)
 
-Настройки хранятся в Custom Fields на `Kanban Board` (секция **Deadline Tracking** / **Отслеживание сроков**, fixture [`kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json)). Логика — [`quick_kanban/deadline.py`](quick_kanban/deadline.py) и клиент [`Quick-Kanban/src/utils/deadline.js`](Quick-Kanban/src/utils/deadline.js).
+Настройки хранятся в Custom Fields на `Kanban Board` (секция **Deadline Tracking** / **Отслеживание сроков**, fixture [`kanban_board.json`](dinext_kanban/dinext_kanban/custom/kanban_board.json)). Логика — [`dinext_kanban/deadline.py`](dinext_kanban/deadline.py) и клиент [`frontend/src/utils/deadline.js`](frontend/src/utils/deadline.js).
 
 #### Настройка на форме доски
 
@@ -353,7 +353,7 @@ Drag-and-drop и меню **Move to** работают между колонка
 | **Attention Working Days** / **Рабочих дней для внимания** (`custom_deadline_attention_days`) | Int | Сколько рабочих дней до срока считать «приближается» (по умолчанию 3) |
 | **Track Deadlines In Columns** / **Отслеживать сроки в колонках** | MultiCheck → Table MultiSelect | Значения колонок канбана, в которых сроки учитываются для подсветки и дорожек Overdue / Approaching |
 
-Child DocType `Kanban Board Deadline Column` хранит выбранные значения через Link на каталог `Kanban Column Value`. Form script [`kanban_highlight.js`](quick_kanban/public/js/kanban_highlight.js) заполняет опции поля срока и MultiCheck колонок; для Task при пустых настройках подставляет defaults.
+Child DocType `Kanban Board Deadline Column` хранит выбранные значения через Link на каталог `Kanban Column Value`. Form script [`kanban_highlight.js`](dinext_kanban/public/js/kanban_highlight.js) заполняет опции поля срока и MultiCheck колонок; для Task при пустых настройках подставляет defaults.
 
 Без выбранного **Поле срока** трекинг выключен (`deadline_enabled` ложен).
 
@@ -403,7 +403,7 @@ Child DocType `Kanban Board Deadline Column` хранит выбранные з�
 - при перетаскивании карточки на сжатую колонку она автоматически раскрывается, если курсор **задержался** над ней (~400 ms); при сквозном проезде без задержки колонка остаётся сжатой;
 - список карточек остаётся drop-target, чтобы принять карточку после раскрытия.
 
-Состояние сжатых колонок запоминается в `localStorage` отдельно для каждой Kanban Board (`quick_kanban:collapsed_columns:{board_name}`).
+Состояние сжатых колонок запоминается в `localStorage` отдельно для каждой Kanban Board (`dinext_kanban:collapsed_columns:{board_name}`).
 
 ### Ширина колонок
 
@@ -412,8 +412,8 @@ Child DocType `Kanban Board Deadline Column` хранит выбранные з�
 - перетаскивание меняет ширину текущей колонки;
 - с зажатым **Shift** (в том числе на Mac) все видимые колонки доски получают ту же абсолютную ширину в пикселях;
 - во время drag ширина ограничивается диапазоном **15–50%** ширины окна (`window.innerWidth`); после сохранения ограничение больше не применяется (в том числе при изменении размера окна или повторном открытии доски);
-- значение сохраняется на уровне child-строки `Kanban Board Column` в Custom Field `custom_column_width` (Int, px, по умолчанию `250`) через `quick_kanban.api.set_column_widths`;
-- переупорядочивание колонок не сбрасывает ширину: `update_column_order` переопределён в `quick_kanban`, чтобы копировать `custom_column_width` при пересборке child-строк;
+- значение сохраняется на уровне child-строки `Kanban Board Column` в Custom Field `custom_column_width` (Int, px, по умолчанию `250`) через `dinext_kanban.api.set_column_widths`;
+- переупорядочивание колонок не сбрасывает ширину: `update_column_order` переопределён в `dinext_kanban`, чтобы копировать `custom_column_width` при пересборке child-строк;
 - у сжатой колонки визуально остаётся `52px`; сохранённая ширина не меняется и снова применяется после раскрытия.
 
 **Сжать ≠ изменить ширину:** сжатие — локальный UI-режим; ресайз за край — серверная настройка ширины колонки на доске.
@@ -442,7 +442,7 @@ Child DocType `Kanban Board Deadline Column` хранит выбранные з�
 - **ссылка** — копирует полный URL формы документа в буфер (`frappe.utils.copy_to_clipboard`);
 - **like** — переключает like/not-like для текущего пользователя (`frappe.desk.like.toggle_like`);
 - **комментарии** — счётчик `_comment_count`; клик открывает форму документа;
-- **файлы** — счётчик вложений (`quick_kanban.api.get_attachment_counts`); меню со списком, **+ Загрузить**, preview через `preview_attachment` при наличии приложения иначе открытие файла, удаление через `remove_attach` с правилами Form (`write` / `protect_attached_files`).
+- **файлы** — счётчик вложений (`dinext_kanban.api.get_attachment_counts`); меню со списком, **+ Загрузить**, preview через `preview_attachment` при наличии приложения иначе открытие файла, удаление через `remove_attach` с правилами Form (`write` / `protect_attached_files`).
 
 В режиме **Минимизировать** ряд скрывается вместе с полями и метками.
 
@@ -459,7 +459,7 @@ Child DocType `Kanban Board Deadline Column` хранит выбранные з�
 
 ### Расцветка карточек по полю `color`
 
-Quick Kanban автоматически использует поле **`color`** с fieldtype **`Color`** в DocType, для которого создана доска:
+Dinext Kanban автоматически использует поле **`color`** с fieldtype **`Color`** в DocType, для которого создана доска:
 
 - значение hex из Frappe Color применяется как **цветная полоска слева** (4px) и **лёгкий tint фона** (10%);
 - поле добавляется в запрос данных доски автоматически, даже если не указано в `Fields` Kanban Board;
@@ -470,7 +470,7 @@ Quick Kanban автоматически использует поле **`color`*
 
 - fieldname строго **`color`**, fieldtype строго **`Color`** (поле с другим именем или типом не используется);
 - у записей должно быть заполнено значение цвета;
-- после изменений frontend выполните сборку (`yarn workspace quick_kanban build`, `clear-cache`) и обновите страницу Kanban (`Ctrl+Shift+R`).
+- после изменений frontend выполните сборку (`yarn workspace dinext_kanban build`, `clear-cache`) и обновите страницу Kanban (`Ctrl+Shift+R`).
 
 ## 📦 Технологии
 
@@ -540,17 +540,17 @@ yarn install --frozen-lockfile
 Запустите frontend-проверки:
 
 ```bash
-yarn workspace quick_kanban lint
-yarn workspace quick_kanban test:run
-yarn workspace quick_kanban test:browser
-yarn workspace quick_kanban build
-python3 -m compileall -q quick_kanban
+yarn workspace dinext_kanban lint
+yarn workspace dinext_kanban test:run
+yarn workspace dinext_kanban test:browser
+yarn workspace dinext_kanban build
+python3 -m compileall -q dinext_kanban
 ```
 
 Backend-тесты выполняются из корня bench:
 
 ```bash
-bench --site <site-name> run-tests --app quick_kanban
+bench --site <site-name> run-tests --app dinext_kanban
 ```
 
 Для локальной разработки frontend:
@@ -559,11 +559,11 @@ bench --site <site-name> run-tests --app quick_kanban
 yarn dev
 ```
 
-Frontend состоит из двух слоёв: `quick_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get`, чекбокс **Минимизировать** и dropdown **Group By** в page-actions), а Vite собирает Vue-приложение из `Quick-Kanban/src/`. Команда `yarn workspace quick_kanban build` копирует JavaScript и CSS в `quick_kanban/public/` и сразу запускает `bench build --app quick_kanban`, который собирает хешированные bundles в `quick_kanban/public/dist/` (отдаются через `sites/assets/assets.json`). Перед review и деплоем выполняйте эту команду и проверяйте, что изменения попали в `dist/`.
+Frontend состоит из двух слоёв: `dinext_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get`, чекбокс **Минимизировать** и dropdown **Group By** в page-actions), а Vite собирает Vue-приложение из `frontend/src/`. Команда `yarn workspace dinext_kanban build` копирует JavaScript и CSS в `dinext_kanban/public/` и сразу запускает `bench build --app dinext_kanban`, который собирает хешированные bundles в `dinext_kanban/public/dist/` (отдаются через `sites/assets/assets.json`). Перед review и деплоем выполняйте эту команду и проверяйте, что изменения попали в `dist/`.
 
 ## Локализация
 
-Все пользовательские строки приложения оборачиваются в `_()` (Python) или `__()` (JavaScript) и сопровождаются русскими переводами в [`quick_kanban/translations/ru.csv`](quick_kanban/translations/ru.csv).
+Все пользовательские строки приложения оборачиваются в `_()` (Python) или `__()` (JavaScript) и сопровождаются русскими переводами в [`dinext_kanban/translations/ru.csv`](dinext_kanban/translations/ru.csv).
 
 При добавлении новых строк:
 
@@ -583,18 +583,18 @@ bench --site <site-name> clear-cache
 - [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
 - [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
 - [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`quick_kanban/api.py`](quick_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_child_counts`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), сроки (`get_deadline_holiday_context`, `ensure_deadline_column_values`), ширина колонок (`set_column_widths`, override `update_column_order`).
-- [`quick_kanban/board_children.py`](quick_kanban/board_children.py) — скрытие on-board children (membership, exclude до page slice, hidden names).
-- [`quick_kanban/move_policy.py`](quick_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
-- [`quick_kanban/swimlane.py`](quick_kanban/swimlane.py) — режимы группировки (в т.ч. `__deadlines`), построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
-- [`quick_kanban/deadline.py`](quick_kanban/deadline.py) — рабочие дни, buckets сроков, настройки доски, фильтры имён для deadline-lanes.
-- [`quick_kanban/get_beta_users.py`](quick_kanban/get_beta_users.py) — `get_kanban_config` (feature flags `kanban_beta` / `kanban_beta_users`).
-- [`Quick-Kanban/src/`](Quick-Kanban/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `deadline`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks и resize колонок в Vuex).
-- [`quick_kanban/quick_kanban/custom/kanban_board.json`](quick_kanban/quick_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info**, **Swimlane Field**, **Deadline Field** / attention days / deadline columns на Kanban Board.
-- [`quick_kanban/quick_kanban/custom/kanban_board_column.json`](quick_kanban/quick_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
-- [`quick_kanban/quick_kanban/doctype/kanban_column_value/`](quick_kanban/quick_kanban/doctype/kanban_column_value/) — каталог значений колонок для MultiSelect сроков.
-- [`quick_kanban/quick_kanban/doctype/kanban_board_deadline_column/`](quick_kanban/quick_kanban/doctype/kanban_board_deadline_column/) — child Table MultiSelect «колонки со сроками».
-- [`quick_kanban/public/js/kanban_highlight.js`](quick_kanban/public/js/kanban_highlight.js) — form script Kanban Board (highlight, swimlane/deadline Autocomplete, MultiCheck колонок).
+- [`dinext_kanban/api.py`](dinext_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_child_counts`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), сроки (`get_deadline_holiday_context`, `ensure_deadline_column_values`), ширина колонок (`set_column_widths`, override `update_column_order`).
+- [`dinext_kanban/board_children.py`](dinext_kanban/board_children.py) — скрытие on-board children (membership, exclude до page slice, hidden names).
+- [`dinext_kanban/move_policy.py`](dinext_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
+- [`dinext_kanban/swimlane.py`](dinext_kanban/swimlane.py) — режимы группировки (в т.ч. `__deadlines`), построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
+- [`dinext_kanban/deadline.py`](dinext_kanban/deadline.py) — рабочие дни, buckets сроков, настройки доски, фильтры имён для deadline-lanes.
+- [`dinext_kanban/get_beta_users.py`](dinext_kanban/get_beta_users.py) — `get_kanban_config` (feature flags `kanban_beta` / `kanban_beta_users`).
+- [`frontend/src/`](frontend/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `deadline`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks и resize колонок в Vuex).
+- [`dinext_kanban/dinext_kanban/custom/kanban_board.json`](dinext_kanban/dinext_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info**, **Swimlane Field**, **Deadline Field** / attention days / deadline columns на Kanban Board.
+- [`dinext_kanban/dinext_kanban/custom/kanban_board_column.json`](dinext_kanban/dinext_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
+- [`dinext_kanban/dinext_kanban/doctype/kanban_column_value/`](dinext_kanban/dinext_kanban/doctype/kanban_column_value/) — каталог значений колонок для MultiSelect сроков.
+- [`dinext_kanban/dinext_kanban/doctype/kanban_board_deadline_column/`](dinext_kanban/dinext_kanban/doctype/kanban_board_deadline_column/) — child Table MultiSelect «колонки со сроками».
+- [`dinext_kanban/public/js/kanban_highlight.js`](dinext_kanban/public/js/kanban_highlight.js) — form script Kanban Board (highlight, swimlane/deadline Autocomplete, MultiCheck колонок).
 
 После каждого commit локальный `post-commit` hook формирует предложение для документации в `../dinext-docs/doc-proposals/inbox/`. Повторная установка hook:
 
@@ -614,23 +614,23 @@ python3 ../dinext-docs/scripts/install_doc_intake_hooks.py \
 ```text
 dinext_kanban/
 ├── .github/workflows/          # CI: quality gates, Semgrep и release workflow
-├── Quick-Kanban/
+├── frontend/
 │   ├── e2e/                    # Playwright-сценарии и автономная browser fixture
 │   ├── src/
 │   │   ├── components/         # Vue-компоненты доски, колонок, карточек, меток и swimlane
 │   │   ├── test/               # Общая настройка Vitest и тесты интеграционных scripts
 │   │   ├── utils/              # Store, listNavigation, createValidation, swimlaneCreate, deadline, DnD меток, swimlaneBoard, меню
 │   │   ├── App.vue             # Корневой Vue-компонент
-│   │   ├── main.js             # Mount/unmount Vue-приложения (в т.ч. setQuickKanbanShowChildTasks)
+│   │   ├── main.js             # Mount/unmount Vue-приложения (в т.ч. setDinextKanbanShowChildTasks)
 │   │   └── style.css           # Стили нового Kanban
 │   ├── package.json            # Frontend-зависимости и команды (build = vite + copy + bench build)
 │   ├── playwright.config.js    # Конфигурация browser-тестов
 │   └── vite.config.js          # Сборка и unit-тесты
-├── quick_kanban/
+├── dinext_kanban/
 │   ├── public/
 │   │   ├── css/                # Собранные и подключаемые стили
 │   │   └── js/                 # Bootstrap, KanbanView override, form script и Vue bundle
-│   ├── quick_kanban/
+│   ├── dinext_kanban/
 │   │   ├── custom/             # Custom Fields Board (tags, extra info, swimlane, deadlines) и Column Width
 │   │   └── doctype/            # Kanban Column Value, Kanban Board Deadline Column
 │   ├── tests/                  # Backend-тесты Frappe

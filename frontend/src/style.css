@@ -1,0 +1,3169 @@
+/* Kanban Board */
+:root {
+  --kanban-assignment-ring-inner: var(--control-bg, var(--gray-100, #f3f3f3));
+  --kanban-assignment-ring-outer: var(--primary, var(--blue-500, #2491ef));
+}
+
+[data-theme="light"] {
+  --kanban-column-gray: var(--gray-200);
+  --kanban-column-red: var(--red-200);
+  --kanban-column-blue: var(--blue-200);
+  --kanban-column-light-blue: var(--blue-100);
+  --kanban-column-yellow: var(--yellow-100);
+  --kanban-column-purple: var(--purple-200);
+  --kanban-column-pink: var(--pink-200);
+  --kanban-column-green: var(--green-200);
+  --kanban-column-orange: var(--orange-200);
+  --kanban-column-cyan: var(--cyan-100);
+  --kanban-assignment-ring-inner: var(--control-bg, var(--gray-100));
+  --kanban-assignment-ring-outer: var(--primary, var(--blue-500));
+  --kanban-drop-allowed-outline: var(--primary, var(--blue-500, #2491ef));
+  --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #2491ef) 12%, transparent);
+  --kanban-drop-forbidden-overlay: rgb(23 23 23 / 0.28);
+  --kanban-header-item-hover-bg: color-mix(in srgb, var(--gray-600, #525252) 11%, transparent);
+  --kanban-move-flash-success-outline: var(--gray-400, #a3a3a3);
+  --kanban-move-flash-success-glow: color-mix(in srgb, var(--gray-400, #a3a3a3) 22%, transparent);
+  --kanban-move-flash-failure-outline: var(--orange-500, #f97316);
+  --kanban-move-flash-failure-glow: color-mix(in srgb, var(--orange-500, #f97316) 30%, transparent);
+}
+
+[data-theme="dark"] {
+  --kanban-column-gray: var(--gray-800);
+  --kanban-column-red: var(--red-900);
+  --kanban-column-blue: var(--blue-900);
+  --kanban-column-light-blue: var(--blue-800);
+  --kanban-column-yellow: var(--yellow-900);
+  --kanban-column-purple: var(--purple-900);
+  --kanban-column-pink: var(--pink-900);
+  --kanban-column-green: var(--green-900);
+  --kanban-column-orange: var(--orange-900);
+  --kanban-column-cyan: var(--cyan-900);
+  --kanban-assignment-ring-inner: var(--gray-600, #525252);
+  --kanban-assignment-ring-outer: var(--primary, var(--blue-400, #7ec1ff));
+  --kanban-drop-allowed-outline: var(--primary, var(--blue-400, #7ec1ff));
+  --kanban-drop-allowed-bg: color-mix(in srgb, var(--primary, #7ec1ff) 18%, transparent);
+  --kanban-drop-forbidden-overlay: rgb(0 0 0 / 0.42);
+  --kanban-header-item-hover-bg: color-mix(in srgb, var(--gray-400, #a3a3a3) 18%, transparent);
+  --kanban-move-flash-success-outline: var(--gray-500, #737373);
+  --kanban-move-flash-success-glow: color-mix(in srgb, var(--gray-500, #737373) 28%, transparent);
+  --kanban-move-flash-failure-outline: var(--orange-400, #fb923c);
+  --kanban-move-flash-failure-glow: color-mix(in srgb, var(--orange-400, #fb923c) 35%, transparent);
+}
+
+#kanbanapp {
+  min-height: 70vh;
+  --kanban-column-gutter: 8px;
+  --kanban-column-collapse-ms: 220ms;
+  /* Matches easeOutCubic in columnCollapseAnimation.js */
+  --kanban-column-collapse-ease: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --kanban-child-panel-anim-ms: 200ms;
+  --kanban-child-panel-pin-ms: 300ms;
+  --amber-200: var(--yellow-200);
+  --amber-800: var(--yellow-800);
+  --teal-200: var(--cyan-200);
+  --teal-800: var(--cyan-800);
+  --violet-200: var(--purple-200);
+  --violet-800: var(--purple-800);
+}
+
+#kanbanapp .clickdrag-active {
+  cursor: grabbing;
+}
+
+html.kanban-card-drag-active,
+html.kanban-card-drag-active * {
+  cursor: grabbing !important;
+}
+
+html.kanban-card-drag-active.kanban-card-drag-forbidden,
+html.kanban-card-drag-active.kanban-card-drag-forbidden * {
+  cursor: not-allowed !important;
+}
+
+#kanbanapp .kanban-shell {
+  min-height: 70vh;
+}
+
+#kanbanapp .kanban {
+  position: relative;
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  height: min(80vh, calc(100dvh - var(--navbar-height) - var(--page-bottom-margin)));
+  padding-bottom: 5px;
+  scroll-padding-inline: 8px;
+  isolation: isolate;
+}
+
+/* Swimlane mode: one shared x/y scroller; lane rows share column tracks. */
+#kanbanapp .kanban--swimlanes {
+  /* Tall enough for Desk avatar-small (28px) with even vertical padding. */
+  --swimlane-lane-chrome-height: 40px;
+  --swimlane-lane-overhang: 6px;
+  --swimlane-lane-radius: 12px;
+  --swimlane-lane-animation-ms: 220ms;
+  /* Gap between stuck lane title and sticky Add footer. */
+  --swimlane-sticky-footer-gap: 8px;
+  /* Lane wash over column track color (fg 8%). Child-panel column tint uses the same step. */
+  --swimlane-lane-tint: color-mix(in srgb, var(--fg, var(--text-color)) 8%, transparent);
+  --swimlane-chrome-tint: color-mix(in srgb, var(--fg, var(--text-color)) 16%, transparent);
+  --swimlane-chrome-tint-hover: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 28%,
+    transparent
+  );
+  --swimlane-deadline-overdue-tint: color-mix(
+    in srgb,
+    var(--red-600, var(--danger-color, #e24c4c)) 20%,
+    transparent
+  );
+  --swimlane-deadline-overdue-tint-hover: color-mix(
+    in srgb,
+    var(--red-600, var(--danger-color, #e24c4c)) 32%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint: color-mix(
+    in srgb,
+    var(--yellow-700, var(--warning-color, #b88100)) 20%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint-hover: color-mix(
+    in srgb,
+    var(--yellow-700, var(--warning-color, #b88100)) 32%,
+    transparent
+  );
+  display: block;
+  overflow: auto;
+  flex-direction: unset;
+  /* Avoid phantom vertical scroll when board-content is min-height: 100%. */
+  padding-bottom: 0;
+}
+
+#kanbanapp .swimlane-board-content {
+  position: relative;
+  display: grid;
+  grid-template-columns: max-content;
+  min-width: max-content;
+  width: max-content;
+  /* Fill scrollport when few lanes; subtract content-box padding-bottom. */
+  min-height: calc(100% - 4px);
+  /* Room for lane overhang bleed so scroller does not clip rounded edges. */
+  padding-inline: var(--swimlane-lane-overhang);
+  padding-bottom: 4px;
+  box-sizing: content-box;
+}
+
+/* Full-height column colors behind lanes; fill board-content (incl. short boards). */
+#kanbanapp .swimlane-column-rails {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--swimlane-lane-overhang);
+  z-index: 0;
+  display: grid;
+  align-items: stretch;
+  width: max-content;
+  height: auto;
+  gap: var(--kanban-column-gutter, 8px);
+  pointer-events: none;
+}
+
+#kanbanapp .swimlane-column-rail {
+  min-height: 100%;
+  border-radius: 0;
+  /* Hit target for column collapse dblclick below/between lanes. */
+  pointer-events: auto;
+}
+
+/* Foreground defines in-flow height; rails paint behind via absolute stretch.
+   Pass clicks through empty areas (below/between lanes) to column rails. */
+#kanbanapp .swimlane-board-foreground {
+  grid-area: 1 / 1;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--kanban-column-gutter, 8px);
+  width: max-content;
+  min-width: max-content;
+  background: transparent;
+  pointer-events: none;
+}
+
+#kanbanapp .swimlane-board-foreground > * {
+  pointer-events: auto;
+}
+
+#kanbanapp .swimlane-header-row {
+  position: sticky;
+  top: 0;
+  z-index: 20; /* above lane sticky (4) and lane bands (1) */
+  display: grid;
+  align-items: stretch;
+  gap: 8px;
+  box-sizing: border-box;
+  width: calc(100% + 2 * var(--swimlane-lane-overhang));
+  margin-inline: calc(-1 * var(--swimlane-lane-overhang));
+  padding-inline: var(--swimlane-lane-overhang);
+  /* Opaque full-bleed seal so lane chrome cannot paint over/around column headers. */
+  background: var(--bg-color, var(--card-bg, var(--control-bg)));
+  padding-bottom: 0;
+}
+
+/* Fill grid track only inside the header row — not the forceFallback mirror
+ * reparented under #kanbanapp (that would stretch to full board width). */
+#kanbanapp .swimlane-header-row .swimlane-column--header.kanban-column,
+#kanbanapp .swimlane-header-row .kanban-column--header-only {
+  min-height: 0 !important;
+  max-height: none !important;
+  height: auto;
+  width: 100% !important;
+  flex: 0 0 auto !important;
+}
+
+#kanbanapp .swimlane-header-row .add-column-control {
+  margin-top: 8px;
+  align-self: start;
+}
+
+/* One lane band: sticky chrome (tracks + title) + scrollable card row.
+   Bleed past column tracks; rounded like kanban columns (12px). */
+#kanbanapp .swimlane-lane {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  box-sizing: content-box;
+  min-width: max-content;
+  width: max-content;
+  height: auto;
+  max-height: none;
+  margin-block: 0;
+  margin-inline: calc(-1 * var(--swimlane-lane-overhang));
+  padding-inline: var(--swimlane-lane-overhang);
+  border: 0;
+  border-radius: var(--swimlane-lane-radius);
+  /* Tint fills overhang; content cells get the same wash via inset box-shadow. */
+  background: var(--swimlane-lane-tint);
+  overflow: visible;
+}
+
+/* Sticky first row: column tracks + title overlay; click anywhere toggles lane.
+   Opaque base + overflow:clip for rounded chrome. Use clip (not hidden) so it does
+   not create a scrollport — otherwise .swimlane-lane-toggle { left: 0 } cannot stick
+   to the board's horizontal scroller. */
+#kanbanapp .swimlane-lane-sticky {
+  position: sticky;
+  top: var(--swimlane-sticky-lanes-top, 0px);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: calc(100% + 2 * var(--swimlane-lane-overhang));
+  max-width: none;
+  min-width: calc(100% + 2 * var(--swimlane-lane-overhang));
+  min-height: var(--swimlane-lane-chrome-height);
+  margin-inline: calc(-1 * var(--swimlane-lane-overhang));
+  padding-inline: var(--swimlane-lane-overhang);
+  border-radius: var(--swimlane-lane-radius) var(--swimlane-lane-radius) 0 0;
+  /* Opaque theme base + tint wash: cards hide under chrome; rails show in lane body. */
+  background-color: var(--bg-color, var(--card-bg, var(--control-bg)));
+  background-image: linear-gradient(
+    var(--swimlane-chrome-tint),
+    var(--swimlane-chrome-tint)
+  );
+  isolation: isolate;
+  overflow: clip;
+  cursor: pointer;
+}
+
+#kanbanapp .swimlane-lane--collapsed .swimlane-lane-sticky {
+  border-radius: var(--swimlane-lane-radius);
+}
+
+#kanbanapp .swimlane-lane-sticky:focus-visible {
+  outline: 2px solid var(--primary, var(--blue-500, #2490ef));
+  outline-offset: -2px;
+}
+
+#kanbanapp .swimlane-lane-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  height: var(--swimlane-lane-chrome-height);
+  min-height: var(--swimlane-lane-chrome-height);
+  margin-bottom: calc(-1 * var(--swimlane-lane-chrome-height));
+  padding: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  /* Sticky already paints chrome-tint across overhang; avoid a narrower second band. */
+  background: transparent;
+  color: var(--text-color);
+}
+
+#kanbanapp .swimlane-chrome-row {
+  position: relative;
+  z-index: 0;
+  display: grid;
+  align-items: stretch;
+  gap: 8px;
+  min-width: max-content;
+  min-height: var(--swimlane-lane-chrome-height);
+  height: var(--swimlane-lane-chrome-height);
+  background: transparent;
+}
+
+#kanbanapp .swimlane-chrome-cell {
+  box-sizing: border-box;
+  min-height: var(--swimlane-lane-chrome-height);
+  height: var(--swimlane-lane-chrome-height);
+  border: 0;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-chrome-tint);
+}
+
+/* Narrow label: inset past leading collapsed columns; sticks to scrollport left. */
+#kanbanapp .swimlane-lane-toggle {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100% - var(--swimlane-label-inset, 0px)));
+  height: 100%;
+  margin: 0;
+  margin-left: var(--swimlane-label-inset, 0px);
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-sm, var(--text-base));
+  line-height: 1;
+  text-align: start;
+  pointer-events: none;
+}
+
+/* Hover/focus: wash the whole sticky chrome (including overhang). */
+#kanbanapp .swimlane-lane-sticky:hover,
+#kanbanapp .swimlane-lane-sticky:focus-visible {
+  background-color: var(--bg-color, var(--card-bg, var(--control-bg)));
+  background-image: linear-gradient(
+    var(--swimlane-chrome-tint-hover),
+    var(--swimlane-chrome-tint-hover)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky:hover .swimlane-chrome-cell,
+#kanbanapp .swimlane-lane-sticky:focus-visible .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-chrome-tint-hover);
+}
+
+/* Deadline lanes: tint the full sticky chrome row (title + column tracks). */
+#kanbanapp .swimlane-lane-sticky--deadline-overdue {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-overdue-tint),
+    var(--swimlane-deadline-overdue-tint)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-attention-tint),
+    var(--swimlane-deadline-attention-tint)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-overdue-tint);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-attention-tint);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:hover,
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:focus-visible {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-overdue-tint-hover),
+    var(--swimlane-deadline-overdue-tint-hover)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention:hover,
+#kanbanapp .swimlane-lane-sticky--deadline-attention:focus-visible {
+  background-image: linear-gradient(
+    var(--swimlane-deadline-attention-tint-hover),
+    var(--swimlane-deadline-attention-tint-hover)
+  );
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:hover .swimlane-chrome-cell,
+#kanbanapp .swimlane-lane-sticky--deadline-overdue:focus-visible .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-overdue-tint-hover);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-attention:hover .swimlane-chrome-cell,
+#kanbanapp .swimlane-lane-sticky--deadline-attention:focus-visible .swimlane-chrome-cell {
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-deadline-attention-tint-hover);
+}
+
+#kanbanapp .swimlane-lane-sticky--deadline-overdue .swimlane-lane-count,
+#kanbanapp .swimlane-lane-sticky--deadline-attention .swimlane-lane-count {
+  color: inherit;
+  opacity: 0.72;
+}
+
+[data-theme="dark"] #kanbanapp .kanban--swimlanes {
+  --swimlane-deadline-overdue-tint: color-mix(in srgb, var(--red-400, #ff7b7b) 24%, transparent);
+  --swimlane-deadline-overdue-tint-hover: color-mix(
+    in srgb,
+    var(--red-400, #ff7b7b) 36%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint: color-mix(
+    in srgb,
+    var(--yellow-400, #f2c14e) 24%,
+    transparent
+  );
+  --swimlane-deadline-attention-tint-hover: color-mix(
+    in srgb,
+    var(--yellow-400, #f2c14e) 36%,
+    transparent
+  );
+}
+
+/* Continuous ring above chrome/columns when sticky title is hovered or focused. */
+#kanbanapp .swimlane-lane:has(> .swimlane-lane-sticky:hover)::after,
+#kanbanapp .swimlane-lane:has(> .swimlane-lane-sticky:focus-visible)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3; /* below sticky chrome (4) so ring scrolls under the title row */
+  box-sizing: border-box;
+  border: 0.5px solid color-mix(in srgb, var(--fg, var(--text-color)) 18%, transparent);
+  border-radius: var(--swimlane-lane-radius);
+  pointer-events: none;
+}
+
+#kanbanapp .swimlane-lane:has(> .swimlane-lane-sticky:focus-visible) > .swimlane-lane-sticky:focus-visible {
+  outline: none;
+}
+
+#kanbanapp .swimlane-lane-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  line-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Lock Desk avatar metrics so photo vs initials don't shift the title. */
+#kanbanapp .swimlane-lane-avatar .avatar {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  vertical-align: middle;
+}
+
+#kanbanapp .swimlane-lane-avatar .avatar-frame,
+#kanbanapp .swimlane-lane-avatar .standard-image {
+  box-sizing: border-box;
+}
+
+#kanbanapp .swimlane-lane-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  font-size: 1.25em;
+  line-height: 1;
+  transition: transform var(--swimlane-lane-animation-ms, 220ms) ease;
+  transform-origin: center;
+}
+
+#kanbanapp .swimlane-lane-chevron--collapsed {
+  transform: rotate(-90deg);
+}
+
+#kanbanapp .swimlane-lane-title {
+  min-width: 0;
+  font-weight: 600;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#kanbanapp .swimlane-lane-title--deadline-overdue {
+  color: var(--red-600, var(--danger-color, #e24c4c));
+}
+
+#kanbanapp .swimlane-lane-title--deadline-attention {
+  color: var(--yellow-700, var(--warning-color, #b88100));
+}
+
+[data-theme="dark"] #kanbanapp .swimlane-lane-title--deadline-overdue {
+  color: var(--red-400, #ff7b7b);
+}
+
+[data-theme="dark"] #kanbanapp .swimlane-lane-title--deadline-attention {
+  color: var(--yellow-400, #f2c14e);
+}
+
+#kanbanapp .swimlane-lane-count {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  padding-inline-start: 2px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+#kanbanapp .swimlane-row {
+  position: relative;
+  z-index: 0;
+  display: grid;
+  align-items: stretch;
+  gap: 8px;
+  min-width: max-content;
+  height: auto;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  transition: max-height var(--swimlane-lane-animation-ms, 220ms) ease;
+}
+
+#kanbanapp .swimlane-row--animating {
+  overflow: hidden;
+}
+
+#kanbanapp .swimlane-row--collapsed {
+  flex: 0 0 auto;
+  height: auto;
+}
+
+#kanbanapp .swimlane-row--expanded {
+  flex: 0 0 auto;
+  height: auto;
+  max-height: none;
+}
+
+#kanbanapp .swimlane-cell-spacer {
+  align-self: stretch;
+  /* Hit area when every column in the lane is collapsed (no sibling height). */
+  min-height: 48px;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-radius: 0;
+  /* Same lane wash over column track color; children paint above inset. */
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-lane-tint);
+}
+
+#kanbanapp .swimlane-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  border-radius: 0;
+  overflow: visible;
+  /* Same lane wash over column track color; cards stay opaque on top. */
+  box-shadow: inset 0 0 0 100vmax var(--swimlane-lane-tint);
+}
+
+#kanbanapp .swimlane-group--collapsed {
+  flex: 0 0 auto;
+}
+
+#kanbanapp .swimlane-group--expanded {
+  /* Grow with all cards (including paginated loads); board scrolls. */
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  align-self: start;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+#kanbanapp .swimlane-group-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 4px;
+  background: transparent;
+}
+
+#kanbanapp .kanban-column--cell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent !important;
+}
+
+#kanbanapp .kanban-column--external-scroller {
+  min-height: 0 !important;
+  height: auto;
+  max-height: none;
+}
+
+/* External board scroller: list grows with content; no nested vertical scroll. */
+#kanbanapp .kanban-card-list--external-scroller {
+  flex: 0 0 auto;
+  min-height: 0;
+  height: auto !important; /* override .kanban-card-list { height: 100% } */
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#kanbanapp .add-column-control {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+#kanbanapp .add-column-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#kanbanapp .add-column-trigger:hover,
+#kanbanapp .add-column-trigger:focus-visible {
+  color: var(--text-color);
+  background: var(--control-bg, var(--bg-color));
+  border-color: var(--text-muted);
+  outline: none;
+}
+
+#kanbanapp .add-column-trigger .icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+#kanbanapp .add-column-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+  max-width: 240px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--card-bg, var(--bg-color));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .add-column-option {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-color);
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+#kanbanapp .add-column-option:hover,
+#kanbanapp .add-column-option:focus-visible {
+  background: var(--control-bg, var(--subtle-fg));
+  outline: none;
+}
+
+#kanbanapp .kanban-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 250px;
+  width: 250px;
+  max-width: none;
+  padding: 0;
+  max-height: calc(
+    100vh - var(--navbar-height) - var(--page-bottom-margin)
+  ) !important;
+  border-radius: 12px;
+  min-height: 70vh;
+  position: relative;
+  transition:
+    width var(--kanban-column-collapse-ms, 220ms) var(--kanban-column-collapse-ease, cubic-bezier(0.215, 0.61, 0.355, 1)),
+    flex-basis var(--kanban-column-collapse-ms, 220ms) var(--kanban-column-collapse-ease, cubic-bezier(0.215, 0.61, 0.355, 1));
+}
+
+/* Classic board: cards scroll inside the column; never paint past column/board bounds. */
+#kanbanapp .kanban:not(.kanban--swimlanes) .kanban-column {
+  overflow: hidden;
+}
+
+#kanbanapp .kanban:not(.kanban--swimlanes) .kanban-card-list:not(.kanban-card-list--external-scroller) {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow-y: auto;
+}
+
+/*
+ * Swimlane cells must grow with all cards (including paginated loads).
+ * Must follow .kanban-column so max-height !important does not cap the track.
+ * overflow: visible so footer sticky can bind to the board scroller.
+ */
+#kanbanapp .kanban-column.kanban-column--cell {
+  max-height: none !important;
+  min-height: 0 !important;
+  height: auto;
+  overflow: visible;
+}
+
+/* Swimlane header track: fill sticky row height so collapsed neighbors cannot leave a white band. */
+#kanbanapp .swimlane-header-row .kanban-column--header-only {
+  align-self: stretch;
+  border-radius: 12px 12px 0 0;
+  margin: 0;
+  padding-bottom: 0;
+  gap: 0;
+  height: auto;
+  /* Beat earlier .kanban-column--header-only { min-height: 0 !important }. */
+  min-height: 100% !important;
+}
+
+#kanbanapp .swimlane-header-row .kanban-column--header-only .kanban-column-header {
+  margin-bottom: 0;
+}
+
+/*
+ * Collapsed swimlane header: absolute full chrome (count → title → menu, same as
+ * normal collapsed) so sticky row height stays driven by expanded neighbors.
+ */
+#kanbanapp .swimlane-header-row .kanban-column--header-only.kanban-column--collapsed {
+  overflow: visible;
+  position: relative;
+  z-index: 6;
+  border-radius: 12px 12px 0 0;
+  max-height: none !important;
+}
+
+#kanbanapp .swimlane-header-row .kanban-column--header-only.kanban-column--collapsed .kanban-column-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 7;
+  overflow: visible;
+  margin-bottom: 0;
+}
+
+#kanbanapp .kanban-column--resizing {
+  transition: none;
+}
+
+#kanbanapp .kanban-column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 3;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+#kanbanapp .kanban-column-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+#kanbanapp .kanban-column:hover > .kanban-column-resize-handle::after,
+#kanbanapp .kanban-column--resizing > .kanban-column-resize-handle::after {
+  background: var(--gray-500, var(--text-muted));
+}
+
+body.kanban-column-resize-active,
+body.kanban-column-resize-active * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+#kanbanapp .kanban-column--collapsed {
+  flex: 0 0 52px;
+  width: 52px;
+  overflow: visible;
+}
+
+#kanbanapp .kanban-column--collapsed .kanban-column-header {
+  position: relative;
+  z-index: 2;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-bottom: 0;
+  padding: 8px 4px 0;
+  min-height: 0;
+  flex: 0 0 auto;
+  width: 100%;
+  overflow: visible;
+}
+
+#kanbanapp .kanban-column--collapsed .column-heading {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  flex: 0 0 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+#kanbanapp .kanban-column--collapsed .column-count {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  margin-right: 0;
+}
+
+#kanbanapp .kanban-column--collapsed .column-title {
+  flex: 0 0 auto;
+  align-self: center;
+  display: block;
+  width: auto;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  overflow: visible;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  transform-origin: center center;
+  white-space: nowrap;
+  text-align: center;
+  line-height: 1.2;
+  user-select: none;
+}
+
+#kanbanapp .kanban-column--collapsed .column-header-actions {
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 100%;
+  justify-content: center;
+  overflow: visible;
+}
+
+#kanbanapp .kanban-column--collapsed .dinext-kanban-column-menu {
+  overflow: visible;
+}
+
+#kanbanapp .kanban-column--collapsed .kanban-card-list {
+  position: absolute;
+  inset: 0;
+  flex: none;
+  min-height: 0;
+  opacity: 0;
+  pointer-events: auto;
+  overflow: hidden;
+  z-index: 0;
+}
+
+/*
+ * Flat host column with an open ChildPanel: keep the card-list in flow so the
+ * board-hosted panel spacer/hostRect origin does not jump when the column
+ * collapses (absolute inset:0 would re-anchor the list at column top).
+ */
+#kanbanapp .kanban-column--collapsed.kanban-column--child-panel-host .kanban-card-list {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  opacity: 0;
+  pointer-events: auto;
+  overflow: hidden;
+  z-index: 0;
+}
+
+#kanbanapp .kanban-column--collapsed .kanban-card-list > *,
+#kanbanapp .kanban-column--collapsed .column-loading,
+#kanbanapp .kanban-column--collapsed .empty-column,
+#kanbanapp .kanban-column--collapsed .addcard,
+#kanbanapp .kanban-column--collapsed .column-footer-actions {
+  visibility: hidden;
+}
+
+#kanbanapp .kanban-column-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding: 8px var(--kanban-column-gutter) 0;
+}
+
+/*
+ * Fixed + JS coords; Teleported to body so it paints above the child-panel
+ * portal without raising column z-index. Selector is unscoped (#kanbanapp) so
+ * body-teleported nodes still receive styles (same pattern as .move-card-menu).
+ */
+.column-dropdown {
+  max-height: 300px;
+  overflow-y: auto;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  transform: none;
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+/*
+ * Body Teleport above the whole board (.kanban isolation traps portal z=50).
+ * z-index 5: above board (~0) and below Desk .page-head (6) so toolbar
+ * dropdowns are not covered. Transparent only — no strip/background.
+ */
+.kanban-collapsed-chrome--floating {
+  position: fixed;
+  z-index: 5;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  pointer-events: auto;
+  color: inherit;
+}
+
+.kanban-collapsed-chrome--floating.column-title {
+  display: block;
+  width: auto;
+  max-width: none;
+  min-height: 0;
+  overflow: visible;
+  writing-mode: vertical-rl;
+  /* translate centering comes from inline style with rotate(180deg) */
+  transform-origin: center center;
+  white-space: nowrap;
+  text-align: center;
+  line-height: 1.2;
+  user-select: none;
+  font-size: medium;
+  font-weight: 600;
+}
+
+.kanban-collapsed-chrome--floating.column-header-actions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: visible;
+}
+
+.kanban-collapsed-chrome--floating .header-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.kanban-collapsed-chrome--floating.column-title--draggable {
+  cursor: grab;
+}
+
+.kanban-collapsed-chrome--floating.column-title--draggable:active {
+  cursor: grabbing;
+}
+
+/* During column reorder, hide floats and let hits pass through child panels
+ * so Sortable elementFromPoint targets board columns (not panel / empty-insert). */
+html.kanban-column-sortable-dragging .kanban-collapsed-chrome--floating {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+html.kanban-column-sortable-dragging .child-panel,
+html.kanban-column-sortable-dragging .child-panel-portal {
+  pointer-events: none !important;
+}
+
+/*
+ * Collapsed columns keep an opacity-0 card-list with pointer-events:auto.
+ * Descendants with pe:auto re-enable hits even when Sortable sets pe:none on
+ * the forceFallback mirror — elementFromPoint then sticks on the dragged
+ * column and Sortable empty-inserts it at the end. Kill those hits while
+ * reordering columns.
+ */
+html.kanban-column-sortable-dragging .kanban-column--collapsed .kanban-card-list,
+html.kanban-column-sortable-dragging .sortable-fallback .kanban-card-list,
+html.kanban-column-sortable-dragging .sortable-column-ghost .kanban-card-list,
+html.kanban-column-sortable-dragging .sortable-column-drag .kanban-card-list {
+  pointer-events: none !important;
+}
+
+#kanbanapp .kanban-collapsed-chrome--placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.column-dropdown .column-color-swatches {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(32px, 1fr));
+  gap: 4px;
+}
+
+#kanbanapp .column-title {
+  color: inherit;
+  font-size: medium;
+  font-weight: 600;
+  text-align: start;
+  margin: 0;
+}
+
+#kanbanapp .column-title--draggable {
+  cursor: grab;
+}
+
+#kanbanapp .column-title--draggable:active {
+  cursor: grabbing;
+}
+
+#kanbanapp .sortable-column-ghost,
+#kanbanapp .sortable-column-drag {
+  opacity: 0.4;
+}
+
+#kanbanapp .column-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+#kanbanapp .column-count {
+  display: inline-flex;
+  min-width: 1.75rem;
+  justify-content: center;
+  margin-right: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+#kanbanapp .column-count:not(.loading) {
+  cursor: pointer;
+}
+
+#kanbanapp .column-count.loading {
+  color: var(--text-muted);
+  background: var(--control-bg);
+}
+
+#kanbanapp .column-count.blue {
+  color: var(--text-on-blue);
+  background: var(--bg-blue);
+}
+
+#kanbanapp .column-count.cyan {
+  color: var(--text-on-cyan);
+  background: var(--bg-cyan);
+}
+
+#kanbanapp .column-count.gray {
+  color: var(--text-on-gray);
+  background: var(--bg-gray);
+}
+
+#kanbanapp .column-count.green {
+  color: var(--text-on-green);
+  background: var(--bg-green);
+}
+
+#kanbanapp .column-count.light-blue {
+  color: var(--text-on-light-blue, var(--text-on-blue));
+  background: var(--bg-light-blue, var(--bg-blue));
+}
+
+#kanbanapp .column-count.orange {
+  color: var(--text-on-orange);
+  background: var(--bg-orange);
+}
+
+#kanbanapp .column-count.pink {
+  color: var(--text-on-pink);
+  background: var(--bg-pink);
+}
+
+#kanbanapp .column-count.purple {
+  color: var(--text-on-purple);
+  background: var(--bg-purple);
+}
+
+#kanbanapp .column-count.red {
+  color: var(--text-on-red);
+  background: var(--bg-red);
+}
+
+#kanbanapp .column-count.yellow {
+  color: var(--text-on-yellow);
+  background: var(--bg-yellow);
+}
+
+#kanbanapp .column-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+#kanbanapp .dinext-kanban-column-menu {
+  position: relative;
+}
+
+.column-dropdown .indicator-choice {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.column-dropdown .column-menu-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-color);
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.column-dropdown .column-menu-action .icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 0; /* override Frappe .icon { margin: 0 auto } */
+}
+
+.column-dropdown .column-menu-action:last-child {
+  border-radius: 0 0 6px 6px;
+}
+
+.column-dropdown .column-menu-action:hover,
+.column-dropdown .column-menu-action:focus-visible {
+  background: var(--fg-hover);
+  outline: none;
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch,
+.column-dropdown .dinext-kanban-indicator-swatch {
+  display: inline-block;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 999px;
+  margin-right: 6px;
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.blue,
+.column-dropdown .dinext-kanban-indicator-swatch.blue {
+  background: var(--bg-blue);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.cyan,
+.column-dropdown .dinext-kanban-indicator-swatch.cyan {
+  background: var(--bg-cyan);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.gray,
+.column-dropdown .dinext-kanban-indicator-swatch.gray {
+  background: var(--bg-gray);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.green,
+.column-dropdown .dinext-kanban-indicator-swatch.green {
+  background: var(--bg-green);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.light-blue,
+.column-dropdown .dinext-kanban-indicator-swatch.light-blue {
+  background: var(--bg-light-blue, var(--bg-blue));
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.orange,
+.column-dropdown .dinext-kanban-indicator-swatch.orange {
+  background: var(--bg-orange);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.pink,
+.column-dropdown .dinext-kanban-indicator-swatch.pink {
+  background: var(--bg-pink);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.purple,
+.column-dropdown .dinext-kanban-indicator-swatch.purple {
+  background: var(--bg-purple);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.red,
+.column-dropdown .dinext-kanban-indicator-swatch.red {
+  background: var(--bg-red);
+}
+
+#kanbanapp .dinext-kanban-indicator-swatch.yellow,
+.column-dropdown .dinext-kanban-indicator-swatch.yellow {
+  background: var(--bg-yellow);
+}
+
+#kanbanapp .kanban-card {
+  --kanban-card-density-duration: 200ms;
+  --kanban-child-panel-anim-ms: 200ms;
+  --kanban-child-panel-pin-ms: 300ms;
+  --kanban-card-shadow: var(--shadow-sm);
+  display: flex;
+  position: relative;
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--kanban-column-gutter));
+  min-width: 0;
+  font-size: var(--text-md);
+  gap: 2px;
+  flex-direction: column;
+  padding: 8px 12px 8px 12px;
+  margin-inline: var(--kanban-column-gutter);
+  margin-bottom: 8px;
+  background: var(--card-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: 8px !important;
+  opacity: 1;
+  box-shadow: var(--kanban-card-shadow);
+  overflow: hidden;
+  transition:
+    padding var(--kanban-card-density-duration) ease,
+    gap var(--kanban-card-density-duration) ease,
+    box-shadow 150ms ease,
+    border-color 150ms ease;
+}
+
+#kanbanapp .kanban-card--has-color {
+  --kanban-card-accent: var(--card-accent-color);
+  background: color-mix(in srgb, var(--kanban-card-accent) 10%, var(--card-bg));
+  box-shadow:
+    inset 4px 0 0 var(--kanban-card-accent),
+    var(--kanban-card-shadow);
+}
+
+#kanbanapp
+  .kanban-card:is(:hover, :focus-within):not(
+    .chosen-card,
+    .ghost-card,
+    .kanban-card-move-flash,
+    .kanban-card-move-flash--instant
+  ) {
+  --kanban-card-shadow: var(--shadow-md);
+  border-color: var(--gray-400);
+}
+
+@supports not (background: color-mix(in srgb, red 10%, white)) {
+  #kanbanapp .kanban-card--has-color {
+    background: var(--card-bg);
+  }
+}
+
+#kanbanapp .kanban-title-area {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#kanbanapp .kanban-title-main {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+#kanbanapp .kanban-title-area .kanban-title-deadline-icon {
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  max-width: 0;
+  margin-top: 0.15em;
+  margin-inline-end: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    max-width var(--kanban-card-density-duration) ease,
+    opacity var(--kanban-card-density-duration) ease,
+    margin-inline-end var(--kanban-card-density-duration) ease;
+}
+
+#kanbanapp .kanban-title-area .kanban-title-deadline-icon--visible {
+  max-width: 1rem;
+  margin-inline-end: 0.35rem;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Bound SVG icons when Desk icon styles are unavailable (e.g. e2e fixture). */
+#kanbanapp .icon {
+  display: inline-block;
+  width: 1.25rem;
+  height: 1.25rem;
+  vertical-align: middle;
+}
+
+#kanbanapp .icon-sm {
+  width: 1rem;
+  height: 1rem;
+}
+
+#kanbanapp .icon-xs {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+#kanbanapp .drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  flex: 0 0 auto;
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  min-height: 32px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+  transition: color 0.15s ease;
+}
+
+#kanbanapp .drag-handle.drag:hover {
+  color: var(--text-color);
+}
+
+#kanbanapp .drag-handle:active {
+  cursor: grabbing;
+}
+
+#kanbanapp .drag-handle .icon {
+  pointer-events: none;
+}
+
+#kanbanapp .chosen-card {
+  filter: contrast(0.9);
+}
+
+#kanbanapp .ghost-card {
+  filter: contrast(1);
+  pointer-events: none;
+}
+
+/* Card DnD only — do not apply to column Sortable (blocks clicks on the column). */
+#kanbanapp .kanban-card-list .sortable-fallback,
+#kanbanapp .kanban-card-list .sortable-drag,
+#kanbanapp .ghost-card.sortable-fallback,
+#kanbanapp .ghost-card.sortable-drag,
+#kanbanapp .chosen-card.sortable-fallback,
+#kanbanapp .chosen-card.sortable-drag {
+  pointer-events: none;
+}
+
+#kanbanapp .chosen-card .drag {
+  opacity: 0.5;
+}
+
+#kanbanapp .ghost-card .drag {
+  opacity: 1;
+}
+
+#kanbanapp .kanban-card-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin: 12px 0 5px;
+  gap: 8px;
+  max-height: 160px;
+  opacity: 1;
+  overflow: hidden;
+  transition:
+    margin var(--kanban-card-density-duration) ease,
+    max-height var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease,
+    opacity var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease;
+}
+
+#kanbanapp .kanban-card-fields-slot {
+  display: block;
+  overflow: hidden;
+  min-height: 0;
+  transition: max-height var(--kanban-card-density-duration) ease;
+}
+
+#kanbanapp .kanban-card-density-inner {
+  min-height: 0;
+}
+
+#kanbanapp .kanban-card--minimized {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  gap: 0;
+}
+
+#kanbanapp .kanban-card--minimized .card-title {
+  margin-bottom: 0;
+}
+
+#kanbanapp .kanban-card--minimized .kanban-card-meta {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+#kanbanapp .kanban-card--expanded .kanban-card-meta {
+  margin: 12px 0 5px;
+}
+
+#kanbanapp .card-title {
+  font-weight: 600;
+  text-align: start;
+  margin-bottom: 7px;
+  overflow-wrap: anywhere;
+  transition: margin-bottom var(--kanban-card-density-duration) ease;
+}
+
+#kanbanapp .kanban-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--text-sm);
+  min-height: 0;
+  overflow: hidden;
+}
+
+#kanbanapp .kanban-card-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+#kanbanapp .kanban-card-fields dt {
+  color: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+}
+
+#kanbanapp .kanban-card-fields dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Date"],
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Datetime"],
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Link"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#kanbanapp .kanban-card-field--deadline dd {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: inherit;
+}
+
+#kanbanapp .kanban-deadline-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+#kanbanapp .kanban-card-field--deadline-overdue,
+#kanbanapp .kanban-card-field--deadline-overdue dd,
+#kanbanapp .kanban-card-field--deadline-overdue .kanban-inline-display {
+  color: var(--red-600, var(--danger-color, #e24c4c));
+}
+
+#kanbanapp .kanban-card-field--deadline-attention,
+#kanbanapp .kanban-card-field--deadline-attention dd,
+#kanbanapp .kanban-card-field--deadline-attention .kanban-inline-display {
+  color: var(--yellow-700, var(--warning-color, #b88100));
+}
+
+#kanbanapp .kanban-deadline-icon--overdue {
+  color: var(--red-600, var(--danger-color, #e24c4c));
+}
+
+#kanbanapp .kanban-deadline-icon--attention {
+  color: var(--yellow-700, var(--warning-color, #b88100));
+}
+
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-overdue,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-overdue dd,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-overdue .kanban-inline-display,
+[data-theme="dark"] #kanbanapp .kanban-deadline-icon--overdue {
+  color: var(--red-400, #ff7b7b);
+}
+
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-attention,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-attention dd,
+[data-theme="dark"] #kanbanapp .kanban-card-field--deadline-attention .kanban-inline-display,
+[data-theme="dark"] #kanbanapp .kanban-deadline-icon--attention {
+  color: var(--yellow-400, #f2c14e);
+}
+
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Percent"] {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Percent"] .kanban-inline-field,
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Percent"] .kanban-inline-display {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+#kanbanapp .kanban-card-fields dd[data-fieldtype="Percent"] .progress {
+  height: 10px;
+  margin: 0;
+  width: 100%;
+}
+
+#kanbanapp .kanban-card-fields dd a {
+  display: block;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#kanbanapp .kanban-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  margin-bottom: 0;
+  font-size: var(--text-sm, 12px);
+  list-style: none;
+  padding: 0;
+}
+
+#kanbanapp .kanban-card-extra-info {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  width: 100%;
+}
+
+#kanbanapp .extra-info-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px;
+  color: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  --icon-stroke: currentColor;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+#kanbanapp .extra-info-action:hover:not(:disabled) {
+  background: var(--control-bg);
+  color: color-mix(in srgb, var(--text-muted) 85%, transparent);
+}
+
+#kanbanapp .extra-info-action--danger:hover:not(:disabled) {
+  background: var(--control-bg);
+  color: color-mix(in srgb, var(--red-500, #e24c4c) 75%, transparent);
+  --icon-stroke: currentColor;
+}
+
+#kanbanapp .extra-info-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#kanbanapp .extra-info-action.liked,
+#kanbanapp .extra-info-action.liked:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--red-500, #e24c4c) 70%, transparent);
+  --icon-stroke: currentColor;
+}
+
+#kanbanapp .extra-info-action--count {
+  min-width: 36px;
+}
+
+#kanbanapp .extra-info-count {
+  font-size: var(--text-sm, 12px);
+  font-variant-numeric: tabular-nums;
+}
+
+#kanbanapp .extra-info-files {
+  position: relative;
+  display: inline-flex;
+}
+
+.extra-info-files-menu {
+  position: fixed;
+  z-index: 1050;
+  min-width: 200px;
+  max-width: min(280px, calc(100vw - 16px));
+  margin: 0;
+  padding: 4px;
+  color: var(--text-color);
+  background: var(--fg-color, var(--card-bg));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+.extra-info-files-menu .dropdown-item {
+  color: var(--text-color);
+}
+
+.extra-info-files-list {
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.extra-info-file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.extra-info-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extra-info-file-delete {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.extra-info-file-delete:hover {
+  color: var(--red-500, #e24c4c);
+  background: var(--control-bg);
+}
+
+.extra-info-upload {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.extra-info-files-empty {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: var(--text-sm, 12px);
+}
+
+#kanbanapp .kanban-tags .tag-pill {
+  border-radius: 100px;
+  height: 22px;
+  width: auto;
+  max-width: 100%;
+  padding: 2px 8px;
+  margin: 0;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-tags--editable {
+  position: relative;
+  z-index: 2;
+}
+
+#kanbanapp .kanban-tags--editable > li {
+  display: contents;
+}
+
+#kanbanapp .kanban-tags--editable .form-sidebar-items {
+  display: contents;
+}
+
+#kanbanapp .kanban-tags--editable .form-tag-row,
+#kanbanapp .kanban-tags--editable .kanban-tags-toolbar {
+  display: contents;
+}
+
+#kanbanapp .kanban-tags--editable .add-tags-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0;
+  min-width: 22px;
+  min-height: 22px;
+  line-height: 1;
+  color: var(--text-muted, var(--gray-600));
+}
+
+#kanbanapp .kanban-tags--editable .add-tags-btn:hover {
+  color: var(--text-color, var(--gray-900));
+}
+
+#kanbanapp .kanban-tags--editable .data-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 22px;
+  padding: 2px 6px 2px 8px;
+  margin: 0;
+  border-radius: 100px;
+  border: 0;
+  font-size: var(--text-sm, 12px);
+  line-height: 18px;
+  cursor: grab;
+}
+
+#kanbanapp .kanban-tags--editable .data-pill .pill-label {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#kanbanapp .kanban-tags--editable .data-pill .remove-btn {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-tags--editable .data-pill .remove-btn:hover {
+  opacity: 1;
+}
+
+#kanbanapp .kanban-tag-pill--dragging {
+  opacity: 0.45;
+}
+
+#kanbanapp .kanban-tag-layout-animating {
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* Ghost lives on document.body (outside #kanbanapp) so it tracks the cursor.
+   Background/color come from the source pill via inline styles. */
+.kanban-tag-drag-ghost {
+  position: fixed;
+  z-index: 10050;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  max-width: 12rem;
+  height: 22px;
+  padding: 2px 10px;
+  margin: 0;
+  border-radius: 100px;
+  border: 1px solid color-mix(in srgb, var(--border-color, var(--gray-400)) 55%, transparent);
+  background: var(--control-bg, var(--gray-100));
+  color: var(--text-color);
+  box-shadow: var(--shadow-md, 0 4px 10px rgb(0 0 0 / 0.18));
+  font-size: var(--text-sm, 12px);
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translateY(-50%);
+}
+
+html.kanban-tag-drag-active,
+html.kanban-tag-drag-active * {
+  cursor: grabbing !important;
+}
+
+html.kanban-tag-drag-move,
+html.kanban-tag-drag-move * {
+  cursor: move !important;
+}
+
+#kanbanapp .kanban-card-tag-drop-allowed {
+  outline: 2px solid var(--kanban-drop-allowed-outline);
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    var(--kanban-drop-allowed-bg),
+    var(--kanban-drop-allowed-bg)
+  );
+}
+
+#kanbanapp .kanban-card-tag-drop-forbidden {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  position: relative;
+}
+
+#kanbanapp .kanban-card-tag-drop-forbidden::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--kanban-drop-forbidden-overlay);
+  pointer-events: none;
+  z-index: 2;
+}
+
+#kanbanapp .kanban-card--minimized.kanban-card-tag-drop-allowed,
+#kanbanapp .kanban-card--minimized.kanban-card-tag-drop-forbidden {
+  outline-offset: -2px;
+}
+
+#kanbanapp .kanban-tags--editable .tags-input {
+  width: 7.5rem;
+  min-width: 5rem;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  margin: 0;
+  font-size: var(--text-sm, 12px);
+  line-height: 20px;
+  border-radius: var(--border-radius, 4px);
+}
+
+#kanbanapp .kanban-tags--editable .awesomplete {
+  position: relative;
+  display: inline-block;
+  z-index: 20;
+}
+
+#kanbanapp .kanban-tags--editable .awesomplete > ul {
+  z-index: 30;
+  min-width: 10rem;
+  max-width: min(16rem, 80vw);
+  background: var(--fg-color, var(--card-bg, #fff));
+  border: 1px solid var(--border-color, var(--gray-300));
+  box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .kanban-card:has(.kanban-tags--editable .tags-input:focus),
+#kanbanapp .kanban-card:has(.kanban-tags--editable .tags-input[state="open"]) {
+  overflow: visible;
+}
+
+#kanbanapp .kanban-card:has(.kanban-tags--editable .tags-input:focus) .kanban-card-fields-slot,
+#kanbanapp .kanban-card:has(.kanban-tags--editable .tags-input[state="open"]) .kanban-card-fields-slot,
+#kanbanapp .kanban-card:has(.kanban-tags--editable .tags-input:focus) .kanban-card-density-inner,
+#kanbanapp .kanban-card:has(.kanban-tags--editable .tags-input[state="open"]) .kanban-card-density-inner {
+  overflow: visible;
+}
+
+#kanbanapp .kanban-highlight {
+  align-self: center;
+  padding: 3px 6px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+#kanbanapp .kanban-child-count {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 8px;
+  margin: 0;
+  color: var(--text-muted);
+  --icon-stroke: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-child-count:hover {
+  color: var(--text-color);
+  --icon-stroke: color-mix(in srgb, var(--text-muted) 85%, transparent);
+  background: var(--control-bg);
+}
+
+#kanbanapp .kanban-child-count .icon {
+  opacity: 0.85;
+}
+
+#kanbanapp .kanban-child-count__icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+
+#kanbanapp .kanban-child-count__value {
+  font-size: var(--text-sm, 12px);
+  font-variant-numeric: tabular-nums;
+}
+
+#kanbanapp .kanban-child-count[aria-expanded="true"] {
+  color: var(--text-color);
+  border-color: color-mix(in srgb, var(--text-color) 35%, var(--border-color));
+  background: var(--control-bg);
+}
+
+#kanbanapp .kanban-card--panel-inert {
+  opacity: 0.45;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-card--panel-inert * {
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-card--panel-ancestor {
+  --kanban-host-panel-border: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 28%,
+    var(--border-color, transparent)
+  );
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 8px 8px 0 0 !important;
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  gap: 0;
+  box-shadow: none;
+  background: linear-gradient(
+    to bottom,
+    var(--card-bg) 0%,
+    var(--card-bg) 90%,
+    var(--kanban-host-panel-border) 100%
+  );
+  transition:
+    padding var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    gap var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    margin-bottom var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    border-radius var(--kanban-child-panel-anim-ms, var(--kanban-card-density-duration)) ease-out,
+    box-shadow 150ms ease,
+    border-color 150ms ease;
+}
+
+#kanbanapp .kanban-card--panel-ancestor.kanban-card--panel-host-nested {
+  --kanban-host-panel-border: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 40%,
+    var(--border-color, transparent)
+  );
+}
+
+#kanbanapp .kanban-card--panel-ancestor.kanban-card--has-color {
+  box-shadow: inset 4px 0 0 var(--kanban-card-accent);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--kanban-card-accent) 10%, var(--card-bg)) 0%,
+    color-mix(in srgb, var(--kanban-card-accent) 10%, var(--card-bg)) 90%,
+    var(--kanban-host-panel-border) 100%
+  );
+}
+
+#kanbanapp .kanban-card--panel-ancestor:is(:hover, :focus-within) {
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+#kanbanapp .kanban-card--panel-ancestor.kanban-card--has-color:is(:hover, :focus-within) {
+  border-bottom: 0;
+  box-shadow: inset 4px 0 0 var(--kanban-card-accent);
+}
+
+@supports not (background: color-mix(in srgb, red 10%, white)) {
+  #kanbanapp .kanban-card--panel-ancestor,
+  #kanbanapp .kanban-card--panel-ancestor.kanban-card--has-color {
+    background: var(--card-bg);
+  }
+}
+
+#kanbanapp .kanban-card--panel-ancestor * {
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-card--panel-ancestor .kanban-child-count {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-card--panel-ancestor .kanban-card-meta {
+  max-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#kanbanapp .child-panel-portal {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Flat/swimlane columns stay below the board-hosted child-panel overlay. */
+#kanbanapp .kanban:not(.kanban--swimlanes) > .kanban-column {
+  position: relative;
+  z-index: 1;
+}
+
+#kanbanapp .kanban--swimlanes.kanban--child-panel-open > .swimlane-board-content {
+  position: relative;
+  z-index: 1;
+}
+
+#kanbanapp .kanban:not(.kanban--swimlanes).kanban--child-panel-open > .kanban-column {
+  /* Keep column chrome interactive; cards under the panel are covered by z-index. */
+  z-index: 1;
+}
+
+/* Lock outer vertical scroll while any child panel is open; keep horizontal scroll. */
+#kanbanapp .kanban--swimlanes.kanban--child-panel-open {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#kanbanapp .kanban--child-panel-open .kanban-card-list {
+  overflow-y: hidden !important;
+}
+
+#kanbanapp .child-panel {
+  --kanban-child-panel-anim-ms: 200ms;
+  --child-panel-radius: var(--swimlane-lane-radius, 12px);
+  --child-panel-tint: var(
+    --swimlane-lane-tint,
+    color-mix(in srgb, var(--fg, var(--text-color)) 8%, transparent)
+  );
+  --child-panel-border: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 28%,
+    var(--border-color, transparent)
+  );
+  --child-panel-border-nested: color-mix(
+    in srgb,
+    var(--fg, var(--text-color)) 40%,
+    var(--border-color, transparent)
+  );
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  margin: 6px 0 10px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--child-panel-radius);
+  background: var(--child-panel-tint);
+  box-shadow: inset 0 0 0 1px var(--child-panel-border);
+  pointer-events: auto;
+  overflow: hidden;
+  transform-origin: top center;
+}
+
+/* Vue Transition / TransitionGroup for board-hosted child panels. */
+#kanbanapp .child-panel-enter-active,
+#kanbanapp .child-panel-leave-active {
+  transition:
+    opacity var(--kanban-child-panel-anim-ms, 200ms) ease-out,
+    transform var(--kanban-child-panel-anim-ms, 200ms) ease-out,
+    clip-path var(--kanban-child-panel-anim-ms, 200ms) ease-out;
+}
+
+/* Absolute teleported panels must not FLIP-move (causes remount blink). */
+#kanbanapp .child-panel-move {
+  transition: none;
+}
+
+#kanbanapp .child-panel-enter-from,
+#kanbanapp .child-panel-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+  clip-path: inset(0 0 100% 0);
+}
+
+#kanbanapp .child-panel-enter-to,
+#kanbanapp .child-panel-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+  clip-path: inset(0 0 0 0);
+}
+
+#kanbanapp .child-panel--nested {
+  box-shadow: inset 0 0 0 1.5px var(--child-panel-border-nested);
+}
+
+#kanbanapp .child-panel--teleported {
+  position: absolute;
+  top: var(--child-panel-top, 0px);
+  left: var(--child-panel-left, 0px);
+  width: var(--child-panel-width, auto);
+  height: var(--child-panel-height, auto);
+  margin: 0;
+  /* Honor hostRect width; do not stretch to full portal (inset:0 board). */
+  min-width: 0;
+  z-index: var(--child-panel-z, 50);
+  pointer-events: auto;
+}
+
+#kanbanapp .child-panel--teleported.child-panel--has-host-height {
+  overflow: hidden;
+}
+
+/* Grid tracks for panel columns; deepest panel fills host→board-bottom. */
+#kanbanapp .child-panel-scroll {
+  display: grid;
+  align-items: stretch;
+  gap: var(--kanban-column-gutter, 8px);
+  width: max-content;
+  min-width: 100%;
+  max-height: none;
+  overflow: visible;
+}
+
+#kanbanapp .child-panel--viewport-fill {
+  overflow: hidden;
+}
+
+#kanbanapp .child-panel--viewport-fill .child-panel-scroll {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+#kanbanapp .child-panel-group,
+#kanbanapp .child-panel-cell-spacer {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 100%;
+  height: 100%;
+  /* Inset above the scrollport so the gap stays while cards scroll. */
+  padding-top: 8px;
+  border-radius: 0;
+  /* Same inset wash pattern as swimlane-group; strength from --child-panel-column-tint. */
+  box-shadow: inset 0 0 0 100vmax var(--child-panel-column-tint, transparent);
+}
+
+#kanbanapp .child-panel--viewport-fill .child-panel-group,
+#kanbanapp .child-panel--viewport-fill .child-panel-cell-spacer {
+  min-height: 0;
+  height: 100%;
+}
+
+#kanbanapp .child-panel-cell-spacer {
+  min-height: 100%;
+  cursor: pointer;
+}
+
+/*
+ * Collapsed hit-target lives inside .child-panel-group (KanbanColumn stays
+ * mounted via v-show). Fill the track; skip duplicate padding/wash from the
+ * shared group+spacer rule above.
+ */
+#kanbanapp .child-panel-group > .child-panel-cell-spacer {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  height: auto;
+  padding-top: 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+#kanbanapp .child-panel .kanban-column,
+#kanbanapp .child-panel .kanban-column.kanban-column--cell {
+  flex: 1 1 auto;
+  align-self: stretch;
+  max-height: none !important;
+  min-height: 100%;
+  height: 100%;
+  overflow: visible !important;
+}
+
+#kanbanapp .child-panel--viewport-fill .kanban-column,
+#kanbanapp .child-panel--viewport-fill .kanban-column.kanban-column--cell {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden !important;
+}
+
+#kanbanapp .child-panel .kanban-card-list,
+#kanbanapp .child-panel .kanban-card-list.kanban-card-list--external-scroller {
+  box-sizing: border-box;
+  order: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
+  max-height: none !important;
+  padding-top: 0;
+  overflow: visible !important;
+}
+
+/* Deepest panel: flat-style per-column vertical scroll above stick-room + Add. */
+#kanbanapp .child-panel--viewport-fill .kanban-card-list,
+#kanbanapp .child-panel--viewport-fill .kanban-card-list.kanban-card-list--external-scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
+  max-height: none !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+/*
+ * DOM is list → footer → stick-room; visual order is list → stick-room → Add
+ * so Add stays pinned to the column bottom while stick-room remains droppable.
+ */
+#kanbanapp .child-panel .column-stick-room-dropzone {
+  order: 2;
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  min-height: 24px;
+  height: auto;
+}
+
+/*
+ * Filled columns: match flat packing — Add sits under cards, not under a
+ * flex-grown empty strip. Stick-room leaves the flex flow (display:none);
+ * the list sizes to content and only shrinks/scrolls when it would overflow.
+ * Class comes from cards.length so virtualization cannot miss the rule.
+ */
+#kanbanapp .child-panel .kanban-column--has-cards .kanban-card-list,
+#kanbanapp .child-panel .kanban-column--has-cards .kanban-card-list.kanban-card-list--external-scroller {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto !important;
+}
+
+#kanbanapp .child-panel .kanban-column--has-cards .column-stick-room-dropzone {
+  display: none;
+}
+
+#kanbanapp .child-panel .kanban-column--has-cards .column-footer-actions {
+  order: 2;
+}
+
+#kanbanapp .child-panel .column-footer-actions {
+  order: 3;
+  flex: 0 0 auto;
+}
+
+/* Shallower open panels: no column scroll. */
+#kanbanapp .child-panel:not(.child-panel--viewport-fill) .kanban-card-list {
+  overflow-y: hidden !important;
+}
+
+/* Nested mid-host pin: parent list becomes a bounded scrollport (height via --nested-pin-h). */
+#kanbanapp .child-panel .kanban-card-list.kanban-card-list--nested-pin {
+  height: var(--nested-pin-h) !important;
+  max-height: var(--nested-pin-h) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+#kanbanapp .child-panel-spacer {
+  width: 100%;
+  height: var(--child-panel-spacer-h, 0px);
+  pointer-events: none;
+}
+
+#kanbanapp .child-panel-spacer--animate {
+  transition: height var(--kanban-child-panel-anim-ms, 200ms) ease-out;
+}
+
+#kanbanapp .kanban-vl-item--panel-host {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+#kanbanapp .kanban-inline-field {
+  position: relative;
+  z-index: 1;
+  display: block;
+  max-width: 100%;
+  cursor: default;
+}
+
+#kanbanapp .kanban-inline-field.is-editable {
+  cursor: text;
+}
+
+#kanbanapp .kanban-inline-field.is-editable:hover .kanban-inline-display {
+  outline: 1px dashed var(--border-color);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+#kanbanapp .kanban-inline-field.is-busy {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-inline-field.is-editing {
+  cursor: default;
+  z-index: 20;
+  overflow: visible;
+  outline: none;
+  box-shadow: none;
+}
+
+#kanbanapp .kanban-card:has(.kanban-inline-field.is-editing) {
+  overflow: visible;
+  z-index: 6;
+}
+
+#kanbanapp .kanban-card:has(.kanban-inline-field.is-editing) .kanban-card-fields-slot,
+#kanbanapp .kanban-card:has(.kanban-inline-field.is-editing) .kanban-card-density-inner,
+#kanbanapp .kanban-card:has(.kanban-inline-field.is-editing) .kanban-card-fields,
+#kanbanapp .kanban-card:has(.kanban-inline-field.is-editing) .kanban-card-fields dd {
+  overflow: visible;
+}
+
+#kanbanapp .kanban-inline-display {
+  display: block;
+  box-sizing: border-box;
+  min-height: 1.35em;
+  line-height: 1.35;
+  overflow-wrap: break-word;
+}
+
+#kanbanapp .kanban-inline-field--title {
+  flex: 1 1 0%;
+  min-width: 0;
+  max-width: none;
+  font-weight: 600;
+  text-align: start;
+  margin-bottom: 7px;
+  overflow-wrap: anywhere;
+  transition: margin-bottom var(--kanban-card-density-duration) ease;
+}
+
+#kanbanapp .kanban-inline-field--title .kanban-inline-display {
+  display: block;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+
+#kanbanapp .kanban-card-fields .kanban-inline-field {
+  min-width: 0;
+}
+
+#kanbanapp .kanban-card--minimized .kanban-inline-field--title {
+  margin-bottom: 0;
+}
+
+#kanbanapp .kanban-inline-field--highlight {
+  align-self: center;
+}
+
+#kanbanapp .kanban-inline-control {
+  width: var(--kanban-inline-edit-width, 100%);
+  max-width: 100%;
+  min-width: 0;
+  min-height: var(--kanban-inline-edit-height, 1.35em);
+  font-size: var(--kanban-inline-edit-font-size, inherit);
+  font-weight: var(--kanban-inline-edit-font-weight, inherit);
+  font-family: var(--kanban-inline-edit-font-family, inherit);
+  line-height: var(--kanban-inline-edit-line-height, 1.35);
+  overflow-wrap: break-word;
+  outline: none;
+  box-shadow: none;
+}
+
+#kanbanapp .kanban-inline-control .frappe-control {
+  margin-bottom: 0;
+  width: 100%;
+  min-height: inherit;
+  outline: none;
+  box-shadow: none;
+}
+
+#kanbanapp .kanban-inline-control .form-group,
+#kanbanapp .kanban-inline-control .control-input-wrapper,
+#kanbanapp .kanban-inline-control .control-input,
+#kanbanapp .kanban-inline-control .link-field {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  min-height: inherit;
+}
+
+#kanbanapp .kanban-inline-control .link-field,
+#kanbanapp .kanban-inline-control .awesomplete {
+  position: relative;
+  overflow: visible;
+  z-index: 20;
+}
+
+#kanbanapp .kanban-inline-control .awesomplete > ul,
+#kanbanapp .kanban-inline-control .awesomplete > [role='listbox'] {
+  z-index: 40;
+  width: max-content;
+  min-width: max(10rem, 100%);
+  max-width: min(16rem, 80vw);
+  background: var(--fg-color, var(--card-bg, #fff));
+  border: 1px solid var(--border-color, var(--gray-300));
+  box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .kanban-inline-control .awesomplete > ul > li,
+#kanbanapp .kanban-inline-control .awesomplete [role='option'] {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+#kanbanapp .kanban-inline-control .clearfix,
+#kanbanapp .kanban-inline-control .help-box,
+#kanbanapp .kanban-inline-control .control-label,
+#kanbanapp .kanban-inline-control .btn-open,
+#kanbanapp .kanban-inline-control .link-btn {
+  display: none !important;
+}
+
+#kanbanapp .kanban-inline-control .form-control,
+#kanbanapp .kanban-inline-control input,
+#kanbanapp .kanban-inline-control select,
+#kanbanapp .kanban-inline-control textarea {
+  display: block;
+  width: var(--kanban-inline-edit-width, 100%);
+  max-width: 100%;
+  height: var(--kanban-inline-edit-height, auto);
+  min-height: var(--kanban-inline-edit-height, 1.35em);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  resize: none;
+  font-size: var(--kanban-inline-edit-font-size, inherit);
+  font-weight: var(--kanban-inline-edit-font-weight, inherit);
+  font-family: var(--kanban-inline-edit-font-family, inherit);
+  line-height: var(--kanban-inline-edit-line-height, inherit);
+  color: inherit;
+  background: transparent;
+  outline: none;
+}
+
+#kanbanapp .kanban-inline-control .form-control:focus,
+#kanbanapp .kanban-inline-control input:focus,
+#kanbanapp .kanban-inline-control select:focus,
+#kanbanapp .kanban-inline-control textarea:focus,
+#kanbanapp .kanban-inline-control .form-control:focus-visible,
+#kanbanapp .kanban-inline-control input:focus-visible,
+#kanbanapp .kanban-inline-control select:focus-visible,
+#kanbanapp .kanban-inline-control textarea:focus-visible {
+  outline: none;
+  outline-offset: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* Expanded native Select listbox fallback (size > 1); out of flow so highlight stays narrow. */
+#kanbanapp .kanban-inline-control select[size]:not([size='1']) {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  width: max-content;
+  min-width: max(10rem, 100%);
+  max-width: min(16rem, 80vw);
+  height: auto;
+  min-height: var(--kanban-inline-edit-height, 1.35em);
+  padding: 0.15em 0.25em;
+  overflow: auto;
+  background: var(--fg-color, var(--card-bg, #fff));
+  border: 1px solid var(--border-color, var(--gray-300));
+  box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .kanban-inline-control select[size]:not([size='1']):focus,
+#kanbanapp .kanban-inline-control select[size]:not([size='1']):focus-visible {
+  background: var(--fg-color, var(--card-bg, #fff));
+  border: 1px solid var(--border-color, var(--gray-300));
+  box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .kanban-inline-field--title .kanban-inline-control,
+#kanbanapp .kanban-inline-field--title .kanban-inline-control .form-control,
+#kanbanapp .kanban-inline-field--title .kanban-inline-control input,
+#kanbanapp .kanban-inline-field--title .kanban-inline-control textarea {
+  font-weight: 600;
+}
+
+#kanbanapp .kanban-inline-field.is-editable .kanban-inline-display a {
+  color: inherit;
+  text-decoration: none;
+  cursor: text;
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-card-fields dd .kanban-inline-field {
+  display: block;
+  font-size: var(--text-sm, 12px);
+  line-height: 1.35;
+}
+
+#kanbanapp .kanban-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+}
+
+#kanbanapp .compact-move-menu {
+  position: relative;
+}
+
+#kanbanapp .card-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+#kanbanapp .card-action-button:hover {
+  background: var(--control-bg);
+}
+
+.move-card-menu {
+  position: fixed;
+  z-index: 1050;
+  min-width: 120px;
+  margin: 0;
+  padding: 4px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+#kanbanapp .assignments-block {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+#kanbanapp .assignments-mount {
+  display: inline-flex;
+}
+
+#kanbanapp .assignments-block .avatar-group .avatar,
+#kanbanapp .assignments-block .avatar-action {
+  cursor: pointer;
+}
+
+#kanbanapp .assignments-block .avatar-group.overlap .avatar + .avatar {
+  margin-left: calc(-1 * var(--margin-sm));
+}
+
+#kanbanapp .assignments-block .avatar-group.overlap:hover .avatar:not(:first-child) {
+  margin-left: calc(-1 * var(--margin-sm));
+}
+
+#kanbanapp .assignments-block .avatar-frame {
+  transition: box-shadow 0.15s ease-in-out;
+}
+
+#kanbanapp .assignments-block:hover .avatar-frame,
+#kanbanapp .assignments-block:focus-within .avatar-frame {
+  box-shadow:
+    0 0 0 2px var(--kanban-assignment-ring-inner),
+    0 0 0 3px var(--kanban-assignment-ring-outer);
+}
+
+#kanbanapp .assignment-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+#kanbanapp .column-footer-actions {
+  --kanban-footer-action-opacity: 0.55;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: 100%;
+  padding-block: 2px 4px;
+  background: transparent;
+}
+
+#kanbanapp .column-footer-actions--swimlane {
+  position: sticky;
+  top: calc(
+    var(--swimlane-sticky-lanes-top, 0px)
+    + var(--swimlane-lane-chrome-height, 40px)
+    + var(--swimlane-sticky-footer-gap, 8px)
+  );
+  z-index: 2;
+  flex: 0 0 auto;
+  background: transparent;
+  /* Pass drops through sticky chrome onto stick-room dropzone below. */
+  pointer-events: none;
+}
+
+#kanbanapp .column-footer-actions--swimlane .addcard,
+#kanbanapp .column-footer-actions--swimlane .column-scroll-top {
+  pointer-events: auto;
+}
+
+/* Equalize short cells; receives Sortable card drops via KanbanColumn handler. */
+#kanbanapp .column-stick-room-dropzone {
+  display: block;
+  flex: 0 0 auto;
+  width: 100%;
+  height: var(--column-stick-room, 0px);
+}
+
+#kanbanapp .addcard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding-inline: var(--kanban-column-gutter);
+  margin-bottom: 0;
+}
+
+#kanbanapp .addcard button,
+#kanbanapp .column-scroll-top {
+  opacity: var(--kanban-footer-action-opacity);
+  transition: opacity 0.15s ease;
+}
+
+#kanbanapp .addcard button:hover,
+#kanbanapp .addcard button:focus-visible,
+#kanbanapp .column-scroll-top:hover,
+#kanbanapp .column-scroll-top:focus-visible {
+  opacity: 1;
+}
+
+#kanbanapp .addcard button {
+  background-color: var(--card-bg);
+}
+
+#kanbanapp .column-scroll-top {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background-color: var(--card-bg, var(--control-bg));
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+#kanbanapp .column-scroll-top:focus-visible {
+  outline: 2px solid var(--primary, var(--blue-500, #2490ef));
+  outline-offset: 2px;
+}
+
+#kanbanapp .header-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+}
+
+#kanbanapp .header-item:hover {
+  background-color: var(--kanban-header-item-hover-bg);
+}
+
+#kanbanapp .kanban-card-progress {
+  margin: 0;
+}
+
+#kanbanapp .loadbtn {
+  display: flex;
+  justify-content: center;
+  cursor: pointer;
+}
+
+#kanbanapp .kanban-card-list {
+  height: 100%;
+  padding: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#kanbanapp .kanban-card-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+#kanbanapp .empty-column,
+#kanbanapp .kanban-state,
+#kanbanapp .column-loading {
+  padding: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Larger hit-area for append drop onto «No data» (flat, child panel, swimlane). */
+#kanbanapp .empty-column--drop-target {
+  min-height: 48px;
+  padding-block: 16px;
+  box-sizing: border-box;
+}
+
+#kanbanapp .kanban-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--red-700);
+}
+
+#kanbanapp :is(button, select, a, summary, .kanban, .kanban-card-list):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+#kanbanapp .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+#kanbanapp .drag-handle-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+#kanbanapp .kanban-column-drop-allowed {
+  outline: 2px solid var(--kanban-drop-allowed-outline);
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    var(--kanban-drop-allowed-bg),
+    var(--kanban-drop-allowed-bg)
+  );
+}
+
+#kanbanapp .kanban-column-drop-forbidden {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+/* Stronger wash while the pointer is over a valid drop completion area. */
+#kanbanapp .column-stick-room-dropzone.kanban-drop-hover,
+#kanbanapp .empty-column--drop-target.kanban-drop-hover {
+  outline: 2px solid var(--kanban-drop-allowed-outline);
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    var(--kanban-drop-allowed-bg),
+    var(--kanban-drop-allowed-bg)
+  );
+  border-radius: 6px;
+}
+
+#kanbanapp .kanban-column.kanban-drop-hover,
+#kanbanapp .kanban-column--cell.kanban-drop-hover {
+  outline: 2px solid var(--kanban-drop-allowed-outline);
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--primary, #2491ef) 20%, transparent),
+    color-mix(in srgb, var(--primary, #2491ef) 20%, transparent)
+  );
+}
+
+#kanbanapp .kanban-column-drop-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--kanban-drop-forbidden-overlay);
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+/* Compact ban mark near the top of tall equalized cells (not mid full height). */
+#kanbanapp .kanban-column-drop-overlay__mark {
+  position: absolute;
+  top: max(48px, min(20%, 140px));
+  left: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+#kanbanapp .kanban-column-drop-overlay__mark::before,
+#kanbanapp .kanban-column-drop-overlay__mark::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 3px;
+  margin-left: -50%;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: color-mix(
+    in srgb,
+    var(--red-600, var(--error-text, #e24c4c)) 80%,
+    transparent
+  );
+}
+
+#kanbanapp .kanban-column-drop-overlay__mark::before {
+  transform: rotate(45deg);
+}
+
+#kanbanapp .kanban-column-drop-overlay__mark::after {
+  transform: rotate(-45deg);
+}
+
+#kanbanapp .kanban-card-rollback-animating {
+  position: relative;
+  z-index: 3;
+  will-change: transform;
+}
+
+@keyframes kanban-card-move-flash {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 0 var(--kanban-move-flash-current-outline),
+      inset 0 0 0 0 var(--kanban-move-flash-current-glow),
+      var(--shadow-sm);
+  }
+
+  25%,
+  75% {
+    box-shadow:
+      inset 0 0 0 2px var(--kanban-move-flash-current-outline),
+      inset 0 0 0 5px var(--kanban-move-flash-current-glow),
+      var(--shadow-sm);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 0 0 0 var(--kanban-move-flash-current-outline),
+      inset 0 0 0 0 var(--kanban-move-flash-current-glow),
+      var(--shadow-sm);
+  }
+}
+
+#kanbanapp .kanban-card-move-flash {
+  position: relative;
+  z-index: 2;
+  animation: kanban-card-move-flash 2.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#kanbanapp .kanban-card-move-flash--success {
+  --kanban-move-flash-current-outline: var(--kanban-move-flash-success-outline);
+  --kanban-move-flash-current-glow: var(--kanban-move-flash-success-glow);
+}
+
+#kanbanapp .kanban-card-move-flash--failure {
+  --kanban-move-flash-current-outline: var(--kanban-move-flash-failure-outline);
+  --kanban-move-flash-current-glow: var(--kanban-move-flash-failure-glow);
+}
+
+#kanbanapp .kanban-card-move-flash--instant {
+  position: relative;
+  z-index: 2;
+  box-shadow:
+    inset 0 0 0 2px var(--kanban-move-flash-current-outline),
+    inset 0 0 0 5px var(--kanban-move-flash-current-glow),
+    var(--shadow-sm);
+}
+
+@media (max-width: 768px) {
+  #kanbanapp .kanban {
+    scroll-snap-type: x proximity;
+  }
+
+  #kanbanapp .kanban-column {
+    flex-basis: min(84vw, 280px);
+    width: min(84vw, 280px);
+    scroll-snap-align: start;
+  }
+
+  #kanbanapp .kanban-column--collapsed {
+    flex-basis: 52px;
+    width: 52px;
+  }
+
+  #kanbanapp .header-item,
+  #kanbanapp .drag-handle,
+  #kanbanapp .assignments-block {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #kanbanapp *,
+  #kanbanapp *::before,
+  #kanbanapp *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Desk page-head is fixed height (60px) and wraps by default. The Minimize
+   / Show children / Group By controls widen custom-actions enough to wrap
+   page-actions under the title, which looks like bottom-aligned toolbar.
+   Keep one row while present. */
+.page-head-content:has(.dinext-kanban-minimize-control),
+.page-head-content:has(.dinext-kanban-show-child-tasks-control),
+.page-head-content:has(.dinext-kanban-groupby-control) {
+  flex-wrap: nowrap;
+}
+
+.page-head-content:has(.dinext-kanban-minimize-control) .page-title,
+.page-head-content:has(.dinext-kanban-show-child-tasks-control) .page-title,
+.page-head-content:has(.dinext-kanban-groupby-control) .page-title {
+  flex: 0 1 auto;
+  max-width: min(25vw, 220px);
+}
+
+.page-head-content:has(.dinext-kanban-minimize-control) .page-actions,
+.page-head-content:has(.dinext-kanban-show-child-tasks-control) .page-actions,
+.page-head-content:has(.dinext-kanban-groupby-control) .page-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.dinext-kanban-minimize-control,
+.dinext-kanban-show-child-tasks-control {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  height: var(--btn-height, 28px);
+  margin: 0 8px 0 0;
+  padding: 0;
+  color: var(--text-muted, var(--text-color));
+  font-size: var(--text-sm, 12px);
+  font-weight: var(--weight-regular, 400);
+  line-height: 1;
+  max-width: none;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dinext-kanban-minimize-control input[type="checkbox"],
+.dinext-kanban-show-child-tasks-control input[type="checkbox"] {
+  margin: 0;
+  flex: 0 0 auto;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.dinext-kanban-minimize-label,
+.dinext-kanban-show-child-tasks-label {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  line-height: 1;
+}
+
+.dinext-kanban-minimize-label .icon,
+.dinext-kanban-show-child-tasks-label .icon {
+  --icon-stroke: currentColor;
+}
+
+.dinext-kanban-groupby-control {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  height: var(--btn-height, 28px);
+  margin: 0 8px 0 0;
+  padding: 0;
+  color: var(--text-muted, var(--text-color));
+  font-size: var(--text-sm, 12px);
+  font-weight: var(--weight-regular, 400);
+  line-height: 1;
+  max-width: none;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.dinext-kanban-groupby-control.is-saving {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.dinext-kanban-groupby-control .btn-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+.dinext-kanban-groupby-control .btn {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dinext-kanban-groupby-control .dropdown-text {
+  color: var(--text-color);
+}
+
+.dinext-kanban-groupby-control .dropdown-menu {
+  max-height: min(50vh, 320px);
+  overflow-y: auto;
+}
