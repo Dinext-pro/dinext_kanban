@@ -1,9 +1,9 @@
 {
     "private": true,
-    "workspaces": ["Quick-Kanban"],
+    "workspaces": ["frontend"],
     "scripts": {
-        "postinstall": "cd Quick-Kanban && yarn install",
-        "dev": "cd Quick-Kanban && yarn dev",
-        "build:frontend": "cd Quick-Kanban && yarn build"
+        "postinstall": "cd frontend && yarn install",
+        "dev": "cd frontend && yarn dev",
+        "build:frontend": "cd frontend && yarn build"
     }
 }
