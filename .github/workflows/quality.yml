@@ -23,22 +23,22 @@ jobs:
         run: yarn install --frozen-lockfile --ignore-scripts
 
       - name: Lint
-        run: yarn workspace quick_kanban lint
+        run: yarn workspace dinext_kanban lint
 
       - name: Test
-        run: yarn workspace quick_kanban test:run
+        run: yarn workspace dinext_kanban test:run
 
       - name: Install browser
-        run: yarn workspace quick_kanban playwright install --with-deps chromium
+        run: yarn workspace dinext_kanban playwright install --with-deps chromium
 
       - name: Browser test
-        run: yarn workspace quick_kanban test:browser
+        run: yarn workspace dinext_kanban test:browser
 
       - name: Build
-        run: yarn workspace quick_kanban build
+        run: yarn workspace dinext_kanban build
 
       - name: Check Python syntax
-        run: python3 -m compileall -q quick_kanban
+        run: python3 -m compileall -q dinext_kanban
 
   backend:
     runs-on: ubuntu-latest
@@ -91,15 +91,15 @@ jobs:
           mysql --host 127.0.0.1 --port 3306 -u root -proot \
             -e "SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_unicode_ci';"
 
-      - name: Install Quick Kanban
+      - name: Install Dinext Kanban
         working-directory: /home/runner/frappe-bench
         run: |
-          bench get-app quick_kanban "$GITHUB_WORKSPACE"
+          bench get-app dinext_kanban "$GITHUB_WORKSPACE"
           bench setup requirements --dev
           bench new-site --db-root-password root --admin-password admin test_site
-          bench --site test_site install-app quick_kanban
+          bench --site test_site install-app dinext_kanban
           bench --site test_site set-config allow_tests true
 
       - name: Run backend tests
         working-directory: /home/runner/frappe-bench
-        run: bench --site test_site run-tests --app quick_kanban
+        run: bench --site test_site run-tests --app dinext_kanban
