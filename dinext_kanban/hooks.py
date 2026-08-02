@@ -100,7 +100,8 @@ doctype_js = {"Kanban Board" : "public/js/kanban_highlight.js"}
 # ------------
 
 # before_install = "dinext_kanban.install.before_install"
-# after_install = "dinext_kanban.install.after_install"
+after_install = "dinext_kanban.install.after_install"
+after_migrate = ["dinext_kanban.install.after_migrate"]
 
 # Uninstallation
 # ------------
