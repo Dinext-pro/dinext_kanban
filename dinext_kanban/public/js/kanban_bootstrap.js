@@ -8,22 +8,6 @@
       || KANBAN_VIEW_FALLBACK_URL
   }
 
-  async function loadConfig(call) {
-    const response = await call({
-      method: 'dinext_kanban.get_beta_users.get_kanban_config',
-    })
-    return response?.message || {}
-  }
-
-  function shouldUseBeta(config, user) {
-    if (!config?.kanban_beta) return false
-
-    const allowedUsers = Array.isArray(config.kanban_beta_users)
-      ? config.kanban_beta_users
-      : []
-    return allowedUsers.length === 0 || allowedUsers.includes(user)
-  }
-
   function loadScript(src, documentRef = global.document) {
     if (scriptLoads.has(src)) return scriptLoads.get(src)
 
@@ -152,11 +136,9 @@
   }
 
   global.dinextKanbanBootstrap = {
-    loadConfig,
     loadScript,
     forgetScript,
     loadStylesheet,
-    shouldUseBeta,
     ensureKanbanViewBridge,
   }
 
