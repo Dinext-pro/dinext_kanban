@@ -134,11 +134,6 @@ beforeEach(() => {
     }
   })
   window.dinextKanbanBootstrap = {
-    loadConfig: vi.fn().mockResolvedValue({
-      kanban_beta: 1,
-      kanban_beta_users: [],
-    }),
-    shouldUseBeta: vi.fn(() => true),
     loadScript: vi.fn().mockResolvedValue(),
     loadStylesheet: vi.fn().mockResolvedValue(),
     forgetScript: vi.fn(),
@@ -191,7 +186,6 @@ test('caps the native query and mounts once with its initial data', async () => 
     args: { doctype: 'Task', page_length: 100 },
     board_perms: {},
   })
-  expect(window.dinextKanbanBootstrap.loadConfig).toHaveBeenCalledTimes(1)
   expect(frappeApi.assets.bundled_asset).toHaveBeenCalledWith('dinext_kanban.bundle.js')
   expect(frappeApi.assets.bundled_asset).toHaveBeenCalledWith('dinext_kanban.bundle.css')
   expect(window.dinextKanbanBootstrap.loadStylesheet).toHaveBeenCalledWith(
@@ -320,11 +314,6 @@ test('adds tree parent field for tree DocTypes so child filtering can work', asy
 
 test('mounts beta assets when bootstrap lacks stylesheet helpers', async () => {
   window.dinextKanbanBootstrap = {
-    loadConfig: vi.fn().mockResolvedValue({
-      kanban_beta: 1,
-      kanban_beta_users: [],
-    }),
-    shouldUseBeta: vi.fn(() => true),
     loadScript: vi.fn().mockResolvedValue(),
   }
   const appendChild = vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
@@ -417,10 +406,10 @@ test('upgrades an active native Kanban instance created before the bridge loads'
 
   await vi.waitFor(() => {
     expect(nativeView.__dinextKanbanUpgraded).toBe(true)
+    expect(nativeView.set_fields).toHaveBeenCalledTimes(1)
+    expect(nativeView.refresh).toHaveBeenCalledTimes(1)
   })
   expect(nativeView.page_length).toBe(100)
-  expect(nativeView.set_fields).toHaveBeenCalledTimes(1)
-  expect(nativeView.refresh).toHaveBeenCalledTimes(1)
   expect(Object.getPrototypeOf(nativeView)).toBe(frappeApi.views.KanbanView.prototype)
 })
 
@@ -803,7 +792,7 @@ test('inserts Minimize checkbox before the Filter control on beta render', async
 })
 
 test('removes Minimize checkbox when falling back to native Kanban', async () => {
-  window.dinextKanbanBootstrap.shouldUseBeta = vi.fn(() => false)
+  delete window.dinextKanbanBootstrap
   const NativeBoard = vi.fn()
   const frappeApi = {
     provide: vi.fn(),
@@ -834,6 +823,7 @@ test('removes Minimize checkbox when falling back to native Kanban', async () =>
 
   view.render()
   await vi.waitFor(() => expect(NativeBoard).toHaveBeenCalledTimes(1))
+  expect(frappeApi.show_alert).toHaveBeenCalled()
   expect(document.querySelector('.dinext-kanban-minimize-control')).toBeNull()
   expect(document.querySelector('.dinext-kanban-show-child-tasks-control')).toBeNull()
   expect(document.querySelector('.dinext-kanban-groupby-control')).toBeNull()

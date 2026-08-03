@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
@@ -64,20 +66,18 @@ class TestMovePolicyAPI(FrappeTestCase):
 
 	def test_get_move_options_requires_doctype_read_permission(self):
 		todo = self.insert_open_todo()
-		guest_user = "guest@example.com"
-		if not frappe.db.exists("User", guest_user):
-			frappe.get_doc(
-				{
-					"doctype": "User",
-					"email": guest_user,
-					"first_name": "Guest",
-					"send_welcome_email": 0,
-				}
-			).insert(ignore_permissions=True)
+		# ToDo grants read to role All; patch denies only ToDo read so BoardContext
+		# can still load the Kanban Board while the API deny-path is exercised.
+		real_has_permission = frappe.has_permission
 
-		frappe.set_user(guest_user)
-		with self.assertRaises(frappe.PermissionError):
-			get_move_options(self.board_name, [todo.name])
+		def deny_todo_read(doctype, ptype="read", *args, **kwargs):
+			if doctype == "ToDo" and ptype == "read":
+				return False
+			return real_has_permission(doctype, ptype, *args, **kwargs)
+
+		with patch("frappe.has_permission", side_effect=deny_todo_read):
+			with self.assertRaises(frappe.PermissionError):
+				get_move_options(self.board_name, [todo.name])
 
 	def test_board_context_detects_select_field(self):
 		context = BoardContext(self.board_name)

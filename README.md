@@ -106,18 +106,9 @@ bench restart
 
 `migrate` подтягивает переводы из `dinext_kanban/translations/`. `bench restart` нужен на production/staging bench с supervisor.
 
-**6. Включить новый Kanban**
+После установки приложения новый Kanban активен для всех пользователей (отдельный `set-config` не нужен).
 
-Без этого шага используется стандартный Kanban Frappe:
-
-```bash
-bench --site <site-name> set-config kanban_beta 1
-bench --site <site-name> clear-cache
-```
-
-Для поэтапного включения см. раздел [Конфигурация](#-конфигурация).
-
-**7. Проверка в браузере**
+**6. Проверка в браузере**
 
 Откройте Kanban Board и выполните жёсткое обновление страницы (`Ctrl+Shift+R`), чтобы подтянуть новый bundle.
 
@@ -134,10 +125,6 @@ cd apps/dinext_kanban && yarn workspace dinext_kanban build && cd ../..
 bench --site <site-name> migrate
 bench --site <site-name> clear-cache
 bench restart
-
-# 6: feature flag
-bench --site <site-name> set-config kanban_beta 1
-bench --site <site-name> clear-cache
 ```
 
 ### Обновление на существующем сайте
@@ -485,32 +472,6 @@ Dinext Kanban автоматически использует поле **`color`
 - Playwright — browser-тесты пользовательских сценариев.
 - ESLint и Frappe Semgrep rules — статические проверки.
 
-## 🔧 Конфигурация
-
-Включите новый Kanban для всех пользователей сайта:
-
-```bash
-bench --site <site-name> set-config kanban_beta 1
-```
-
-Для поэтапного включения задайте список пользователей в `sites/<site-name>/site_config.json`:
-
-```json
-{
-  "kanban_beta": 1,
-  "kanban_beta_users": [
-    "user@example.com",
-    "manager@example.com"
-  ]
-}
-```
-
-Правила применения конфигурации:
-
-- `kanban_beta = 0` или отсутствие параметра — используется стандартный Kanban Frappe;
-- `kanban_beta = 1` и пустой `kanban_beta_users` — новый Kanban доступен всем;
-- `kanban_beta = 1` и непустой `kanban_beta_users` — новый Kanban доступен только перечисленным пользователям.
-
 ## ✅ Требования
 
 - Frappe Framework 15.
@@ -588,7 +549,6 @@ bench --site <site-name> clear-cache
 - [`dinext_kanban/move_policy.py`](dinext_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
 - [`dinext_kanban/swimlane.py`](dinext_kanban/swimlane.py) — режимы группировки (в т.ч. `__deadlines`), построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
 - [`dinext_kanban/deadline.py`](dinext_kanban/deadline.py) — рабочие дни, buckets сроков, настройки доски, фильтры имён для deadline-lanes.
-- [`dinext_kanban/get_beta_users.py`](dinext_kanban/get_beta_users.py) — `get_kanban_config` (feature flags `kanban_beta` / `kanban_beta_users`).
 - [`frontend/src/`](frontend/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `deadline`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks и resize колонок в Vuex).
 - [`dinext_kanban/dinext_kanban/custom/kanban_board.json`](dinext_kanban/dinext_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info**, **Swimlane Field**, **Deadline Field** / attention days / deadline columns на Kanban Board.
 - [`dinext_kanban/dinext_kanban/custom/kanban_board_column.json`](dinext_kanban/dinext_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
@@ -641,7 +601,6 @@ dinext_kanban/
 │   ├── move_policy.py          # Политики move / create и Workflow
 │   ├── validation.py           # Mandatory rules при перемещении
 │   ├── swimlane.py             # Группировка по дорожкам (в т.ч. deadlines) и lane membership
-│   ├── get_beta_users.py       # Чтение feature flags из site config
 │   └── hooks.py                # Метаданные Frappe и подключение assets
 ├── AGENTS.md                   # Указатель на central dinext-docs
 ├── package.json                # Корневой Yarn workspace
@@ -655,10 +614,9 @@ dinext_kanban/
 ```mermaid
 flowchart LR
     User[Пользователь открывает Kanban] --> Native[Frappe KanbanView]
-    Native --> Config[get_kanban_config]
-    Config --> Decision{kanban_beta разрешён?}
-    Decision -->|Нет или ошибка| Standard[Стандартный Kanban Frappe]
-    Decision -->|Да| Bundle[Загрузка Vue bundle]
+    Native --> Bridge[kanban_view bridge]
+    Bridge -->|ошибка загрузки| Standard[Стандартный Kanban Frappe]
+    Bridge -->|успех| Bundle[Загрузка Vue bundle]
     Bundle --> Store[Vuex store]
     Store --> Board[Vue-компоненты доски]
     Store --> ColumnPage[get_column_page]
