@@ -2,7 +2,6 @@ frappe.provide("frappe.views");
 
 const NativeKanbanView = frappe.views.KanbanView;
 const bootstrap = window.dinextKanbanBootstrap;
-let configPromise;
 
 function removeStaleDinextKanbanStylesheets(href) {
     document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
@@ -132,16 +131,6 @@ function loadScript(src) {
     });
 }
 
-const getConfig = () => {
-    if (!bootstrap) {
-        return Promise.reject(new Error("Dinext Kanban bootstrap is unavailable"));
-    }
-    if (!configPromise) {
-        configPromise = bootstrap.loadConfig(frappe.call.bind(frappe));
-    }
-    return configPromise;
-};
-
 function parseJsonArray(value, fallback = []) {
     if (Array.isArray(value)) {
         return value;
@@ -178,30 +167,13 @@ const DinextKanbanView = class KanbanView extends NativeKanbanView {
     set_board_perms_and_push_menu_items() {
         // Perms arrive async after first paint; remount Group By when write is known.
         return Promise.resolve(super.set_board_perms_and_push_menu_items()).then(() => {
-            if (!bootstrap?.shouldUseBeta) {
-                this.setup_groupby_control();
-                return;
-            }
-            return getConfig()
-                .then((config) => {
-                    if (bootstrap.shouldUseBeta(config, frappe.session.user)) {
-                        this.setup_groupby_control();
-                    }
-                })
-                .catch(() => {});
+            this.setup_groupby_control();
         });
     }
 
     async setup_defaults() {
         await super.setup_defaults();
-        try {
-            const config = await getConfig();
-            if (bootstrap.shouldUseBeta(config, frappe.session.user)) {
-                this.page_length = 100;
-            }
-        } catch {
-            // The render path falls back to the native board.
-        }
+        this.page_length = 100;
     }
 
     get_board() {
@@ -215,15 +187,6 @@ const DinextKanbanView = class KanbanView extends NativeKanbanView {
     }
 
     async set_fields() {
-        let useBeta = false;
-        try {
-            const config = await getConfig();
-            useBeta = bootstrap.shouldUseBeta(config, frappe.session.user);
-        } catch {
-            return super.set_fields();
-        }
-        if (!useBeta) return super.set_fields();
-
         normalizeBoardDoc(this.board);
         await frappe.views.ListView.prototype.set_fields.call(this);
         this._add_field(this.card_meta.title_field);
@@ -660,16 +623,13 @@ const DinextKanbanView = class KanbanView extends NativeKanbanView {
         const renderToken = Symbol("dinext-kanban-render");
         this.dinext_kanban_render_token = renderToken;
 
-        getConfig()
-            .then((config) => {
+        Promise.resolve()
+            .then(() => {
                 if (this.dinext_kanban_render_token !== renderToken) return;
-                if (bootstrap.shouldUseBeta(config, frappe.session.user)) {
-                    return this.renderBeta();
+                if (!bootstrap) {
+                    throw new Error("Dinext Kanban bootstrap is unavailable");
                 }
-                this.remove_minimize_cards_control();
-                this.remove_show_child_tasks_control();
-                this.remove_groupby_control();
-                this.renderOld();
+                return this.renderBeta();
             })
             .catch(() => {
                 if (this.dinext_kanban_render_token !== renderToken) return;
@@ -816,12 +776,7 @@ async function upgradeActiveKanbanView() {
         return;
     }
 
-    try {
-        const config = await getConfig();
-        if (!bootstrap?.shouldUseBeta(config, frappe.session.user)) {
-            return;
-        }
-    } catch {
+    if (!bootstrap) {
         return;
     }
 
@@ -837,7 +792,7 @@ async function upgradeActiveKanbanView() {
     try {
         await active.set_fields?.();
     } catch {
-        // Field setup falls back to native behavior when config is unavailable.
+        // Field setup errors are retried on the next refresh/render cycle.
     }
 
     try {

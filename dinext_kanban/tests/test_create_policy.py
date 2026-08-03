@@ -1,10 +1,12 @@
+from unittest.mock import patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from dinext_kanban.api import get_create_options
 from dinext_kanban.move_policy import BoardContext, get_column_create_policy
 
-from dinext_kanban.tests.test_move_policy import BOARD_NAME, ensure_todo_kanban_board
+from dinext_kanban.tests.test_move_policy import ensure_todo_kanban_board
 
 
 class TestCreatePolicy(FrappeTestCase):
@@ -35,17 +37,15 @@ class TestCreatePolicy(FrappeTestCase):
 		self.assertEqual(policy["form_mode"], "blocked")
 
 	def test_get_create_options_requires_doctype_read_permission(self):
-		guest_user = "guest@example.com"
-		if not frappe.db.exists("User", guest_user):
-			frappe.get_doc(
-				{
-					"doctype": "User",
-					"email": guest_user,
-					"first_name": "Guest",
-					"send_welcome_email": 0,
-				}
-			).insert(ignore_permissions=True)
+		# ToDo grants read to role All; patch denies only ToDo read so BoardContext
+		# can still load the Kanban Board while the API deny-path is exercised.
+		real_has_permission = frappe.has_permission
 
-		frappe.set_user(guest_user)
-		with self.assertRaises(frappe.PermissionError):
-			get_create_options(self.board_name)
+		def deny_todo_read(doctype, ptype="read", *args, **kwargs):
+			if doctype == "ToDo" and ptype == "read":
+				return False
+			return real_has_permission(doctype, ptype, *args, **kwargs)
+
+		with patch("frappe.has_permission", side_effect=deny_todo_read):
+			with self.assertRaises(frappe.PermissionError):
+				get_create_options(self.board_name)

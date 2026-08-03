@@ -12,6 +12,7 @@ from dinext_kanban.deadline import (
 	DEADLINE_NONE,
 	DEADLINE_OVERDUE,
 	DEADLINE_PLANNED,
+	TASK_DEFAULT_DEADLINE_COLUMNS,
 	classify_deadline_bucket,
 	effective_deadline_bucket,
 	enrich_rows_with_deadline_bucket,
@@ -19,6 +20,8 @@ from dinext_kanban.deadline import (
 	names_for_deadline_lane,
 	working_days_until,
 )
+from dinext_kanban.install import ensure_kanban_column_values_for_boards
+from dinext_kanban.tests.test_move_policy import ensure_todo_kanban_board
 
 
 class TestDeadlineClassification(FrappeTestCase):
@@ -280,3 +283,107 @@ class TestDeadlineClassification(FrappeTestCase):
 			)
 		self.assertIn("_deadline_bucket", out_fields)
 		self.assertEqual(out_rows[0]["_deadline_bucket"], DEADLINE_ATTENTION)
+
+
+class TestKanbanColumnValueSeeding(FrappeTestCase):
+	"""Install/migrate seeding for Kanban Column Value Link targets."""
+
+	BOARD_WITH_DEADLINE = "Dinext Kanban Deadline Seed Test Board"
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+
+	def _delete_column_values(self, values):
+		for value in values:
+			if frappe.db.exists("Kanban Column Value", value):
+				frappe.delete_doc(
+					"Kanban Column Value",
+					value,
+					force=1,
+					ignore_permissions=True,
+				)
+
+	def _ensure_board_with_deadline_columns(self, values):
+		"""Board whose custom_deadline_columns Link to the given values."""
+		# Link targets must exist before board.save() can persist child rows.
+		for value in values:
+			if not frappe.db.exists("Kanban Column Value", value):
+				frappe.get_doc(
+					{
+						"doctype": "Kanban Column Value",
+						"column_value": value,
+					}
+				).insert(ignore_permissions=True)
+
+		if frappe.db.exists("Kanban Board", self.BOARD_WITH_DEADLINE):
+			board = frappe.get_doc("Kanban Board", self.BOARD_WITH_DEADLINE)
+		else:
+			board = frappe.get_doc(
+				{
+					"doctype": "Kanban Board",
+					"kanban_board_name": self.BOARD_WITH_DEADLINE,
+					"reference_doctype": "ToDo",
+					"field_name": "status",
+					"columns": [
+						{"column_name": "Open"},
+						{"column_name": "Closed"},
+					],
+				}
+			).insert(ignore_permissions=True)
+
+		board.set("custom_deadline_columns", [])
+		for value in values:
+			board.append("custom_deadline_columns", {"column_value": value})
+		board.save(ignore_permissions=True)
+		return board.name
+
+	def test_ensure_creates_defaults_idempotently(self):
+		defaults = list(TASK_DEFAULT_DEADLINE_COLUMNS)
+		self._delete_column_values(defaults)
+
+		for value in defaults:
+			self.assertFalse(frappe.db.exists("Kanban Column Value", value))
+
+		first = ensure_kanban_column_values_for_boards()
+		second = ensure_kanban_column_values_for_boards()
+
+		for value in defaults:
+			self.assertIn(value, first)
+			self.assertIn(value, second)
+			self.assertTrue(frappe.db.exists("Kanban Column Value", value))
+			self.assertEqual(
+				frappe.db.count("Kanban Column Value", {"name": value}),
+				1,
+			)
+
+	def test_ensure_heals_board_links_so_save_succeeds(self):
+		defaults = list(TASK_DEFAULT_DEADLINE_COLUMNS)
+		ensure_todo_kanban_board()
+		self._ensure_board_with_deadline_columns(defaults)
+
+		# Simulate fresh-install gap: child Links remain, targets deleted.
+		self._delete_column_values(defaults)
+		for value in defaults:
+			self.assertFalse(frappe.db.exists("Kanban Column Value", value))
+
+		ensure_kanban_column_values_for_boards()
+		ensure_kanban_column_values_for_boards()
+
+		for value in defaults:
+			self.assertTrue(frappe.db.exists("Kanban Column Value", value))
+			self.assertEqual(
+				frappe.db.count("Kanban Column Value", {"name": value}),
+				1,
+			)
+
+		board = frappe.get_doc("Kanban Board", self.BOARD_WITH_DEADLINE)
+		# Triggers Link validation the same way Desk update_order / save does.
+		board.save(ignore_permissions=True)
+		reloaded = frappe.get_doc("Kanban Board", self.BOARD_WITH_DEADLINE)
+		linked = [
+			str(row.column_value).strip()
+			for row in (reloaded.custom_deadline_columns or [])
+			if row.column_value
+		]
+		for value in defaults:
+			self.assertIn(value, linked)
