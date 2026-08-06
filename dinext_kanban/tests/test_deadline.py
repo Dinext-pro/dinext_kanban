@@ -20,6 +20,8 @@ from dinext_kanban.deadline import (
 	names_for_deadline_lane,
 	working_days_until,
 )
+from dinext_kanban import hooks
+from dinext_kanban.api import set_swimlane_field
 from dinext_kanban.install import ensure_kanban_column_values_for_boards
 from dinext_kanban.tests.test_move_policy import ensure_todo_kanban_board
 
@@ -387,3 +389,48 @@ class TestKanbanColumnValueSeeding(FrappeTestCase):
 		]
 		for value in defaults:
 			self.assertIn(value, linked)
+
+
+class TestKanbanColumnValueFixtures(FrappeTestCase):
+	"""Package fixtures must supply Link targets before the board fixture."""
+
+	EXPECTED = ("Open", "Working", "Overdue")
+
+	def test_hooks_register_column_value_before_board(self):
+		doctypes = [entry["doctype"] for entry in hooks.fixtures]
+		self.assertIn("Kanban Column Value", doctypes)
+		self.assertIn("Kanban Board", doctypes)
+		self.assertLess(
+			doctypes.index("Kanban Column Value"),
+			doctypes.index("Kanban Board"),
+		)
+
+		column_entry = next(
+			e for e in hooks.fixtures if e["doctype"] == "Kanban Column Value"
+		)
+		names = column_entry["filters"][0][2]
+		for value in self.EXPECTED:
+			self.assertIn(value, names)
+
+	def test_fixture_file_contains_expected_values(self):
+		import json
+		from pathlib import Path
+
+		path = Path(frappe.get_app_path("dinext_kanban", "fixtures", "kanban_column_value.json"))
+		rows = json.loads(path.read_text(encoding="utf-8"))
+		names = {row.get("name") or row.get("column_value") for row in rows}
+		self.assertEqual(names, set(self.EXPECTED))
+
+	def test_set_swimlane_field_saves_when_fixture_values_exist(self):
+		frappe.set_user("Administrator")
+		defaults = list(self.EXPECTED)
+		helper = TestKanbanColumnValueSeeding()
+		helper.setUp()
+		board_name = helper._ensure_board_with_deadline_columns(defaults)
+
+		for value in defaults:
+			self.assertTrue(frappe.db.exists("Kanban Column Value", value))
+
+		result = set_swimlane_field(board_name, "__assign")
+		self.assertEqual(result["custom_swimlane_field"], "__assign")
+		set_swimlane_field(board_name, "")
