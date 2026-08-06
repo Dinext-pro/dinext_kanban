@@ -6,13 +6,19 @@ app_publisher = "tridz"
 app_description = "An enhanced version of Kanban Board"
 app_email = "info@dinext.ru"
 app_license = "mit"
-# required_apps = []
+required_apps = ["dinext_common", "erpnext"]
 
 fixtures = [
     {
         "doctype": "Custom HTML Block",
         "filters": [
             ["name", "in", ["My Kanban"]]
+        ]
+    },
+    {
+        "doctype": "Kanban Column Value",
+        "filters": [
+            ["name", "in", ["Open", "Working", "Overdue"]]
         ]
     },
     {
