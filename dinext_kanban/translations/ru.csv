@@ -170,3 +170,6 @@
 "Working days before the deadline to highlight as approaching.","Число рабочих дней до срока, при котором дата подсвечивается как приближающаяся.",""
 "Kanban column values where deadline tracking applies. Use the checklist below.","Значения колонок канбана, для которых отслеживаются сроки. Используйте список ниже.",""
 "Column Value","Значение колонки",""
+"My Work","Моя работа",""
+"My Board","Моя доска",""
+"Personal Kanban workspace with the My Kanban board for tracking your work visually.","Персональное Kanban-пространство с доской «Мой канбан» для визуального отслеживания работы.",""
