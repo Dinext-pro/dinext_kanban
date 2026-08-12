@@ -48,7 +48,13 @@ def ensure_kanban_column_values_for_boards() -> list[str]:
 
 def after_install() -> None:
 	ensure_kanban_column_values_for_boards()
+	from dinext_kanban.setup.dinext_hub import register_dinext_hub_items
+
+	register_dinext_hub_items()
 
 
 def after_migrate() -> None:
 	ensure_kanban_column_values_for_boards()
+	from dinext_kanban.setup.dinext_hub import register_dinext_hub_items
+
+	register_dinext_hub_items()
