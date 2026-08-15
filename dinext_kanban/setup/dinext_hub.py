@@ -35,6 +35,10 @@ HUB_DOCTYPE_ITEMS = (
 			["Task", "status", "=", "Overdue", False],
 			["Task", "type", "!=", "Issue", False],
 		],
+		"list_filter": [
+			["Task", "type", "!=", "Issue", False],
+			["Task", "status", "not in", ["Completed", "Cancelled"], False],
+		],
 	},
 )
 
