@@ -66,9 +66,20 @@ app_include_js = [
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Kanban Board" : "public/js/kanban_highlight.js"}
+doctype_js = {
+	"Kanban Board": "public/js/kanban_highlight.js",
+	"Project": [
+		"public/js/board_navigation.js",
+		"public/js/project_board_button.js",
+	],
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
-# doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
+doctype_tree_js = {
+	"Task": [
+		"public/js/board_navigation.js",
+		"public/js/task_tree_board_button.js",
+	],
+}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
 # Svg Icons
