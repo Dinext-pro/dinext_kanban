@@ -34,6 +34,7 @@
     </button>
 
     <button
+      v-if="!useRavenChat"
       type="button"
       class="extra-info-action extra-info-action--count"
       :aria-label="__('Comments', null, ctx)"
@@ -45,6 +46,68 @@
       </svg>
       <span class="extra-info-count">{{ commentCountLabel }}</span>
     </button>
+
+    <div v-else class="extra-info-files extra-info-raven">
+      <button
+        ref="ravenButtonRef"
+        type="button"
+        class="extra-info-action extra-info-raven-action"
+        :aria-label="__('Chat', null, ctx)"
+        :title="__('Chat', null, ctx)"
+        :aria-expanded="String(ravenMenuOpen)"
+        :disabled="ravenLoading"
+        @click="onRavenChatClick"
+      >
+        <svg class="icon icon-sm" aria-hidden="true">
+          <use href="#es-line-chat-alt"></use>
+        </svg>
+      </button>
+
+      <Teleport to="body">
+        <div
+          v-if="ravenMenuOpen"
+          ref="ravenMenuRef"
+          class="extra-info-files-menu extra-info-raven-menu"
+          role="menu"
+          :aria-label="__('Chat', null, ctx)"
+          :style="ravenMenuStyle"
+        >
+          <div v-if="ravenLoading" class="extra-info-files-empty">
+            {{ __('Loading…', null, ctx) }}
+          </div>
+          <template v-else>
+            <button
+              v-for="channel in ravenChannels"
+              :key="channel.name"
+              type="button"
+              class="dropdown-item extra-info-raven-item"
+              role="menuitem"
+              @click="onOpenRavenChannel(channel)"
+            >
+              {{ channel.channel_name || channel.name }}
+            </button>
+            <template v-if="!ravenChannels.length">
+              <button
+                type="button"
+                class="dropdown-item extra-info-raven-item"
+                role="menuitem"
+                @click="onSendToRaven"
+              >
+                {{ __('Send to chat or channel', null, ravenCtx) }}
+              </button>
+              <button
+                type="button"
+                class="dropdown-item extra-info-raven-item"
+                role="menuitem"
+                @click="onCreateRavenChannel"
+              >
+                {{ __('Create channel', null, ravenCtx) }}
+              </button>
+            </template>
+          </template>
+        </div>
+      </Teleport>
+    </div>
 
     <div class="extra-info-files">
       <button
@@ -151,16 +214,20 @@ import { useDismissibleMenu } from '../../utils/menu'
 import {
   canDeleteAttachment,
   canDeleteCard,
+  canUseRavenChat,
   confirmDeleteAttachment,
   confirmDeleteCard,
   copyFormLink,
+  fetchDocumentChannels,
   formatActivityCount,
   getAttachmentCount,
   getCommentCount,
   getExtraInfoContext,
+  getRavenContext,
   isLikedByUser,
   navigateToFormComments,
   openAttachmentPreviewOrFile,
+  resolveRavenChatAction,
   toggleLikedByValue,
 } from '../../utils/cardExtraInfo'
 
@@ -173,6 +240,7 @@ const emit = defineEmits(['files-menu-open'])
 const store = useStore()
 const __ = globalThis.__
 const ctx = getExtraInfoContext()
+const ravenCtx = getRavenContext()
 
 const likeButtonRef = ref(null)
 const likeBusy = ref(false)
@@ -182,8 +250,15 @@ const filesMenuOpen = ref(false)
 const filesMenuStyle = ref({})
 const filesLoading = ref(false)
 const attachments = ref([])
+const ravenButtonRef = ref(null)
+const ravenMenuRef = ref(null)
+const ravenMenuOpen = ref(false)
+const ravenMenuStyle = ref({})
+const ravenLoading = ref(false)
+const ravenChannels = ref([])
 const docstatus = ref(Number(props.card.docstatus) || 0)
 const deleteBusy = ref(false)
+const useRavenChat = computed(() => canUseRavenChat(props.doctype, props.card.name))
 
 watch(
   () => props.card.docstatus,
@@ -237,11 +312,25 @@ function closeFilesMenu({ restoreFocus = false } = {}) {
   }
 }
 
+function closeRavenMenu({ restoreFocus = false } = {}) {
+  ravenMenuOpen.value = false
+  if (restoreFocus) {
+    ravenButtonRef.value?.focus?.()
+  }
+}
+
 useDismissibleMenu({
   isOpen: filesMenuOpen,
   triggerRef: filesButtonRef,
   menuRef: filesMenuRef,
   close: closeFilesMenu,
+})
+
+useDismissibleMenu({
+  isOpen: ravenMenuOpen,
+  triggerRef: ravenButtonRef,
+  menuRef: ravenMenuRef,
+  close: closeRavenMenu,
 })
 
 function onCopyLink() {
@@ -290,6 +379,98 @@ async function onToggleLike() {
 
 function onOpenComments() {
   navigateToFormComments(props.doctype, props.card.name)
+}
+
+function ravenDocumentContext() {
+  const titleField = store.state.config?.title_field
+  return {
+    doctype: props.doctype,
+    docname: props.card.name,
+    doc: props.card,
+    meta: {
+      title_field: titleField,
+      ...(globalThis.frappe?.get_meta?.(props.doctype) || {}),
+    },
+  }
+}
+
+function onOpenRavenChannel(channel) {
+  closeRavenMenu()
+  globalThis.dinext_raven?.open_channel?.(channel)
+}
+
+function onSendToRaven() {
+  closeRavenMenu()
+  globalThis.dinext_raven?.show_send_raven_dialog?.(ravenDocumentContext())
+}
+
+function onCreateRavenChannel() {
+  closeRavenMenu()
+  const raven = globalThis.dinext_raven
+  if (!raven?.show_create_channel_dialog) {
+    return
+  }
+  raven.show_create_channel_dialog(ravenDocumentContext(), (channel) => {
+    if (typeof raven.open_created_channel === 'function') {
+      raven.open_created_channel(channel)
+      return
+    }
+    raven.open_channel?.(channel)
+  })
+}
+
+function positionRavenMenu() {
+  ravenMenuStyle.value = { visibility: 'hidden' }
+  nextTick(() => {
+    const triggerRect = ravenButtonRef.value?.getBoundingClientRect()
+    const menuRect = ravenMenuRef.value?.getBoundingClientRect()
+    if (!triggerRect || !menuRect) return
+    const margin = 8
+    const left = Math.min(
+      Math.max(margin, triggerRect.right - menuRect.width),
+      window.innerWidth - menuRect.width - margin,
+    )
+    const preferredTop = triggerRect.bottom + 4
+    const top = preferredTop + menuRect.height <= window.innerHeight - margin
+      ? preferredTop
+      : Math.max(margin, triggerRect.top - menuRect.height - 4)
+    ravenMenuStyle.value = {
+      top: `${top}px`,
+      left: `${left}px`,
+      visibility: 'visible',
+    }
+  })
+}
+
+async function onRavenChatClick() {
+  if (ravenMenuOpen.value) {
+    closeRavenMenu()
+    return
+  }
+  closeFilesMenu()
+  ravenLoading.value = true
+  ravenChannels.value = []
+  ravenMenuOpen.value = true
+  positionRavenMenu()
+  try {
+    const channels = await fetchDocumentChannels(props.doctype, props.card.name)
+    const action = resolveRavenChatAction(channels)
+    if (action.type === 'open') {
+      closeRavenMenu()
+      onOpenRavenChannel(action.channels[0])
+      return
+    }
+    ravenChannels.value = action.channels
+    positionRavenMenu()
+  } catch {
+    closeRavenMenu()
+    const message = __('Could not load channels.', null, ctx)
+    if (typeof globalThis.frappe?.show_alert === 'function') {
+      globalThis.frappe.show_alert({ message, indicator: 'red' })
+    }
+  } finally {
+    ravenLoading.value = false
+  }
 }
 
 async function loadAttachments() {
@@ -349,6 +530,7 @@ async function toggleFilesMenu() {
     closeFilesMenu()
     return
   }
+  closeRavenMenu()
   filesMenuOpen.value = true
   positionFilesMenu()
   await loadAttachments()
