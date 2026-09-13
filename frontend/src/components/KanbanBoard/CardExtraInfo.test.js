@@ -67,7 +67,40 @@ function makeCurFrm(doctype, name) {
   }
 }
 
+function installRaven({
+  canDiscuss = true,
+  channels = [],
+} = {}) {
+  const open_channel = vi.fn()
+  const show_send_raven_dialog = vi.fn()
+  const show_create_channel_dialog = vi.fn()
+  const open_created_channel = vi.fn()
+  globalThis.dinext_raven = {
+    DISCUSS_DENYLIST: { Comment: true },
+    can_discuss_document: vi.fn(() => canDiscuss),
+    open_channel,
+    show_send_raven_dialog,
+    show_create_channel_dialog,
+    open_created_channel,
+  }
+  frappe.boot.user = { roles: ['Raven User'] }
+  frappe.call.mockImplementation(async ({ method }) => {
+    if (method === 'dinext_raven.document_channels.api.get_document_channels') {
+      return { message: channels }
+    }
+    return { message: {} }
+  })
+  return {
+    open_channel,
+    show_send_raven_dialog,
+    show_create_channel_dialog,
+    open_created_channel,
+  }
+}
+
 beforeEach(() => {
+  delete globalThis.dinext_raven
+  frappe.boot.user = { roles: [] }
   frappe.session = { user: 'Administrator' }
   frappe.model.can_write.mockReturnValue(true)
   frappe.model.can_delete.mockReturnValue(false)
@@ -145,6 +178,90 @@ test('opens the document form from comments icon and scrolls to comments', async
     expect.objectContaining({ length: 1 }),
     true,
   )
+})
+
+test('replaces comments with Raven chat when overlay and role are available', () => {
+  installRaven()
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  expect(wrapper.find('[aria-label="Comments"]').exists()).toBe(false)
+  expect(wrapper.find('[aria-label="Chat"]').exists()).toBe(true)
+  expect(wrapper.find('[aria-label="Chat"]').text()).not.toContain('2')
+  expect(wrapper.find('[aria-label="Chat"] use').attributes('href')).toBe('#es-line-chat-alt')
+})
+
+test('opens a single accessible channel without a picker', async () => {
+  const raven = installRaven({
+    channels: [{ name: 'Dinext-one', channel_name: 'one', route: '/raven/Dinext/Dinext-one' }],
+  })
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  await wrapper.get('[aria-label="Chat"]').trigger('click')
+  await flushPromises()
+  expect(raven.open_channel).toHaveBeenCalledWith(expect.objectContaining({
+    name: 'Dinext-one',
+  }))
+  expect(wrapper.find('.extra-info-raven-menu').exists()).toBe(false)
+})
+
+test('lists multiple accessible channels in a dropdown', async () => {
+  const raven = installRaven({
+    channels: [
+      { name: 'Dinext-one', channel_name: 'one' },
+      { name: 'Dinext-two', channel_name: 'two' },
+    ],
+  })
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  await wrapper.get('[aria-label="Chat"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('one')
+  expect(wrapper.text()).toContain('two')
+  expect(wrapper.text()).not.toContain('Send to chat or channel')
+  await wrapper.get('.extra-info-raven-item').trigger('click')
+  expect(raven.open_channel).toHaveBeenCalledWith(expect.objectContaining({
+    name: 'Dinext-one',
+  }))
+})
+
+test('offers send and create when no accessible channel exists', async () => {
+  const raven = installRaven({ channels: [] })
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  await wrapper.get('[aria-label="Chat"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('Send to chat or channel')
+  expect(wrapper.text()).toContain('Create channel')
+  const items = wrapper.findAll('.extra-info-raven-item')
+  await items[0].trigger('click')
+  expect(raven.show_send_raven_dialog).toHaveBeenCalledWith(expect.objectContaining({
+    doctype: 'Task',
+    docname: 'TASK-1',
+  }))
+})
+
+test('create channel uses overlay dialog and open_created_channel', async () => {
+  const raven = installRaven({ channels: [] })
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  await wrapper.get('[aria-label="Chat"]').trigger('click')
+  await flushPromises()
+  const items = wrapper.findAll('.extra-info-raven-item')
+  await items[1].trigger('click')
+  expect(raven.show_create_channel_dialog).toHaveBeenCalled()
+  const onCreated = raven.show_create_channel_dialog.mock.calls[0][1]
+  onCreated({ name: 'Dinext-new', channel_name: 'new' })
+  expect(raven.open_created_channel).toHaveBeenCalledWith(expect.objectContaining({
+    name: 'Dinext-new',
+  }))
+})
+
+test('keeps comments when Raven discuss is denied', () => {
+  installRaven({ canDiscuss: false })
+  const store = createStore()
+  const wrapper = mountExtra(store)
+  expect(wrapper.find('[aria-label="Comments"]').exists()).toBe(true)
+  expect(wrapper.find('[aria-label="Chat"]').exists()).toBe(false)
 })
 
 test('shows empty-state and upload when there are no attachments', async () => {

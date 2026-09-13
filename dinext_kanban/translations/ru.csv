@@ -115,6 +115,8 @@
 "Like","Нравится","DinextKanban.ExtraInfo"
 "Unlike","Больше не нравится","DinextKanban.ExtraInfo"
 "Comments","Комментарии","DinextKanban.ExtraInfo"
+"Chat","Чат","DinextKanban.ExtraInfo"
+"Could not load channels.","Не удалось загрузить каналы.","DinextKanban.ExtraInfo"
 "Attachments","Вложения","DinextKanban.ExtraInfo"
 "Child records","Дочерние записи","DinextKanban.ChildCount"
 "Loading…","Загрузка…","DinextKanban.ExtraInfo"
