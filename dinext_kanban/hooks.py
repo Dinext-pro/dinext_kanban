@@ -5,7 +5,7 @@ app_title = "Dinext Kanban"
 app_publisher = "tridz"
 app_description = "An enhanced version of Kanban Board"
 app_email = "info@dinext.ru"
-app_license = "mit"
+app_license = "GNU General Public License (v3)"
 required_apps = ["dinext_common", "erpnext"]
 
 fixtures = [
