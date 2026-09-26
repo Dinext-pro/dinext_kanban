@@ -1,5 +1,5 @@
 # Copyright (c) 2026, Dinext Kanban contributors
-# License: MIT. See LICENSE
+# License: GNU GPL v3. See license.txt
 
 from datetime import date
 from unittest.mock import patch

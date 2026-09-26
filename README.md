@@ -606,7 +606,7 @@ dinext_kanban/
 ├── package.json                # Корневой Yarn workspace
 ├── pyproject.toml              # Python package metadata
 ├── yarn.lock                   # Зафиксированные frontend-зависимости
-└── license.txt                 # Лицензия MIT
+└── license.txt                 # Лицензия GPL-3
 ```
 
 ## 🔗 Поток данных
@@ -654,4 +654,4 @@ flowchart LR
 
 ## Лицензия
 
-Проект распространяется по лицензии MIT. Полный текст находится в [license.txt](license.txt).
+Проект распространяется по лицензии GNU GPL v3. Полный текст находится в [license.txt](license.txt).
