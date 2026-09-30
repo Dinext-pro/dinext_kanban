@@ -1,0 +1,20 @@
+[
+ {
+  "column_value": "Open",
+  "docstatus": 0,
+  "doctype": "Kanban Column Value",
+  "name": "Open"
+ },
+ {
+  "column_value": "Working",
+  "docstatus": 0,
+  "doctype": "Kanban Column Value",
+  "name": "Working"
+ },
+ {
+  "column_value": "Overdue",
+  "docstatus": 0,
+  "doctype": "Kanban Column Value",
+  "name": "Overdue"
+ }
+]

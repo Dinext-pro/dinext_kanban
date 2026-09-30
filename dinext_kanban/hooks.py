@@ -5,14 +5,20 @@ app_title = "Dinext Kanban"
 app_publisher = "tridz"
 app_description = "An enhanced version of Kanban Board"
 app_email = "info@dinext.ru"
-app_license = "mit"
-# required_apps = []
+app_license = "GNU General Public License (v3)"
+required_apps = ["dinext_common", "erpnext"]
 
 fixtures = [
     {
         "doctype": "Custom HTML Block",
         "filters": [
             ["name", "in", ["My Kanban"]]
+        ]
+    },
+    {
+        "doctype": "Kanban Column Value",
+        "filters": [
+            ["name", "in", ["Open", "Working", "Overdue"]]
         ]
     },
     {
@@ -60,9 +66,20 @@ app_include_js = [
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Kanban Board" : "public/js/kanban_highlight.js"}
+doctype_js = {
+	"Kanban Board": "public/js/kanban_highlight.js",
+	"Project": [
+		"public/js/board_navigation.js",
+		"public/js/project_board_button.js",
+	],
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
-# doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
+doctype_tree_js = {
+	"Task": [
+		"public/js/board_navigation.js",
+		"public/js/task_tree_board_button.js",
+	],
+}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
 # Svg Icons
@@ -100,7 +117,8 @@ doctype_js = {"Kanban Board" : "public/js/kanban_highlight.js"}
 # ------------
 
 # before_install = "dinext_kanban.install.before_install"
-# after_install = "dinext_kanban.install.after_install"
+after_install = "dinext_kanban.install.after_install"
+after_migrate = ["dinext_kanban.install.after_migrate"]
 
 # Uninstallation
 # ------------
