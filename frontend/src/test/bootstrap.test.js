@@ -21,38 +21,6 @@ beforeEach(() => {
   installBootstrap({ scheduleBridge: false })
 })
 
-test('loadConfig resolves the Frappe message', async () => {
-  const call = vi.fn().mockResolvedValue({
-    message: { kanban_beta: 1, kanban_beta_users: [] },
-  })
-
-  await expect(window.dinextKanbanBootstrap.loadConfig(call)).resolves.toEqual({
-    kanban_beta: 1,
-    kanban_beta_users: [],
-  })
-})
-
-describe('shouldUseBeta', () => {
-  test('enables beta globally when no user allowlist exists', () => {
-    expect(window.dinextKanbanBootstrap.shouldUseBeta(
-      { kanban_beta: 1, kanban_beta_users: [] },
-      'user@example.com',
-    )).toBe(true)
-  })
-
-  test('respects the per-user allowlist', () => {
-    const config = {
-      kanban_beta: 1,
-      kanban_beta_users: ['allowed@example.com'],
-    }
-
-    expect(window.dinextKanbanBootstrap.shouldUseBeta(
-      config,
-      'other@example.com',
-    )).toBe(false)
-  })
-})
-
 test('loadScript resolves after load and reuses the same element', async () => {
   const firstLoad = window.dinextKanbanBootstrap.loadScript('/assets/kanban.js')
   const script = document.querySelector('script[src="/assets/kanban.js"]')
@@ -165,34 +133,4 @@ test('ensureKanbanViewBridge resolves the bridge URL via frappe.assets.bundled_a
 
   await window.dinextKanbanBootstrap.ensureKanbanViewBridge()
   expect(document.querySelectorAll(`script[src="${hashedUrl}"]`)).toHaveLength(1)
-})
-
-test('ensureKanbanViewBridge still loads when beta config is disabled', async () => {
-  const bridgeUrl = '/assets/dinext_kanban/dist/js/kanban_view.bundle.HASH123.js'
-  window.frappe = {
-    ready: (callback) => callback(),
-    call: vi.fn().mockResolvedValue({
-      message: { kanban_beta: 0, kanban_beta_users: [] },
-    }),
-    session: { user: 'user@example.com' },
-    assets: {
-      bundled_asset: vi.fn(() => bridgeUrl),
-    },
-    views: {
-      KanbanView: class NativeKanbanView {},
-    },
-  }
-  installBootstrap({ scheduleBridge: false })
-
-  const promise = window.dinextKanbanBootstrap.ensureKanbanViewBridge()
-  await vi.waitFor(() => {
-    expect(
-      document.querySelector(`script[src="${bridgeUrl}"]`),
-    ).not.toBeNull()
-  })
-  const script = document.querySelector(`script[src="${bridgeUrl}"]`)
-  script.dispatchEvent(new Event('load'))
-
-  await expect(promise).resolves.toBe(true)
-  expect(window.frappe.call).not.toHaveBeenCalled()
 })

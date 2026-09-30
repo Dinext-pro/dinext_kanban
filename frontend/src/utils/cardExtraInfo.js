@@ -1,7 +1,60 @@
 const EXTRA_INFO_CONTEXT = 'DinextKanban.ExtraInfo'
+export const RAVEN_CONTEXT = 'Dinext.Raven'
 
 export function getExtraInfoContext() {
   return EXTRA_INFO_CONTEXT
+}
+
+export function getRavenContext() {
+  return RAVEN_CONTEXT
+}
+
+export function hasRavenRole(frappeGlobal = globalThis.frappe) {
+  const roles = frappeGlobal?.boot?.user?.roles || []
+  const user = frappeGlobal?.session?.user
+  return roles.includes('Raven User') || user === 'Administrator'
+}
+
+export function isRavenDeniedDoctype(doctype, denylist = globalThis.dinext_raven?.DISCUSS_DENYLIST) {
+  if (!doctype) {
+    return true
+  }
+  if (String(doctype).startsWith('Raven ')) {
+    return true
+  }
+  return Boolean(denylist?.[doctype])
+}
+
+export function canUseRavenChat(doctype, name, {
+  dinextRaven = globalThis.dinext_raven,
+  frappeGlobal = globalThis.frappe,
+} = {}) {
+  if (!dinextRaven || !doctype || !name) {
+    return false
+  }
+  if (typeof dinextRaven.can_discuss_document === 'function') {
+    return Boolean(dinextRaven.can_discuss_document(doctype, name))
+  }
+  return hasRavenRole(frappeGlobal) && !isRavenDeniedDoctype(doctype, dinextRaven.DISCUSS_DENYLIST)
+}
+
+export function resolveRavenChatAction(channels = []) {
+  const list = Array.isArray(channels) ? channels.filter((row) => row && row.name) : []
+  if (list.length === 1) {
+    return { type: 'open', channels: list }
+  }
+  if (list.length > 1) {
+    return { type: 'pick', channels: list }
+  }
+  return { type: 'empty', channels: [] }
+}
+
+export async function fetchDocumentChannels(doctype, name) {
+  const response = await frappe.call({
+    method: 'dinext_raven.document_channels.api.get_document_channels',
+    args: { doctype, name },
+  })
+  return Array.isArray(response?.message) ? response.message : []
 }
 
 export function parseLikedBy(likedBy) {

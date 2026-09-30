@@ -3,6 +3,8 @@ import {
   buildFormUrl,
   canDeleteAttachment,
   canDeleteCard,
+  canUseRavenChat,
+  fetchDocumentChannels,
   confirmDeleteAttachment,
   confirmDeleteCard,
   copyFormLink,
@@ -13,10 +15,13 @@ import {
   getCommentCount,
   getFileUrl,
   hasPreviewAttachment,
+  hasRavenRole,
   isLikedByUser,
+  isRavenDeniedDoctype,
   navigateToFormComments,
   openAttachmentPreviewOrFile,
   parseLikedBy,
+  resolveRavenChatAction,
   toggleLikedByValue,
 } from './cardExtraInfo'
 
@@ -42,6 +47,7 @@ describe('cardExtraInfo helpers', () => {
     frappe.utils.copy_to_clipboard = vi.fn()
     frappe.utils.scroll_to = vi.fn()
     frappe.confirm = vi.fn((_message, onYes) => onYes?.())
+    frappe.call = vi.fn()
     frappe.set_route = vi.fn(() => Promise.resolve())
     frappe.get_route = vi.fn(() => ['List', 'Task', 'Kanban', 'Board'])
     frappe.urllib = { get_full_url: vi.fn((url) => `https://desk.example${url}`) }
@@ -185,5 +191,58 @@ describe('cardExtraInfo helpers', () => {
 
     frappe.confirm.mockImplementation((_message, _onYes, onNo) => onNo())
     await expect(confirmDeleteCard('First task')).resolves.toBe(false)
+  })
+
+  test('hasRavenRole accepts Raven User and Administrator', () => {
+    expect(hasRavenRole({ boot: { user: { roles: ['Raven User'] } }, session: { user: 'u' } })).toBe(true)
+    expect(hasRavenRole({ boot: { user: { roles: [] } }, session: { user: 'Administrator' } })).toBe(true)
+    expect(hasRavenRole({ boot: { user: { roles: ['System Manager'] } }, session: { user: 'u' } })).toBe(false)
+  })
+
+  test('isRavenDeniedDoctype blocks Comment and Raven prefix', () => {
+    expect(isRavenDeniedDoctype('Comment', { Comment: true })).toBe(true)
+    expect(isRavenDeniedDoctype('Raven Channel', {})).toBe(true)
+    expect(isRavenDeniedDoctype('Task', { Comment: true })).toBe(false)
+  })
+
+  test('canUseRavenChat requires overlay, name, and discuss helper', () => {
+    expect(canUseRavenChat('Task', 'TASK-1', { dinextRaven: null })).toBe(false)
+    expect(canUseRavenChat('Task', '', {
+      dinextRaven: { can_discuss_document: () => true },
+    })).toBe(false)
+    expect(canUseRavenChat('Task', 'TASK-1', {
+      dinextRaven: { can_discuss_document: () => true },
+    })).toBe(true)
+    expect(canUseRavenChat('Comment', 'C-1', {
+      dinextRaven: {
+        DISCUSS_DENYLIST: { Comment: true },
+        can_discuss_document: (doctype) => doctype !== 'Comment',
+      },
+    })).toBe(false)
+  })
+
+  test('resolveRavenChatAction branches 0 / 1 / many', () => {
+    expect(resolveRavenChatAction([])).toEqual({ type: 'empty', channels: [] })
+    expect(resolveRavenChatAction([{ name: 'ch-1', channel_name: 'one' }])).toEqual({
+      type: 'open',
+      channels: [{ name: 'ch-1', channel_name: 'one' }],
+    })
+    expect(resolveRavenChatAction([
+      { name: 'ch-1', channel_name: 'one' },
+      { name: 'ch-2', channel_name: 'two' },
+    ]).type).toBe('pick')
+  })
+
+  test('fetchDocumentChannels returns API message', async () => {
+    frappe.call.mockResolvedValue({
+      message: [{ name: 'ch-1', channel_name: 'one' }],
+    })
+    await expect(fetchDocumentChannels('Task', 'TASK-1')).resolves.toEqual([
+      { name: 'ch-1', channel_name: 'one' },
+    ])
+    expect(frappe.call).toHaveBeenCalledWith({
+      method: 'dinext_raven.document_channels.api.get_document_channels',
+      args: { doctype: 'Task', name: 'TASK-1' },
+    })
   })
 })
