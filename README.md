@@ -2,6 +2,10 @@
 
 ## 📖 Обзор
 
+Самостоятельный проект Dinext; развитие и поддержку ведёт Dinext. Канонический репозиторий — [Dinext-pro/dinext_kanban](https://github.com/Dinext-pro/dinext_kanban). Автоматическая синхронизация с исходным проектом не используется.
+
+Исторически приложение создано на основе [quick_kanban](https://github.com/tridz-dev/quick_kanban). Сведения об исходных авторах и лицензия сохраняются.
+
 Dinext Kanban — приложение для Frappe Framework, которое дополняет стандартное Kanban-представление интерфейсом на Vue 3. Репозиторий называется `dinext_kanban`, а внутреннее имя устанавливаемого Frappe-приложения — `dinext_kanban`.
 
 Новый интерфейс включается конфигурацией сайта и может быть доступен всем пользователям либо заданному списку. Если конфигурацию или frontend bundle загрузить не удаётся, приложение возвращается к стандартному Kanban Frappe.
@@ -58,7 +62,7 @@ Dinext Kanban — приложение для Frappe Framework, которое �
 cd <bench-root>
 
 bench get-app dinext_kanban \
-  https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git \
+  https://github.com/Dinext-pro/dinext_kanban.git \
   --branch <branch-name>
 ```
 
@@ -116,7 +120,7 @@ bench restart
 
 ```bash
 # 1–3: загрузка и install-app
-bench get-app dinext_kanban https://dinext.gitlab.yandexcloud.net/erpnext/dinext/dinext_kanban.git --branch <branch-name>
+bench get-app dinext_kanban https://github.com/Dinext-pro/dinext_kanban.git --branch <branch-name>
 cd apps/dinext_kanban && yarn install --frozen-lockfile && cd ../..
 bench --site <site-name> install-app dinext_kanban
 
