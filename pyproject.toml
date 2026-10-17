@@ -3,6 +3,7 @@ name = "dinext_kanban"
 authors = [
     { name = "tridz", email = "raihanbinabduljal@gmail.com"}
 ]
+maintainers = [{ name = "Dinext", email = "info@dinext.ru" }]
 description = "An enhanced version of Kanban Board in frappe"
 requires-python = ">=3.10"
 readme = "README.md"

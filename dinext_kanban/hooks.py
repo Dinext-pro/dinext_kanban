@@ -2,7 +2,7 @@ from pathlib import Path
 
 app_name = "dinext_kanban"
 app_title = "Dinext Kanban"
-app_publisher = "tridz"
+app_publisher = "Dinext"
 app_description = "An enhanced version of Kanban Board"
 app_email = "info@dinext.ru"
 app_license = "GNU General Public License (v3)"
