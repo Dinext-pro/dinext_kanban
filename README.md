@@ -1,62 +1,64 @@
+[Русский](README.ru.md)
+
 # Dinext Kanban
 
-## 📖 Обзор
+## 📖 Overview
 
-Самостоятельный проект Dinext; развитие и поддержку ведёт Dinext. Канонический репозиторий — [Dinext-pro/dinext_kanban](https://github.com/Dinext-pro/dinext_kanban). Автоматическая синхронизация с исходным проектом не используется.
+An independent Dinext project developed and maintained by Dinext. The canonical repository is [Dinext-pro/dinext_kanban](https://github.com/Dinext-pro/dinext_kanban). Automatic synchronization with the original project is not used.
 
-Исторически приложение создано на основе [quick_kanban](https://github.com/tridz-dev/quick_kanban). Сведения об исходных авторах и лицензия сохраняются.
+The application was originally based on [quick_kanban](https://github.com/tridz-dev/quick_kanban). Original authorship information and the license are preserved.
 
-Dinext Kanban — приложение для Frappe Framework, которое дополняет стандартное Kanban-представление интерфейсом на Vue 3. Репозиторий называется `dinext_kanban`, а внутреннее имя устанавливаемого Frappe-приложения — `dinext_kanban`.
+Dinext Kanban is an application for Frappe Framework that adds a Vue 3 interface to the standard Kanban view. The repository is named `dinext_kanban`, and the internal name of the installable Frappe application is `dinext_kanban`.
 
-Новый интерфейс включается конфигурацией сайта и может быть доступен всем пользователям либо заданному списку. Если конфигурацию или frontend bundle загрузить не удаётся, приложение возвращается к стандартному Kanban Frappe.
+The new interface is enabled through site configuration and can be available to all users or a specified list. If the configuration or frontend bundle cannot be loaded, the application falls back to standard Frappe Kanban.
 
-## ✨ Возможности
+## ✨ Features
 
-- Vue-интерфейс для Kanban Board любого DocType, использующего поле типа `Select`.
-- Виртуализация карточек и постраничная загрузка по колонкам для больших досок.
-- Начальная загрузка до 100 записей и автоматическая дозагрузка по 30 карточек при прокрутке отдельной колонки.
-- Создание карточек из колонки (**Add {DocType}** / `+` в заголовке): серверная политика `get_create_options` выбирает Quick Entry, полную форму или блокировку; статус колонки и значения swimlane подставляются заранее.
-- Перемещение карточек мышью и через доступное с клавиатуры меню выбора колонки.
-- Двухслойная валидация перемещений: фронтенд фильтрует назначения по Workflow-правам и обязательным полям (`reqd`, `mandatory_depends_on`), сервер повторяет проверки при сохранении.
-- Подсветка разрешённых колонок при перетаскивании и блокировка запрещённых назначений.
-- Выбор Workflow action, когда несколько переходов ведут в одну колонку.
-- Оптимистичное обновление с откатом при недостаточных правах, ошибке валидации или конкурентном изменении документа; краткая подсветка успешного перемещения и анимация отката (с учётом `prefers-reduced-motion`).
-- После успешного Move/DnD или создания карточки — раскрытие сжатой колонки/дорожки при необходимости и прокрутка к карточке; недавно созданные записи удерживаются сверху колонки до следующего обновления списка.
-- Проверка прав чтения и записи на уровне DocType и поля.
-- Подсчёт общего количества карточек в каждой колонке с учётом текущих фильтров (и режима скрытия дочерних задач, см. ниже).
-- Двойной клик по счётчику в заголовке колонки открывает ListView с фильтром этой колонки и сохранёнными фильтрами доски; при скрытых дочерних — с `name not in` (с порогом на больших досках).
-- Чекбокс **Show child tasks** / **Показывать дочерние задачи** для tree DocType (например Task с `parent_task`): по умолчанию скрывает карточки, чей прямой родитель тоже на доске; состояние — в `localStorage` на доску.
-- **Child panel** / область дочерних данных: badge с числом детей на карточке открывает вложенную мини-доску под родителем (вложенность, закрытие кликом по хосту или по затемнённым карточкам того же уровня).
-- Настройка цвета колонок и выделение значений выбранного поля.
-- Сжатие колонок по ширине (меню **Сжать** / **Открыть**, двойной клик, auto-expand при задержке курсора во время DnD карточки); состояние хранится локально на доску.
-- Изменение ширины колонок перетаскиванием за правый край (для пользователей с правом записи на `Kanban Board`); с зажатым Shift — та же ширина применяется ко всем колонкам; значение сохраняется в `Kanban Board Column.custom_column_width`.
-- Скрытие колонок с доски через меню колонки (для пользователей с правом записи на `Kanban Board`); элемент **Добавить колонку** после последней видимой колонки возвращает скрытые колонки и добавляет новые из допустимых значений Select-поля доски.
-- Расцветка карточек по полю `color` (fieldtype `Color`) в целевом DocType: цветная полоска слева и лёгкий tint фона.
-- Просмотр и изменение назначенных пользователей через стандартный Assign To Dialog.
-- Отображение меток (`_user_tags`) на карточке при включённом **Show Tags** / **Показывать теги** на Kanban Board; при праве записи — добавление и удаление через стандартный `frappe.ui.TagEditor`.
-- Ряд **Доп. информация** на карточке при включённом **Extra Info** / **Доп. информация** (`custom_show_extra_info`): копирование ссылки на форму, like, комментарии (счётчик → форма), файлы (список, загрузка, preview/`preview_attachment` или открытие файла, удаление с учётом прав).
-- Двойной клик по метке добавляет её в текущий фильтр доски (`_user_tags like …`), как клик по тегу в list sidebar.
-- Перенос меток между карточками: ЛКМ — копирование, ПКМ — перемещение; сохранение через `add_tag` / `remove_tag`.
-- Отображение Link / Dynamic Link по title связанной записи (`hydrateLinkTitles` / `frappe._link_titles`), а не по сырому имени; поля `Percent` — progress bar.
-- Inline-редактирование видимых полей карточки (заголовок из `title_field`, поля `Fields`, Highlighted Field): одинарный клик открывает штатный контрол Frappe после `frappe.model.with_doc`; двойной клик по карточке (включая поля и chrome) открывает форму документа; двойной клик по Link — связанную запись; теги, кнопка Move и назначения навигацию не запускают.
-- Переход из диалога Kanban Settings к записи текущей Kanban Board.
-- Режим **Минимизировать**: компактные карточки (заголовок, drag-handle, highlight, Move, assignees) с раскрытием по hover; плотность при DnD карточек и меток хранится в Vuex (в том числе принудительное схлопывание источника после tag-drag).
-- Режим **Swimlane** (**Group By** / **Группировать**): горизонтальные дорожки по **Assigned To** / **Исполнитель**, полю `Select` / `Link` / `User` или `Table MultiSelect`, либо по **Deadlines** / **Сроки**; общий x/y-скролл, sticky-заголовки колонок и дорожек, ленивая подгрузка ячеек, DnD между колонками и дорожками с теми же проверками прав, что и у обычного перемещения (смена дорожки **Сроки** запрещена).
-- **Отслеживание сроков** на Kanban Board: поле Date/Datetime, окно внимания в рабочих днях, список колонок для трекинга; подсветка даты на карточке (просрочено / приближается) и группировка **Group By → Сроки**.
-- Явные состояния загрузки, отсутствия данных и ошибки с повторным запросом.
-- Санитизация форматированного содержимого карточек через DOMPurify.
-- Обновление через стандартный lifecycle списка Frappe без дополнительной realtime-подписки.
-- Безопасный переход на стандартный Kanban при ошибке запуска нового интерфейса.
+- A Vue interface for the Kanban Board of any DocType that uses a `Select` field.
+- Card virtualization and per-column pagination for large boards.
+- Initial loading of up to 100 records, with 30 more cards loaded automatically when scrolling an individual column.
+- Card creation from a column (**Add {DocType}** / `+` in the header): the server-side `get_create_options` policy selects Quick Entry, a full form, or blocking; column status and swimlane values are prefilled.
+- Card movement using the mouse or a keyboard-accessible column selection menu.
+- Two-layer move validation: the frontend filters destinations by Workflow permissions and mandatory fields (`reqd`, `mandatory_depends_on`), and the server repeats these checks when saving.
+- Highlights allowed columns during drag-and-drop and blocks prohibited destinations.
+- Workflow action selection when several transitions lead to the same column.
+- Optimistic updates with rollback on insufficient permissions, validation errors, or concurrent document changes; a brief highlight after a successful move and a rollback animation (respecting `prefers-reduced-motion`).
+- After a successful Move/DnD or card creation, expands a collapsed column/lane if needed and scrolls to the card; newly created records stay at the top of the column until the next list refresh.
+- Read and write permission checks at both DocType and field levels.
+- Total card counts per column, accounting for current filters (and the child-task hiding mode described below).
+- Double-clicking the column header counter opens ListView with the column filter and preserved board filters; when children are hidden, adds `name not in` (with a threshold for large boards).
+- **Show child tasks** checkbox for tree DocTypes (such as Task with `parent_task`): hides cards whose direct parent is also on the board by default; state is stored in `localStorage` per board.
+- **Child panel** / child data area: a child-count badge on the card opens a nested mini-board beneath the parent (supports nesting and closing by clicking the host or dimmed cards at the same level).
+- Column color configuration and highlighting of values from a selected field.
+- Column width collapsing (**Collapse** / **Expand** menu, double-click, auto-expand after hovering during card DnD); state is stored locally per board.
+- Column resizing by dragging the right edge (for users with write permission on `Kanban Board`); holding Shift applies the same width to all columns; the value is saved in `Kanban Board Column.custom_column_width`.
+- Hiding columns through the column menu (for users with write permission on `Kanban Board`); the **Add column** item after the last visible column restores hidden columns and adds new ones from the board's allowed Select values.
+- Card coloring through a `color` field (fieldtype `Color`) in the target DocType: a colored strip on the left and a light background tint.
+- Viewing and changing assignees through the standard Assign To Dialog.
+- Tags (`_user_tags`) on cards when **Show Tags** is enabled on the Kanban Board; users with write permission can add and remove them through the standard `frappe.ui.TagEditor`.
+- An **Extra Info** row on cards when **Extra Info** (`custom_show_extra_info`) is enabled: copy form link, like, comments (counter → form), and files (list, upload, preview/`preview_attachment` or opening the file, permission-aware deletion).
+- Double-clicking a tag adds it to the current board filter (`_user_tags like …`), like clicking a tag in the list sidebar.
+- Dragging tags between cards: left mouse button to copy, right mouse button to move; saved through `add_tag` / `remove_tag`.
+- Link / Dynamic Link values displayed using the linked record's title (`hydrateLinkTitles` / `frappe._link_titles`) rather than its raw name; `Percent` fields use a progress bar.
+- Inline editing of visible card fields (the title from `title_field`, `Fields`, Highlighted Field): a single click opens the standard Frappe control after `frappe.model.with_doc`; double-clicking the card (including fields and chrome) opens the document form; double-clicking a Link opens the linked record; tags, the Move button, and assignments do not trigger navigation.
+- Navigation from the Kanban Settings dialog to the current Kanban Board record.
+- **Minimize** mode: compact cards (title, drag handle, highlight, Move, assignees) that expand on hover; density during card and tag DnD is stored in Vuex (including forced source collapse after tag dragging).
+- **Swimlane** mode (**Group By**): horizontal lanes by **Assigned To**, a `Select` / `Link` / `User` field or `Table MultiSelect`, or **Deadlines**; shared x/y scrolling, sticky column and lane headers, lazy cell loading, and DnD between columns and lanes with the same permission checks as regular moves (switching **Deadlines** lanes is prohibited).
+- **Deadline Tracking** on Kanban Board: a Date/Datetime field, an attention window in working days, and a list of columns to track; card date highlighting (overdue / approaching) and **Group By → Deadlines** grouping.
+- Explicit loading, empty, and error states with retry.
+- Formatted card content sanitized with DOMPurify.
+- Refresh through the standard Frappe list lifecycle without an additional realtime subscription.
+- Safe fallback to standard Kanban if the new interface fails to start.
 
-## 🚀 Установка
+## 🚀 Installation
 
-Репозиторий называется `dinext_kanban`, но в bench приложение клонируется в каталог **`apps/dinext_kanban`**, а Frappe app name — **`dinext_kanban`**.
+The repository is named `dinext_kanban`, but bench clones the application into **`apps/dinext_kanban`**, and its Frappe app name is **`dinext_kanban`**.
 
-### Установка на новый сайт
+### Installing on a new site
 
-Выполняйте шаги **строго в этом порядке** из корня bench (`<bench-root>`):
+Run these steps **strictly in this order** from the bench root (`<bench-root>`):
 
-**1. Загрузить приложение**
+**1. Download the application**
 
 ```bash
 cd <bench-root>
@@ -66,40 +68,40 @@ bench get-app dinext_kanban \
   --branch <branch-name>
 ```
 
-Параметр `--branch` опционален (если не указан — default branch репозитория). Если каталог `apps/dinext_kanban` уже существует и нужно заменить исходники, используйте `--overwrite` или вручную переключите remote и checkout нужной ветки в `apps/dinext_kanban`.
+The `--branch` parameter is optional (if omitted, the repository's default branch is used). If `apps/dinext_kanban` already exists and you need to replace its source, use `--overwrite` or manually change the remote and check out the required branch in `apps/dinext_kanban`.
 
-**2. Установить frontend-зависимости**
+**2. Install frontend dependencies**
 
 ```bash
 cd apps/dinext_kanban
 yarn install --frozen-lockfile
 ```
 
-**3. Установить приложение на сайт**
+**3. Install the application on the site**
 
 ```bash
 cd <bench-root>
 bench --site <site-name> install-app dinext_kanban
 ```
 
-**4. Собрать frontend**
+**4. Build the frontend**
 
-Frappe Desk отдаёт **хешированные** bundles из `dinext_kanban/public/dist/` через `sites/assets/assets.json`. Одной сборки Vite недостаточно: нужны copy в `public/` и `bench build`.
+Frappe Desk serves **hashed** bundles from `dinext_kanban/public/dist/` through `sites/assets/assets.json`. Vite build alone is insufficient: copying to `public/` and running `bench build` are required.
 
-Команда workspace уже выполняет полный цикл (`vite build` → copy в `dinext_kanban/public/` → `bench build --app dinext_kanban`):
+The workspace command already performs the full cycle (`vite build` → copy to `dinext_kanban/public/` → `bench build --app dinext_kanban`):
 
 ```bash
 cd apps/dinext_kanban
 yarn workspace dinext_kanban build
 ```
 
-Отдельный `bench build --app dinext_kanban` нужен только если собирали Vite/copy без этого скрипта. Альтернатива шагу `bench build` — Frappe esbuild напрямую:
+A separate `bench build --app dinext_kanban` is required only if you ran Vite/copy without this script. An alternative to the `bench build` step is invoking Frappe esbuild directly:
 
 ```bash
 cd apps/frappe && yarn run production --apps dinext_kanban
 ```
 
-**5. Применить изменения на сайте**
+**5. Apply site changes**
 
 ```bash
 cd <bench-root>
@@ -108,32 +110,32 @@ bench --site <site-name> clear-cache
 bench restart
 ```
 
-`migrate` подтягивает переводы из `dinext_kanban/translations/`. `bench restart` нужен на production/staging bench с supervisor.
+`migrate` imports translations from `dinext_kanban/translations/`. `bench restart` is required on a production/staging bench with supervisor.
 
-После установки приложения новый Kanban активен для всех пользователей (отдельный `set-config` не нужен).
+After installation, the new Kanban is active for all users (no separate `set-config` is required).
 
-**6. Проверка в браузере**
+**6. Verify in the browser**
 
-Откройте Kanban Board и выполните жёсткое обновление страницы (`Ctrl+Shift+R`), чтобы подтянуть новый bundle.
+Open a Kanban Board and hard-refresh the page (`Ctrl+Shift+R`) to load the new bundle.
 
-#### Краткий чеклист (новый сайт)
+#### Quick checklist (new site)
 
 ```bash
-# 1–3: загрузка и install-app
+# 1–3: download and install-app
 bench get-app dinext_kanban https://github.com/Dinext-pro/dinext_kanban.git --branch <branch-name>
 cd apps/dinext_kanban && yarn install --frozen-lockfile && cd ../..
 bench --site <site-name> install-app dinext_kanban
 
-# 4–5: сборка assets (vite + copy + bench build) и применение
+# 4–5: build assets (vite + copy + bench build) and apply changes
 cd apps/dinext_kanban && yarn workspace dinext_kanban build && cd ../..
 bench --site <site-name> migrate
 bench --site <site-name> clear-cache
 bench restart
 ```
 
-### Обновление на существующем сайте
+### Updating an existing site
 
-Если `dinext_kanban` уже установлен, **`install-app` повторно не нужен** (пока нет новых DocType/patches). Достаточно обновить исходники, пересобрать assets и применить на сайте:
+If `dinext_kanban` is already installed, **do not run `install-app` again** (unless there are new DocTypes/patches). Update the source, rebuild assets, and apply changes to the site:
 
 ```bash
 cd apps/dinext_kanban
@@ -148,20 +150,20 @@ bench --site <site-name> clear-cache
 bench restart
 ```
 
-`yarn workspace dinext_kanban build` уже включает `bench build --app dinext_kanban`. `bench restart` **не заменяет** сборку assets — без неё Desk продолжит отдавать старые hashed bundles.
+`yarn workspace dinext_kanban build` already includes `bench build --app dinext_kanban`. `bench restart` **does not replace** an asset build — without it, Desk continues serving old hashed bundles.
 
-### Если `bench` падает с `ImportError: _check_nested_chain`
+### If `bench` fails with `ImportError: _check_nested_chain`
 
-Конфликт версий `frappe-bench` и `click`. Обновите bench CLI:
+There is a version conflict between `frappe-bench` and `click`. Update the bench CLI:
 
 ```bash
 pip3 install --user --upgrade 'frappe-bench>=5.31'
 ```
 
-Пока `bench` недоступен, можно использовать обходные команды из корня bench:
+While `bench` is unavailable, you can use these workaround commands from the bench root:
 
 ```bash
-# Очистка кэша сайта
+# Clear the site cache
 env/bin/python -c "
 import os, sys
 sys.path.insert(0, 'apps/frappe')
@@ -173,336 +175,336 @@ frappe.clear_cache()
 print('cache cleared')
 "
 
-# Сборка assets без CLI bench (vite + copy, затем Frappe esbuild)
+# Build assets without the bench CLI (vite + copy, then Frappe esbuild)
 cd apps/dinext_kanban && yarn vite build && yarn copy-js
 cd ../frappe && yarn run production --apps dinext_kanban
 ```
 
-## 🛠️ Использование
+## 🛠️ Usage
 
-1. Создайте или откройте стандартный `Kanban Board` в Frappe.
-2. Выберите целевой DocType и поле типа `Select`, значения которого станут колонками.
-3. Добавьте поля, которые должны отображаться на карточке.
-4. При необходимости задайте `Highlighted Field` и таблицу цветов для его значений.
-5. Для расцветки карточек добавьте в целевой DocType поле **`color`** с типом **`Color`** и заполните его у записей (hex, например `#FF5733`). Поле подтягивается автоматически и не отображается в теле карточки.
-6. Чтобы показывать метки на карточках, включите **Show Tags** / **Показывать теги** на форме Kanban Board (после `show_labels`).
-7. Чтобы показывать ряд ссылка / like / комментарии / файлы, включите **Extra Info** / **Доп. информация** на форме Kanban Board.
-8. Чтобы сгруппировать карточки по дорожкам (swimlane), задайте **Swimlane Field** / **Поле swimlane** на форме Kanban Board или выберите группировку в выпадающем списке **Group By** / **Группировать** на панели инструментов Kanban (при праве записи на `Kanban Board`). Для группировки по срокам выберите **Deadlines** / **Сроки** (нужны настройки раздела **Deadline Tracking** / **Отслеживание сроков** на форме доски).
-9. При необходимости настройте **Deadline Field** / **Поле срока**, **Attention Working Days** / **Рабочих дней для внимания** и **Track Deadlines In Columns** / **Отслеживать сроки в колонках** (см. [Отслеживание сроков](#отслеживание-сроков-deadlines)). Для Task по умолчанию подставляются `exp_end_date`, 3 рабочих дня и колонки Open / Working / Overdue.
-10. Откройте Kanban-представление списка.
-11. Для tree DocType при необходимости включите **Show child tasks** / **Показывать дочерние задачи** на панели инструментов (рядом с **Минимизировать**), чтобы снова показывать дочерние записи, скрытые по умолчанию.
+1. Create or open a standard `Kanban Board` in Frappe.
+2. Select the target DocType and a `Select` field whose values will become columns.
+3. Add the fields to display on cards.
+4. If needed, set `Highlighted Field` and the color table for its values.
+5. To color cards, add a **`color`** field of type **`Color`** to the target DocType and populate it on records (hex, for example `#FF5733`). The field is loaded automatically and is not displayed in the card body.
+6. To display tags on cards, enable **Show Tags** on the Kanban Board form (after `show_labels`).
+7. To display the link / like / comments / files row, enable **Extra Info** on the Kanban Board form.
+8. To group cards into swimlanes, set **Swimlane Field** on the Kanban Board form or choose a grouping in the **Group By** dropdown on the Kanban toolbar (requires write permission on `Kanban Board`). For deadline grouping, select **Deadlines** (requires **Deadline Tracking** settings on the board form).
+9. If needed, configure **Deadline Field**, **Attention Working Days**, and **Track Deadlines In Columns** (see [Deadline tracking](#deadline-tracking-deadlines)). Task defaults are `exp_end_date`, 3 working days, and the Open / Working / Overdue columns.
+10. Open the list's Kanban view.
+11. For tree DocTypes, enable **Show child tasks** on the toolbar (next to **Minimize**) if needed to display child records hidden by default.
 
-Двойной клик по badge с количеством записей в заголовке колонки открывает ListView того же DocType с фильтром по значению колонки (например, `status = Open`) и текущими фильтрами доски из filter bar. Одиночный клик по счётчику ничего не делает. Если дочерние на доске скрыты, List дополнительно исключает их через `name not in` (см. [Show child tasks](#show-child-tasks--дочерние-задачи)).
+Double-clicking the record-count badge in a column header opens ListView for the same DocType, with the column value filter (for example, `status = Open`) and the board's current filter-bar filters. A single click on the counter does nothing. If children are hidden on the board, List additionally excludes them through `name not in` (see [Show child tasks](#show-child-tasks--child-records)).
 
-Одинарный клик по значению поля на карточке (заголовок, поля из `Fields`, Highlighted Field) загружает полный документ через `frappe.model.with_doc`, проверяет права/workflow и при возможности редактирования открывает штатный UI-контрол Frappe того же визуального размера, что и read-отображение. Сохранение выполняется через `frappe.db.set_value` (полный `doc.save()` на сервере). Для редактируемых Link одинарный клик не ведёт в форму (ссылка нейтрализуется). Двойной клик по поверхности карточки (поля, highlight, chrome) открывает форму документа карточки; двойной клик по Link — форму связанной записи; теги, кнопка Move и назначения форму карточки не открывают.
+A single click on a card field value (title, `Fields` fields, Highlighted Field) loads the full document through `frappe.model.with_doc`, checks permissions/workflow, and, if editing is allowed, opens the standard Frappe UI control at the same visual size as the read display. Saving uses `frappe.db.set_value` (a full server-side `doc.save()`). A single click on editable Links does not open a form (the link is neutralized). Double-clicking the card surface (fields, highlight, chrome) opens the card document's form; double-clicking a Link opens the linked record's form; tags, the Move button, and assignments do not open the card form.
 
-Для полей `Link` / `Dynamic Link` на карточке подтягиваются title-подписи связанных записей (`hydrateLinkTitles`). Поля `Percent` отображаются progress bar (значение clamp 0–100), а не сырым числом.
+For `Link` / `Dynamic Link` fields on cards, titles of linked records are loaded (`hydrateLinkTitles`). `Percent` fields appear as progress bars (values clamped to 0–100), rather than raw numbers.
 
-Карточку можно переместить drag-and-drop или через действие `Move to`. Перед перемещением клиент запрашивает `dinext_kanban.api.get_move_options` и локально проверяет обязательные поля (`reqd`, `mandatory_depends_on`) для preview целевого состояния. Запрещённые назначения не показываются в меню и не принимают drop. При нескольких Workflow actions для одной колонки открывается диалог выбора action.
+Cards can be moved by drag-and-drop or the `Move to` action. Before a move, the client requests `dinext_kanban.api.get_move_options` and locally checks mandatory fields (`reqd`, `mandatory_depends_on`) for a preview of the target state. Prohibited destinations are omitted from the menu and do not accept drops. If several Workflow actions lead to one column, an action selection dialog opens.
 
-На **обычной** доске (без swimlane) сохранение выполняется через `dinext_kanban.api.move_card` с `board_name`, именем документа, целевой колонкой, `expected_modified` и опциональным `workflow_action`. Сервер повторяет проверки Workflow-прав и mandatory rules, затем либо применяет `apply_workflow`, либо вызывает полный `doc.save()` с lifecycle hooks целевого DocType.
+On a **regular** board (without swimlanes), saving uses `dinext_kanban.api.move_card` with `board_name`, document name, destination column, `expected_modified`, and optional `workflow_action`. The server repeats Workflow permission and mandatory-rule checks, then either applies `apply_workflow` or calls a full `doc.save()` with the target DocType's lifecycle hooks.
 
-После успешного перемещения сжатая колонка (и при необходимости дорожка) раскрывается, список прокручивается к карточке, краткая подсветка подтверждает успех; при ошибке позиция откатывается с анимацией. Поведение анимаций учитывает `prefers-reduced-motion`.
+After a successful move, a collapsed column (and lane, if necessary) expands, the list scrolls to the card, and a brief highlight confirms success; on error, the position rolls back with animation. Animation behavior respects `prefers-reduced-motion`.
 
-### Создание карточек
+### Creating cards
 
-В заголовке колонки (иконка `+`) и в футере (**Add {DocType}**) доступно создание записи в целевой колонке, если политика создания это разрешает.
+Record creation in the destination column is available in the column header (`+` icon) and footer (**Add {DocType}**) if the creation policy permits it.
 
-При загрузке доски клиент запрашивает `dinext_kanban.api.get_create_options` (политика в `dinext_kanban.move_policy`). Для каждой колонки сервер возвращает:
+When loading the board, the client requests `dinext_kanban.api.get_create_options` (policy in `dinext_kanban.move_policy`). For each column, the server returns:
 
-| `form_mode` | Поведение |
+| `form_mode` | Behavior |
 |-------------|-----------|
-| `quick_entry` | `frappe.ui.form.make_quick_entry` с prefill статуса колонки |
-| `full_form` | полная форма нового документа (`route_options` + `frappe.model.get_new_doc`) |
-| `blocked` | кнопка скрыта или действие блокируется с сообщением (нет `create`, Workflow, невалидная колонка) |
+| `quick_entry` | `frappe.ui.form.make_quick_entry` with the column status prefilled |
+| `full_form` | Full new-document form (`route_options` + `frappe.model.get_new_doc`) |
+| `blocked` | Button hidden or action blocked with a message (no `create` permission, Workflow, invalid column) |
 
-Режим выбирается по правилам Frappe Quick Entry (флаг DocType, число обязательных полей, отсутствие обязательных Table) и списку недостающих mandatory для preview документа в целевой колонке.
+The mode is selected using Frappe Quick Entry rules (DocType flag, number of mandatory fields, absence of mandatory Tables) and the list of missing mandatory fields for the preview document in the destination column.
 
-В режиме **Swimlane** при создании дополнительно подставляются значения дорожки (`swimlaneCreate.buildSwimlaneCreateDefaults`): поле `Select` / `Link` / `User`, child-строки `Table MultiSelect`, либо после сохранения — `assign_to.add` для дорожки **Assigned To**.
+In **Swimlane** mode, creation additionally prefills lane values (`swimlaneCreate.buildSwimlaneCreateDefaults`): a `Select` / `Link` / `User` field, `Table MultiSelect` child rows, or, after saving, `assign_to.add` for the **Assigned To** lane.
 
-После успешного сохранения карточка появляется в колонке (или ячейке swimlane), **удерживается сверху** списка недавно созданных и прокручивается в зону видимости (scroll-reveal).
+After a successful save, the card appears in the column (or swimlane cell), is **pinned to the top** of the recently created list, and scrolls into view (scroll-reveal).
 
-### Show child tasks / дочерние задачи
+### Show child tasks / child records
 
-Для DocType с `is_tree` и `nsm_parent_field` (у Task — `parent_task`) на панели инструментов Desk появляется чекбокс **Show child tasks** / **Показывать дочерние задачи** (между **Минимизировать** и **Group By**). Состояние хранится в `localStorage` (`dinext_kanban:show_child_tasks:{board_name}`), по умолчанию выключено.
+For DocTypes with `is_tree` and `nsm_parent_field` (`parent_task` for Task), the Desk toolbar displays the **Show child tasks** checkbox (between **Minimize** and **Group By**). State is stored in `localStorage` (`dinext_kanban:show_child_tasks:{board_name}`) and defaults to off.
 
-#### Семантика
+#### Semantics
 
-Когда чекбокс **выключен**, с доски скрываются карточки, у которых **прямой** родитель (значение `nsm_parent_field`) тоже входит в membership доски: текущие фильтры + активные колонки (+ `or_filters`). Корневые записи и «сироты» (родитель вне доски) остаются видимыми. Скрытие на самой доске не отменяет [child panel](#child-panel--область-дочерних-данных): дочерние записи по-прежнему можно открыть с карточки родителя в отдельной области.
+When the checkbox is **off**, the board hides cards whose **direct** parent (the `nsm_parent_field` value) also belongs to the board's membership: current filters + active columns (+ `or_filters`). Root records and “orphans” (parent outside the board) remain visible. Hiding on the main board does not disable the [child panel](#child-panel--child-data-area): child records can still be opened from the parent card in a separate area.
 
-Переключение чекбокса вызывает `setDinextKanbanShowChildTasks` → `refreshBoard`. После create/move membership и счётчики пересчитываются (`hydrateBoardDocumentNames`, `fetchColumnTotals` / cell totals).
+Toggling the checkbox calls `setDinextKanbanShowChildTasks` → `refreshBoard`. Membership and counters are recalculated after create/move (`hydrateBoardDocumentNames`, `fetchColumnTotals` / cell totals).
 
-#### Загрузка и счётчики
+#### Loading and counters
 
-Клиент **не** передаёт длинные списки имён в постраничные запросы. Exclude выполняется на сервере:
+The client does **not** send long name lists in paginated requests. Exclusion happens on the server:
 
-| Путь | API | Поведение |
+| Path | API | Behavior |
 |------|-----|-----------|
-| Плоская доска | `dinext_kanban.api.get_column_page` | candidate names по колонке → exclude on-board children → `start` / `page_length` |
-| Swimlane | `get_swimlane_column_page` / `get_swimlane_lane_page` | то же с флагом `hide_board_children` |
-| Счётчики | `get_column_totals` / `get_cell_totals` | `hide_board_children=True` при скрытии детей |
-| Membership | `get_board_document_names` / `get_hidden_board_child_names` | с теми же `filters` / `or_filters` / колонками |
+| Flat board | `dinext_kanban.api.get_column_page` | Candidate names by column → exclude on-board children → `start` / `page_length` |
+| Swimlane | `get_swimlane_column_page` / `get_swimlane_lane_page` | The same, with the `hide_board_children` flag |
+| Counters | `get_column_totals` / `get_cell_totals` | `hide_board_children=True` when hiding children |
+| Membership | `get_board_document_names` / `get_hidden_board_child_names` | With the same `filters` / `or_filters` / columns |
 
-Первая страница из Frappe ListView может дополнительно фильтроваться на клиенте (`filterBoardChildCards`); дальнейшая пагинация и top-up идут только через hide-aware page API, поэтому `offset` / `hasMore` согласованы с отфильтрованными totals (без «недогруза» колонки).
+The first page from Frappe ListView may also be filtered on the client (`filterBoardChildCards`); subsequent pagination and top-ups use only the hide-aware page API, so `offset` / `hasMore` stay consistent with filtered totals (without underfilled columns).
 
-#### ListView по двойному клику на счётчик
+#### ListView by double-clicking the counter
 
-При скрытых детях в `route_options` добавляется `name: ['not in', hiddenBoardChildNames]`, если число скрытых имён ≤ `LIST_HIDDEN_CHILD_NAME_LIMIT` (500). Если имён больше, гигантский `NOT IN` **не** передаётся: открывается List только с фильтром колонки и search params доски, показывается предупреждение (`frappe.show_alert`), что список может включать дочерние задачи, скрытые на канбане. Пагинация самой доски при этом остаётся точной за счёт серверного exclude.
+When children are hidden, `name: ['not in', hiddenBoardChildNames]` is added to `route_options` if the hidden-name count is ≤ `LIST_HIDDEN_CHILD_NAME_LIMIT` (500). Above that limit, a huge `NOT IN` is **not** sent: List opens with only the column filter and board search parameters, and a warning (`frappe.show_alert`) explains that the list may include child tasks hidden on Kanban. Board pagination remains accurate through server-side exclusion.
 
-### Child panel / область дочерних данных
+### Child panel / child data area
 
-Для tree DocType (`is_tree` + `nsm_parent_field`, в конфиге доски — `parent_field`) на карточке с ненулевым числом прямых детей показывается badge (**Child records**): иконка списка и счётчик (`_child_count` через `dinext_kanban.api.get_child_counts`).
+For tree DocTypes (`is_tree` + `nsm_parent_field`; `parent_field` in the board configuration), cards with a nonzero direct-child count display a badge (**Child records**): a list icon and counter (`_child_count` through `dinext_kanban.api.get_child_counts`).
 
-#### Открытие и вложенность
+#### Opening and nesting
 
-- Клик по badge открывает **child panel** — мини-доску с теми же колонками, что у основной, отфильтрованную по родителю (`toggleChildPanel` / `OPEN_CHILD_PANEL`).
-- Панели всех уровней хостятся в portal на корне доски (flat и swimlane); под карточкой-хостом — spacer по высоте панели.
-- Открытие/закрытие анимируется (~200 ms): хост схлопывается в ancestor, spacer растёт/сжимается, панель появляется/исчезает (opacity + clip); затем плавный pin-scroll хоста к верху списка (~300 ms, ручной `scrollTop` tween — native smooth срывается remount’ами VirtualList). `prefers-reduced-motion` отключает анимации.
-- Можно открыть вложенную панель с карточки внутри уже открытой (один активный хост на уровень depth); deepest panel заполняет высоту от низа хоста до низа доски (`child-panel--viewport-fill`), внешний вертикальный скролл доски блокируется.
-- Колонки панели выровнены с колонками доски; у треков — inset tint с учётом depth и swimlane.
+- Clicking the badge opens a **child panel** — a mini-board with the same columns as the main board, filtered by parent (`toggleChildPanel` / `OPEN_CHILD_PANEL`).
+- Panels at all levels are hosted in a portal at the board root (flat and swimlane); a spacer beneath the host card matches the panel height.
+- Opening/closing is animated (~200 ms): the host collapses into an ancestor, the spacer grows/shrinks, and the panel appears/disappears (opacity + clip); then a smooth pin-scroll moves the host to the top of the list (~300 ms, manual `scrollTop` tween — VirtualList remounts interrupt native smooth scrolling). `prefers-reduced-motion` disables animations.
+- A card inside an open panel can open a nested panel (one active host per depth level); the deepest panel fills the height from the host's bottom to the board's bottom (`child-panel--viewport-fill`), and the board's outer vertical scrolling is locked.
+- Panel columns align with board columns; tracks have an inset tint based on depth and swimlane.
 
-#### Хост и закрытие
+#### Host and closing
 
-Пока панель открыта, карточка-хост в режиме **ancestor**:
+While a panel is open, the host card is in **ancestor** mode:
 
-- компактная одна строка: заголовок + badge (вместо drag-handle); meta/actions скрыты;
-- badge показывает иконку collapse; нижние углы без скругления, без `margin-bottom` и нижнего border;
-- вертикальный градиент фона к цвету обводки панели (solid до ~90% высоты, fade у низа; для nested host — более плотная обводка);
-- клик по телу хоста или по badge закрывает панели с depth этой карточки и глубже.
+- a compact single line: title + badge (instead of a drag handle); metadata/actions are hidden;
+- the badge shows a collapse icon; bottom corners are square, with no `margin-bottom` or bottom border;
+- a vertical background gradient toward the panel border color (solid for ~90% of the height, fading at the bottom; a nested host has a stronger border);
+- clicking the host body or badge closes panels at this card's depth and deeper.
 
-Остальные карточки того же уровня (не хосты) — **inert** (приглушены). Клик по inert-карточке закрывает панели с её `childDepth` (и глубже): board-level inert → с depth 0; sibling во внутренней панели → с depth этой панели. Карточки в deepest panel остаются **active** (обычное взаимодействие).
+Other cards at the same level (non-hosts) are **inert** (dimmed). Clicking an inert card closes panels at its `childDepth` and deeper: board-level inert → from depth 0; sibling within an inner panel → from that panel's depth. Cards in the deepest panel remain **active** (normal interaction).
 
-Двойной клик по форме на ancestor/inert не открывает документ (`isPanelInteractionActive`).
+Double-click form navigation on ancestor/inert cards does not open the document (`isPanelInteractionActive`).
 
-#### Связь с Show child tasks
+#### Relationship with Show child tasks
 
-Child panel работает независимо от чекбокса **Show child tasks**: даже когда дети скрыты на основной доске, badge и панель позволяют просматривать/вести дочерние записи в overlay. Membership/hide API доски и загрузка колонок панели — разные пути.
+The Child panel works independently of **Show child tasks**: even when children are hidden on the main board, the badge and panel let users view/manage child records in an overlay. Board membership/hide APIs and panel column loading use separate paths.
 
 ### Swimlane (Group By)
 
-Swimlane разбивает доску на горизонтальные дорожки (строки) при сохранении тех же статусных колонок. Настройка хранится в Custom Field `Kanban Board.custom_swimlane_field` (**Swimlane Field** / **Поле swimlane**).
+Swimlane divides the board into horizontal lanes (rows) while retaining the same status columns. The setting is stored in the Custom Field `Kanban Board.custom_swimlane_field` (**Swimlane Field**).
 
-#### Включение
+#### Enabling
 
-- На форме `Kanban Board` выберите значение Autocomplete **Swimlane Field**, либо
-- в панели инструментов Desk (рядом с **Минимизировать**, при праве **write** на `Kanban Board`) откройте **Group By** / **Группировать** и выберите поле или **No Grouping** / **Без группировки**.
+- Select an Autocomplete value for **Swimlane Field** on the `Kanban Board` form, or
+- open **Group By** on the Desk toolbar (next to **Minimize**, requires **write** permission on `Kanban Board`) and choose a field or **No Grouping**.
 
-Сохранение идёт через `dinext_kanban.api.set_swimlane_field`; список допустимых полей — `dinext_kanban.api.get_swimlane_field_options`.
+Saving uses `dinext_kanban.api.set_swimlane_field`; available fields come from `dinext_kanban.api.get_swimlane_field_options`.
 
-#### Режимы группировки
+#### Grouping modes
 
-| Значение `custom_swimlane_field` | Режим | Дорожки |
+| `custom_swimlane_field` value | Mode | Lanes |
 |----------------------------------|-------|---------|
-| пусто | `off` | обычная доска без swimlane |
-| `__assign` (**Assigned To** / **Исполнитель**) | `assign` | по **Open** ToDo-назначениям (как `_assign`; Closed/Cancelled и DocShare не участвуют) + дорожка **Unassigned** / **Без назначения** |
-| `__deadlines` (**Deadlines** / **Сроки**) | `deadlines` | **Overdue** / **Просрочено**, **Deadline Approaching** / **Срок приближается**, **On Track** / **В плане**, **No Deadline** / **Без срока** (см. [Отслеживание сроков](#отслеживание-сроков-deadlines)) |
-| поле `Select`, `Link` или `User` | `field` | по значениям поля (+ **Unassigned** / **Без назначения** для пустых) |
-| поле `Table MultiSelect` | `multi` | по значениям child Link; карточка с несколькими значениями может отображаться в нескольких дорожках (+ **Unassigned** / **Без назначения**) |
+| Empty | `off` | Regular board without swimlanes |
+| `__assign` (**Assigned To**) | `assign` | By **Open** ToDo assignments (like `_assign`; excludes Closed/Cancelled and DocShare) + an **Unassigned** lane |
+| `__deadlines` (**Deadlines**) | `deadlines` | **Overdue**, **Deadline Approaching**, **On Track**, **No Deadline** (see [Deadline tracking](#deadline-tracking-deadlines)) |
+| A `Select`, `Link`, or `User` field | `field` | By field values (+ **Unassigned** for empty values) |
+| A `Table MultiSelect` field | `multi` | By child Link values; a card with multiple values may appear in several lanes (+ **Unassigned**) |
 
-Для `Select` дорожки строятся по options поля (с учётом переводов DocType). Для `Link` / `User` / assign / multi — по фактически встречающимся значениям среди записей, попадающих под текущие фильтры доски; подписи Link используют title field связанного DocType, User — полное имя. Режим `deadlines` доступен в **Group By** после **Assigned To**; пункт появляется, когда на доске задано **Поле срока**.
+For `Select`, lanes come from the field's options (with DocType translations). For `Link` / `User` / assign / multi, they come from values actually present in records matching current board filters; Link labels use the linked DocType's title field, and User labels use full names. The `deadlines` mode is available in **Group By** after **Assigned To**; the option appears when **Deadline Field** is set on the board.
 
-#### Макет и навигация
+#### Layout and navigation
 
-- Один общий скроллер по горизонтали и вертикали (`kanban--swimlanes`); колонки выровнены по сетке во всех дорожках.
-- Sticky-ряд заголовков колонок сверху и sticky-chrome каждой дорожки (название, счётчик, для assign — аватар).
-- Дорожки сворачиваются/разворачиваются кликом по chrome; раскрытые ключи хранятся в `localStorage` (`dinext_kanban:expanded_lanes:{board_name}`).
-- При перетаскивании карточки над свёрнутой дорожкой она автоматически раскрывается после задержки (~400 ms), аналогично auto-expand сжатых колонок.
-- Дорожки с карточками (по счётчикам ячеек) поднимаются выше пустых (`sortLanesByOccupancy`).
-- Сжатие, ресайз и скрытие колонок работают и в swimlane: сжатая колонка занимает узкий трек во всех дорожках; **Добавить колонку** остаётся в sticky-заголовке.
+- A shared horizontal and vertical scroller (`kanban--swimlanes`); columns align to the grid across all lanes.
+- A sticky column header row at the top and sticky chrome for each lane (name, counter, and avatar for assign).
+- Lanes collapse/expand by clicking their chrome; expanded keys are stored in `localStorage` (`dinext_kanban:expanded_lanes:{board_name}`).
+- When dragging a card over a collapsed lane, it automatically expands after a delay (~400 ms), like collapsed-column auto-expand.
+- Lanes containing cards (according to cell counts) sort above empty lanes (`sortLanesByOccupancy`).
+- Column collapsing, resizing, and hiding also work in swimlane mode: a collapsed column occupies a narrow track across all lanes; **Add column** stays in the sticky header.
 
-#### Загрузка данных
+#### Data loading
 
-В отличие от классической доски, swimlane не грузит все колонки целиком:
+Unlike the classic board, swimlane mode does not load every column in full:
 
-1. `get_swimlane_lanes` — список дорожек;
-2. `get_cell_totals` — счётчики `{lane → {column → count}}` с учётом фильтров и опционально `hide_board_children`;
-3. карточки ячеек подгружаются лениво (`get_swimlane_lane_page` / `get_swimlane_column_page`, с тем же флагом) при раскрытии и видимости дорожки, с дозагрузкой при прокрутке ячейки.
+1. `get_swimlane_lanes` — the lane list;
+2. `get_cell_totals` — `{lane → {column → count}}` counters, accounting for filters and optionally `hide_board_children`;
+3. cell cards load lazily (`get_swimlane_lane_page` / `get_swimlane_column_page`, with the same flag) when a lane is expanded and visible, with further loading on cell scroll.
 
-Высоты ячеек в строке выравниваются (stick-room / `padding-bottom` на корне Sortable), чтобы пустая область соседней колонки после кнопки **Добавить** оставалась drop-target при разном числе карточек.
+Cell heights within a row are aligned (stick-room / `padding-bottom` on the Sortable root), so the empty area of an adjacent column after the **Add** button remains a drop target when card counts differ.
 
-#### Перемещение карточек
+#### Moving cards
 
-Drag-and-drop и меню **Move to** работают между колонками и/или дорожками. Сохранение при смене колонки и/или дорожки — `dinext_kanban.api.move_card_to_cell` с `to_column`, опциональными `from_lane` / `to_lane`, `expected_modified` и `workflow_action` (не `move_card`):
+Drag-and-drop and the **Move to** menu work between columns and/or lanes. Changes to a column and/or lane are saved through `dinext_kanban.api.move_card_to_cell` with `to_column`, optional `from_lane` / `to_lane`, `expected_modified`, and `workflow_action` (not `move_card`):
 
-- **колонка** — как обычно: Workflow / `doc.save()`, обязательные поля, optimistic update и откат;
-- **дорожка `field`** — запись значения swimlane-поля (пустое → Unassigned);
-- **дорожка `assign`** — Assign To / снятие назначения через Desk API (`assign_to.add` / `remove`); перенос в Unassigned снимает всех assignees;
-- **дорожка `multi`** — обновление child-строк Table MultiSelect (добавление целевого значения, снятие исходного при смене дорожки; Unassigned очищает поле);
-- **дорожка `deadlines`** — смена дорожки **запрещена** (сервер: `Deadline swimlanes cannot be changed by dragging.`); перемещение **между колонками** в той же дорожке остаётся доступным.
+- **column** — as usual: Workflow / `doc.save()`, mandatory fields, optimistic update, and rollback;
+- **`field` lane** — writes the swimlane field value (empty → Unassigned);
+- **`assign` lane** — Assign To / unassignment through the Desk API (`assign_to.add` / `remove`); moving to Unassigned removes all assignees;
+- **`multi` lane** — updates Table MultiSelect child rows (adds the destination value, removes the source when changing lanes; Unassigned clears the field);
+- **`deadlines` lane** — changing lanes is **prohibited** (server: `Deadline swimlanes cannot be changed by dragging.`); movement **between columns** within the same lane remains available.
 
-Смена дорожки запрещена, если режим `deadlines`, нет `write` на DocType, swimlane-поле read-only / без права на поле, или Workflow state не разрешает правку. Фронтенд заранее скрывает запрещённые цели и показывает overlay на ячейках, куда drop недоступен. После успеха — тот же scroll-reveal и подсветка, что и на обычной доске.
+Changing lanes is prohibited in `deadlines` mode, without DocType `write` permission, when the swimlane field is read-only / lacks field permission, or when the Workflow state disallows editing. The frontend hides prohibited targets in advance and overlays cells that cannot accept drops. Success uses the same scroll-reveal and highlighting as a regular board.
 
-### Отслеживание сроков (Deadlines)
+### Deadline tracking (Deadlines)
 
-Настройки хранятся в Custom Fields на `Kanban Board` (секция **Deadline Tracking** / **Отслеживание сроков**, fixture [`kanban_board.json`](dinext_kanban/dinext_kanban/custom/kanban_board.json)). Логика — [`dinext_kanban/deadline.py`](dinext_kanban/deadline.py) и клиент [`frontend/src/utils/deadline.js`](frontend/src/utils/deadline.js).
+Settings are stored in Custom Fields on `Kanban Board` (the **Deadline Tracking** section, fixture [`kanban_board.json`](dinext_kanban/dinext_kanban/custom/kanban_board.json)). Logic: [`dinext_kanban/deadline.py`](dinext_kanban/deadline.py) and client [`frontend/src/utils/deadline.js`](frontend/src/utils/deadline.js).
 
-#### Настройка на форме доски
+#### Configuring the board form
 
-| Поле | Тип | Назначение |
+| Field | Type | Purpose |
 |------|-----|------------|
-| **Deadline Field** / **Поле срока** (`custom_deadline_field`) | Autocomplete | Date / Datetime целевого DocType; в UI — переведённый label поля, в БД — `fieldname` (как у Swimlane Field) |
-| **Attention Working Days** / **Рабочих дней для внимания** (`custom_deadline_attention_days`) | Int | Сколько рабочих дней до срока считать «приближается» (по умолчанию 3) |
-| **Track Deadlines In Columns** / **Отслеживать сроки в колонках** | MultiCheck → Table MultiSelect | Значения колонок канбана, в которых сроки учитываются для подсветки и дорожек Overdue / Approaching |
+| **Deadline Field** (`custom_deadline_field`) | Autocomplete | Date / Datetime field of the target DocType; translated field label in the UI, `fieldname` in the database (as with Swimlane Field) |
+| **Attention Working Days** (`custom_deadline_attention_days`) | Int | Number of working days before the deadline to classify as “approaching” (default 3) |
+| **Track Deadlines In Columns** | MultiCheck → Table MultiSelect | Kanban column values whose deadlines count for highlighting and Overdue / Approaching lanes |
 
-Child DocType `Kanban Board Deadline Column` хранит выбранные значения через Link на каталог `Kanban Column Value`. Form script [`kanban_highlight.js`](dinext_kanban/public/js/kanban_highlight.js) заполняет опции поля срока и MultiCheck колонок; для Task при пустых настройках подставляет defaults.
+The child DocType `Kanban Board Deadline Column` stores selected values through a Link to the `Kanban Column Value` catalog. The form script [`kanban_highlight.js`](dinext_kanban/public/js/kanban_highlight.js) populates deadline field options and the column MultiCheck; for Task, it supplies defaults when settings are empty.
 
-Без выбранного **Поле срока** трекинг выключен (`deadline_enabled` ложен).
+Tracking is disabled without a selected **Deadline Field** (`deadline_enabled` is false).
 
-#### Классификация
+#### Classification
 
-Рабочие дни считаются с учётом Holiday List: **Project.holiday_list** → **Company.default_holiday_list** проекта/компании по умолчанию; если списка нет — все дни считаются рабочими. Клиент получает карты списков через API holidays для доски.
+Working days account for the Holiday List: **Project.holiday_list** → **Company.default_holiday_list** of the project/default company; without a list, all days count as working days. The client receives list maps through the board's holidays API.
 
-| Bucket | Условие | Дорожка |
+| Bucket | Condition | Lane |
 |--------|---------|---------|
-| `none` | пустая дата в поле срока | **No Deadline** / **Без срока** |
-| `overdue` | дата в прошлом **и** статус колонки в списке трекинга | **Overdue** / **Просрочено** |
-| `attention` | до срока ≤ N рабочих дней **и** колонка в трекинге | **Deadline Approaching** / **Срок приближается** |
-| `planned` | дата дальше окна внимания, **или** дата задана, но колонка **не** в списке трекинга (в т.ч. пустой список колонок) | **On Track** / **В плане** |
+| `none` | Empty date in the deadline field | **No Deadline** |
+| `overdue` | Date in the past **and** column status in the tracking list | **Overdue** |
+| `attention` | ≤ N working days until the deadline **and** column tracked | **Deadline Approaching** |
+| `planned` | Date beyond the attention window, **or** date set but column **not** in the tracking list (including an empty column list) | **On Track** |
 
-#### Подсветка на карточке
+#### Card highlighting
 
-Дата подсвечивается, только если поле срока входит в **Fields** доски, трекинг включён, статус карточки в выбранных колонках и bucket — `overdue` или `attention`:
+The date is highlighted only if the deadline field is included in the board's **Fields**, tracking is enabled, the card status is among the selected columns, and the bucket is `overdue` or `attention`:
 
-- просрочено — красный текст и иконка `#icon-solid-error`;
-- приближается — жёлтый текст и `#icon-solid-warning`.
+- overdue — red text and the `#icon-solid-error` icon;
+- approaching — yellow text and `#icon-solid-warning`.
 
-### Режим «Минимизировать»
+### Minimize mode
 
-В панели инструментов Desk (слева от кнопки **Фильтр**) доступен чекбокс **Минимизировать**. Состояние запоминается отдельно для каждой Kanban Board (`localStorage`). Для tree DocType рядом появляется **Show child tasks** (см. [выше](#show-child-tasks--дочерние-задачи)).
+The **Minimize** checkbox is available on the Desk toolbar (to the left of **Filter**). State is remembered separately for each Kanban Board (`localStorage`). Tree DocTypes also show **Show child tasks** beside it (see [above](#show-child-tasks--child-records)).
 
-Когда режим включён:
+When enabled:
 
-- карточки показываются компактно: видны заголовок со ссылкой, drag-handle, highlight-pill, кнопка Move и assignees; поля из `Fields` доски и метки скрыты;
-- при наведении мыши карточка с небольшой задержкой раскрывается (поля появляются с анимацией), после ухода курсора снова сжимается;
-- если карточку перетаскивают в раскрытом виде, в целевой колонке она остаётся раскрытой и схлопывается только после ухода курсора;
-- при перетаскивании метки карточка под курсором раскрывается с той же задержкой; после drop **источник принудительно схлопывается** (состояние в Vuex, переживает remount виртуального списка), а **успешная цель** остаётся раскрытой через density-hold, пока курсор над ней или до обычного collapse;
-- повторный hover, inline-edit, активный ввод метки (как inline-edit через `activeInlineEdit`) или новый tag-drag с карточки снова разрешают раскрытие и удерживают карточку раскрытой до окончания редактирования;
-- цветовой акцент карточки (`color`) сохраняется и в компактном, и в раскрытом виде.
+- cards are compact: a linked title, drag handle, highlight pill, Move button, and assignees are visible; the board's `Fields` and tags are hidden;
+- hovering expands a card after a brief delay (fields appear with animation); moving the cursor away collapses it again;
+- dragging an expanded card leaves it expanded in the destination column until the cursor moves away;
+- during tag dragging, the card under the cursor expands after the same delay; after drop, the **source is forcibly collapsed** (Vuex state survives virtual-list remounts), while the **successful destination** stays expanded through density-hold while hovered or until normal collapse;
+- hovering again, inline editing, active tag entry (treated as inline editing through `activeInlineEdit`), or starting another tag drag from the card allows expansion again and keeps the card expanded until editing ends;
+- the card's color accent (`color`) remains visible in compact and expanded states.
 
-Чекбокс добавляет `kanban_view.bundle.js` в page-actions Frappe; плотность реализована в Vuex (`densityHoldExpandedCard`, `densityForceCollapsedCards`) и в `KanbanCard` / `tagDragDrop`.
+`kanban_view.bundle.js` adds the checkbox to Frappe page-actions; density is implemented in Vuex (`densityHoldExpandedCard`, `densityForceCollapsedCards`) and in `KanbanCard` / `tagDragDrop`.
 
-### Сжатие колонок
+### Collapsing columns
 
-В меню колонки (иконка «⋯») доступны пункты **Сжать** / **Открыть** (локальное UI-состояние, не путать со **Скрыть**).
+The column menu (“⋯” icon) offers **Collapse** / **Expand** (local UI state, separate from **Hide**).
 
-Когда колонка сжата:
+When a column is collapsed:
 
-- ширина сужается с анимацией; карточки и кнопка «+» скрыты;
-- в заголовке остаются плашка количества и меню; название показывается вертикально;
-- колонку по-прежнему можно переупорядочить перетаскиванием за заголовок;
-- двойной клик по chrome колонки переключает сжатие; двойной клик по счётчику в открытой колонке по-прежнему открывает ListView, в сжатой — только раскрывает колонку;
-- при перетаскивании карточки на сжатую колонку она автоматически раскрывается, если курсор **задержался** над ней (~400 ms); при сквозном проезде без задержки колонка остаётся сжатой;
-- список карточек остаётся drop-target, чтобы принять карточку после раскрытия.
+- its width narrows with animation; cards and the “+” button are hidden;
+- the header retains the count badge and menu; the name is displayed vertically;
+- the column can still be reordered by dragging its header;
+- double-clicking the column chrome toggles collapse; double-clicking the counter in an expanded column still opens ListView, while in a collapsed column it only expands the column;
+- dragging a card over a collapsed column automatically expands it if the cursor **lingers** over it (~400 ms); passing through without a pause leaves it collapsed;
+- the card list remains a drop target so it can accept the card after expansion.
 
-Состояние сжатых колонок запоминается в `localStorage` отдельно для каждой Kanban Board (`dinext_kanban:collapsed_columns:{board_name}`).
+Collapsed-column state is stored in `localStorage` per Kanban Board (`dinext_kanban:collapsed_columns:{board_name}`).
 
-### Ширина колонок
+### Column width
 
-При праве **write** на документ `Kanban Board` у правого края развёрнутой колонки доступен resize-handle:
+Users with **write** permission on the `Kanban Board` document can use the resize handle at the right edge of an expanded column:
 
-- перетаскивание меняет ширину текущей колонки;
-- с зажатым **Shift** (в том числе на Mac) все видимые колонки доски получают ту же абсолютную ширину в пикселях;
-- во время drag ширина ограничивается диапазоном **15–50%** ширины окна (`window.innerWidth`); после сохранения ограничение больше не применяется (в том числе при изменении размера окна или повторном открытии доски);
-- значение сохраняется на уровне child-строки `Kanban Board Column` в Custom Field `custom_column_width` (Int, px, по умолчанию `250`) через `dinext_kanban.api.set_column_widths`;
-- переупорядочивание колонок не сбрасывает ширину: `update_column_order` переопределён в `dinext_kanban`, чтобы копировать `custom_column_width` при пересборке child-строк;
-- у сжатой колонки визуально остаётся `52px`; сохранённая ширина не меняется и снова применяется после раскрытия.
+- dragging changes the current column's width;
+- holding **Shift** (including on Mac) gives all visible board columns the same absolute width in pixels;
+- during dragging, width is limited to **15–50%** of the window width (`window.innerWidth`); after saving, the limit no longer applies (including on window resize or board reopening);
+- the value is saved on the `Kanban Board Column` child row in the Custom Field `custom_column_width` (Int, px, default `250`) through `dinext_kanban.api.set_column_widths`;
+- reordering columns does not reset width: `dinext_kanban` overrides `update_column_order` to copy `custom_column_width` when rebuilding child rows;
+- a collapsed column remains visually `52px` wide; its stored width is unchanged and reapplied on expansion.
 
-**Сжать ≠ изменить ширину:** сжатие — локальный UI-режим; ресайз за край — серверная настройка ширины колонки на доске.
+**Collapsing ≠ resizing:** collapsing is a local UI mode; edge resizing is a server-side board column width setting.
 
-### Скрытие колонок
+### Hiding columns
 
-В меню колонки (иконка «⋯» в заголовке) рядом с выбором цвета и сжатием доступен пункт **Скрыть**, если у пользователя есть право **write** на документ `Kanban Board`.
+The column menu (“⋯” in the header) offers **Hide** alongside color selection and collapsing if the user has **write** permission on the `Kanban Board` document.
 
-- на доске показываются только колонки со статусом `Active` (стандартное поле `Kanban Board Column.status`);
-- «Скрыть» сохраняет колонку как `Archived` через штатный API Frappe `archive_restore_column` и сразу убирает её из видимого перечня;
-- если есть скрытые колонки или значения Select-поля доски, ещё не представленные среди Active-колонок, после последней видимой колонки появляется компактный элемент **Добавить колонку** с выпадающим списком;
-- выбор скрытой колонки восстанавливает её (`archive_restore_column`, `status: Active`) и подгружает карточки;
-- выбор значения, которого ещё нет на доске, добавляет колонку через штатный API Frappe `add_column` и подгружает карточки;
-- альтернативно колонку можно вернуть через форму записи Kanban Board (из диалога Kanban Settings — кнопка **Open Kanban Board** / **Открыть Kanban-доску**): в child-таблице колонок смените Status на `Active`, сохраните и обновите Kanban-представление.
+- the board displays only columns with `Active` status (the standard `Kanban Board Column.status` field);
+- “Hide” saves the column as `Archived` through Frappe's standard `archive_restore_column` API and immediately removes it from the visible list;
+- if hidden columns exist or the board's Select field has values not yet represented by Active columns, a compact **Add column** dropdown appears after the last visible column;
+- selecting a hidden column restores it (`archive_restore_column`, `status: Active`) and loads its cards;
+- selecting a value not yet on the board adds a column through Frappe's standard `add_column` API and loads its cards;
+- alternatively, restore a column through the Kanban Board record form (the **Open Kanban Board** button in the Kanban Settings dialog): change Status to `Active` in the columns child table, save, and refresh the Kanban view.
 
-**Сжать ≠ Скрыть ≠ ширина:** сжатие только сужает колонку в UI и хранится локально; ресайз сохраняет ширину на `Kanban Board Column`; скрытие архивирует колонку на сервере и убирает её с доски.
+**Collapse ≠ Hide ≠ width:** collapsing only narrows the column in the UI and is stored locally; resizing saves the width on `Kanban Board Column`; hiding archives the column on the server and removes it from the board.
 
-### Метки на карточках
+### Tags on cards
 
-На форме `Kanban Board` чекбокс **Show Tags** / **Показывать теги** (`custom_show_tags`) включает блок меток на карточке. Данные берутся из стандартного поля `_user_tags`.
+On the `Kanban Board` form, the **Show Tags** checkbox (`custom_show_tags`) enables the tag block on cards. Data comes from the standard `_user_tags` field.
 
-### Доп. информация на карточках
+### Extra information on cards
 
-На форме `Kanban Board` чекбокс **Extra Info** / **Доп. информация** (`custom_show_extra_info`, по умолчанию выключен) показывает после блока меток правый ряд иконок:
+On the `Kanban Board` form, the **Extra Info** checkbox (`custom_show_extra_info`, off by default) displays a right-aligned icon row after the tag block:
 
-- **ссылка** — копирует полный URL формы документа в буфер (`frappe.utils.copy_to_clipboard`);
-- **like** — переключает like/not-like для текущего пользователя (`frappe.desk.like.toggle_like`);
-- **комментарии** — счётчик `_comment_count`; клик открывает форму документа;
-- **файлы** — счётчик вложений (`dinext_kanban.api.get_attachment_counts`); меню со списком, **+ Загрузить**, preview через `preview_attachment` при наличии приложения иначе открытие файла, удаление через `remove_attach` с правилами Form (`write` / `protect_attached_files`).
+- **link** — copies the document form's full URL to the clipboard (`frappe.utils.copy_to_clipboard`);
+- **like** — toggles like/not-like for the current user (`frappe.desk.like.toggle_like`);
+- **comments** — the `_comment_count` counter; clicking opens the document form;
+- **files** — attachment count (`dinext_kanban.api.get_attachment_counts`); a menu with a list, **+ Upload**, preview through `preview_attachment` if the application is available or file opening otherwise, deletion through `remove_attach` using Form rules (`write` / `protect_attached_files`).
 
-В режиме **Минимизировать** ряд скрывается вместе с полями и метками.
+In **Minimize** mode, the row is hidden along with fields and tags.
 
-Когда метки включены:
+When tags are enabled:
 
-- **без права write** на DocType доски — только просмотр (до трёх цветных pill, как `ListView.get_tags_html`);
-- **с правом write** — интерактивный редактор на базе `frappe.ui.TagEditor` / `frappe.ui.Tags`: удаление через крестик на pill, добавление через иконку `#es-line-tag` с выпадающим списком существующих меток (`get_tags`); сохранение через `frappe.desk.doctype.tag.tag.add_tag` / `remove_tag`;
-- **двойной клик** по pill ставит фильтр доски `_user_tags like <метка>` через `cur_list.filter_area` (предыдущий фильтр по `_user_tags` заменяется; остальные фильтры filter bar сохраняются), после чего список/канбан обновляются штатным refresh;
-- **перетаскивание** метки на другую карточку: левая кнопка мыши — копирование на целевую карточку, правая — перемещение (снятие с исходной и добавление на целевую); drop на ту же карточку или карточку, где метка уже есть, игнорируется;
-- в режиме **Минимизировать** после завершения активного tag-drag (copy, move, cancel, forbidden) источник помечается в store как force-collapsed и сразу отображается компактно; после успешного drop цель получает density-hold и раскрывается, чтобы показать обновлённые метки;
-- активное добавление метки (кнопка add / ввод) участвует в том же lifecycle, что и inline-edit (`activeInlineEdit` / `_user_tags`): карточка не схлопывается, клик вне карточки завершает ввод.
+- **without write permission** on the board's DocType — read-only display (up to three colored pills, as in `ListView.get_tags_html`);
+- **with write permission** — an interactive editor based on `frappe.ui.TagEditor` / `frappe.ui.Tags`: removal through the pill's cross, addition through the `#es-line-tag` icon and a dropdown of existing tags (`get_tags`); saving through `frappe.desk.doctype.tag.tag.add_tag` / `remove_tag`;
+- **double-clicking** a pill sets the board filter `_user_tags like <tag>` through `cur_list.filter_area` (replaces the previous `_user_tags` filter; preserves other filter-bar filters), then refreshes the list/Kanban through the standard refresh;
+- **dragging** a tag onto another card: left mouse button copies it to the destination card, right mouse button moves it (removes from the source and adds to the destination); dropping on the same card or a card that already has the tag is ignored;
+- in **Minimize** mode, after an active tag drag ends (copy, move, cancel, forbidden), the source is marked force-collapsed in the store and immediately appears compact; after a successful drop, the destination receives density-hold and expands to show updated tags;
+- active tag addition (add button / input) follows the same lifecycle as inline editing (`activeInlineEdit` / `_user_tags`): the card does not collapse, and clicking outside it ends input.
 
-Редактирование и перенос меток доступны только при `frappe.model.can_write` на DocType; окончательная проверка прав выполняется серверными API тегов.
+Tag editing and dragging are available only with `frappe.model.can_write` on the DocType; the tag server APIs perform the final permission check.
 
-### Расцветка карточек по полю `color`
+### Card coloring through the `color` field
 
-Dinext Kanban автоматически использует поле **`color`** с fieldtype **`Color`** в DocType, для которого создана доска:
+Dinext Kanban automatically uses the **`color`** field with fieldtype **`Color`** in the DocType for which the board was created:
 
-- значение hex из Frappe Color применяется как **цветная полоска слева** (4px) и **лёгкий tint фона** (10%);
-- поле добавляется в запрос данных доски автоматически, даже если не указано в `Fields` Kanban Board;
-- hex не показывается среди полей карточки;
-- пустое или невалидное значение — обычная карточка без расцветки.
+- the hex value from Frappe Color is applied as a **colored strip on the left** (4px) and a **light background tint** (10%);
+- the field is added automatically to the board data query, even if omitted from the Kanban Board's `Fields`;
+- the hex value is not displayed among card fields;
+- an empty or invalid value produces a regular uncolored card.
 
-Требования:
+Requirements:
 
-- fieldname строго **`color`**, fieldtype строго **`Color`** (поле с другим именем или типом не используется);
-- у записей должно быть заполнено значение цвета;
-- после изменений frontend выполните сборку (`yarn workspace dinext_kanban build`, `clear-cache`) и обновите страницу Kanban (`Ctrl+Shift+R`).
+- fieldname must be exactly **`color`**, and fieldtype exactly **`Color`** (other names or types are not used);
+- records must have a color value set;
+- after frontend changes, build (`yarn workspace dinext_kanban build`, `clear-cache`) and refresh the Kanban page (`Ctrl+Shift+R`).
 
-## 📦 Технологии
+## 📦 Technologies
 
-- Frappe Framework 15 и Python — серверные методы, права и подключение assets.
-- Vue 3 — компоненты доски.
-- Vuex 4 — состояние, загрузка данных и оптимистичные операции.
-- Vite — сборка frontend bundle.
-- `vue-virtual-draglist` — виртуализация списков карточек и DnD карточек.
-- SortableJS — переупорядочивание колонок и drop-зоны ячеек (в том числе в swimlane).
-- DOMPurify — очистка форматированного HTML.
-- Vitest и Vue Test Utils — модульные и компонентные тесты.
-- Playwright — browser-тесты пользовательских сценариев.
-- ESLint и Frappe Semgrep rules — статические проверки.
+- Frappe Framework 15 and Python — server methods, permissions, and asset integration.
+- Vue 3 — board components.
+- Vuex 4 — state, data loading, and optimistic operations.
+- Vite — frontend bundle build.
+- `vue-virtual-draglist` — card list virtualization and card DnD.
+- SortableJS — column reordering and cell drop zones (including swimlanes).
+- DOMPurify — formatted HTML sanitization.
+- Vitest and Vue Test Utils — unit and component tests.
+- Playwright — browser tests for user scenarios.
+- ESLint and Frappe Semgrep rules — static checks.
 
-## ✅ Требования
+## ✅ Requirements
 
 - Frappe Framework 15.
-- Python 3.10 или новее.
-- Node.js 24 и Yarn для сборки и frontend-проверок.
-- Рабочий bench с Redis и MariaDB, настроенными согласно требованиям Frappe.
-- Chromium для запуска browser-тестов Playwright.
+- Python 3.10 or newer.
+- Node.js 24 and Yarn for builds and frontend checks.
+- A working bench with Redis and MariaDB configured according to Frappe requirements.
+- Chromium for Playwright browser tests.
 
-## 🤝 Участие в разработке
+## 🤝 Contributing
 
-1. Ознакомьтесь с [AGENTS.md](AGENTS.md) и центральными правилами Dinext.
-2. Создавайте изменения в отдельной ветке от актуальной целевой ветки.
-3. Добавляйте тесты для нового поведения и исправленных регрессий.
-4. Перед review запускайте lint, unit-тесты, browser-тесты, backend-тесты и сборку.
-5. Не включайте в commit временные файлы, отчёты покрытия, Playwright artifacts и `node_modules`.
+1. Read [AGENTS.md](AGENTS.md) and the central Dinext rules.
+2. Make changes in a separate branch based on the current target branch.
+3. Add tests for new behavior and fixed regressions.
+4. Before review, run lint, unit tests, browser tests, backend tests, and a build.
+5. Do not commit temporary files, coverage reports, Playwright artifacts, or `node_modules`.
 
-Pull request автоматически проверяется frontend/backend workflow и Frappe Semgrep rules.
+Pull requests are checked automatically by the frontend/backend workflow and Frappe Semgrep rules.
 
-## Разработка и проверки
+## Development and checks
 
-Установите frontend-зависимости из корня приложения:
+Install frontend dependencies from the application root:
 
 ```bash
 yarn install --frozen-lockfile
 ```
 
-Запустите frontend-проверки:
+Run frontend checks:
 
 ```bash
 yarn workspace dinext_kanban lint
@@ -512,117 +514,102 @@ yarn workspace dinext_kanban build
 python3 -m compileall -q dinext_kanban
 ```
 
-Backend-тесты выполняются из корня bench:
+Run backend tests from the bench root:
 
 ```bash
 bench --site <site-name> run-tests --app dinext_kanban
 ```
 
-Для локальной разработки frontend:
+For local frontend development:
 
 ```bash
 yarn dev
 ```
 
-Frontend состоит из двух слоёв: `dinext_kanban/public/js/kanban_view.bundle.js` расширяет стандартный `KanbanView` (в том числе добавляет служебные поля вроде `color` в запрос `reportview.get`, чекбокс **Минимизировать** и dropdown **Group By** в page-actions), а Vite собирает Vue-приложение из `frontend/src/`. Команда `yarn workspace dinext_kanban build` копирует JavaScript и CSS в `dinext_kanban/public/` и сразу запускает `bench build --app dinext_kanban`, который собирает хешированные bundles в `dinext_kanban/public/dist/` (отдаются через `sites/assets/assets.json`). Перед review и деплоем выполняйте эту команду и проверяйте, что изменения попали в `dist/`.
+The frontend has two layers: `dinext_kanban/public/js/kanban_view.bundle.js` extends standard `KanbanView` (including adding utility fields such as `color` to the `reportview.get` query, the **Minimize** checkbox, and the **Group By** dropdown in page-actions), while Vite builds the Vue application from `frontend/src/`. `yarn workspace dinext_kanban build` copies JavaScript and CSS into `dinext_kanban/public/` and immediately runs `bench build --app dinext_kanban`, which builds hashed bundles in `dinext_kanban/public/dist/` (served through `sites/assets/assets.json`). Run this command before review and deployment, and verify that the changes reached `dist/`.
 
-## Локализация
+## Localization
 
-Все пользовательские строки приложения оборачиваются в `_()` (Python) или `__()` (JavaScript) и сопровождаются русскими переводами в [`dinext_kanban/translations/ru.csv`](dinext_kanban/translations/ru.csv).
+All user-facing application strings are wrapped in `_()` (Python) or `__()` (JavaScript) and have Russian translations in [`dinext_kanban/translations/ru.csv`](dinext_kanban/translations/ru.csv).
 
-При добавлении новых строк:
+When adding new strings:
 
-1. Оберните текст в `_()` / `__()`.
-2. Добавьте пару `"English","Русский",""` в `ru.csv`.
-3. После изменения переводов выполните на сайте:
+1. Wrap the text in `_()` / `__()`.
+2. Add an `"English","Русский",""` pair to `ru.csv`.
+3. After changing translations, run on the site:
 
 ```bash
 bench --site <site-name> migrate
 bench --site <site-name> clear-cache
 ```
 
-При необходимости синхронизируйте переводы через `bench update-translations` согласно процессу вашего bench.
+If needed, synchronize translations with `bench update-translations` according to your bench process.
 
-## 📄 Документация
+## 📄 Documentation
 
-- [AGENTS.md](AGENTS.md) — navigation stub к общим инструкциям, skills и rules Dinext.
-- [`../dinext-docs/catalog.md`](../dinext-docs/catalog.md) — центральный каталог пользовательской документации.
-- [`../dinext-docs/docs/бизнес-функции/задачи/Задачи.md`](../dinext-docs/docs/бизнес-функции/задачи/Задачи.md) — пользовательская документация по задачам и Kanban.
-- [`dinext_kanban/api.py`](dinext_kanban/api.py) — серверные методы: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_child_counts`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (только колонка), `move_card_to_cell` (колонка и/или дорожка), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), сроки (`get_deadline_holiday_context`, `ensure_deadline_column_values`), ширина колонок (`set_column_widths`, override `update_column_order`).
-- [`dinext_kanban/board_children.py`](dinext_kanban/board_children.py) — скрытие on-board children (membership, exclude до page slice, hidden names).
-- [`dinext_kanban/move_policy.py`](dinext_kanban/move_policy.py) — политики перемещения и создания (`get_move_options`, `get_create_options`, Workflow vs field update).
-- [`dinext_kanban/swimlane.py`](dinext_kanban/swimlane.py) — режимы группировки (в т.ч. `__deadlines`), построение дорожек, постраничная загрузка ячеек (`hide_board_children`) и изменение membership при DnD.
-- [`dinext_kanban/deadline.py`](dinext_kanban/deadline.py) — рабочие дни, buckets сроков, настройки доски, фильтры имён для deadline-lanes.
-- [`frontend/src/`](frontend/src/) — исходный код Vue-интерфейса (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `deadline`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks и resize колонок в Vuex).
-- [`dinext_kanban/dinext_kanban/custom/kanban_board.json`](dinext_kanban/dinext_kanban/custom/kanban_board.json) — Custom Fields **Show Tags**, **Extra Info**, **Swimlane Field**, **Deadline Field** / attention days / deadline columns на Kanban Board.
-- [`dinext_kanban/dinext_kanban/custom/kanban_board_column.json`](dinext_kanban/dinext_kanban/custom/kanban_board_column.json) — Custom Field **Column Width** (`custom_column_width`) на Kanban Board Column.
-- [`dinext_kanban/dinext_kanban/doctype/kanban_column_value/`](dinext_kanban/dinext_kanban/doctype/kanban_column_value/) — каталог значений колонок для MultiSelect сроков.
-- [`dinext_kanban/dinext_kanban/doctype/kanban_board_deadline_column/`](dinext_kanban/dinext_kanban/doctype/kanban_board_deadline_column/) — child Table MultiSelect «колонки со сроками».
-- [`dinext_kanban/public/js/kanban_highlight.js`](dinext_kanban/public/js/kanban_highlight.js) — form script Kanban Board (highlight, swimlane/deadline Autocomplete, MultiCheck колонок).
+- [AGENTS.md](AGENTS.md) — a navigation stub for shared Dinext instructions, skills, and rules.
+- [`dinext_kanban/api.py`](dinext_kanban/api.py) — server methods: `get_column_page`, `get_column_totals`, `get_board_document_names`, `get_hidden_board_child_names`, `get_child_counts`, `get_attachment_counts`, `get_move_options`, `get_create_options`, `move_card` (column only), `move_card_to_cell` (column and/or lane), swimlane (`get_swimlane_lanes`, `get_cell_totals`, `get_swimlane_*_page`, `set_swimlane_field`, `get_swimlane_field_options`), deadlines (`get_deadline_holiday_context`, `ensure_deadline_column_values`), column width (`set_column_widths`, `update_column_order` override).
+- [`dinext_kanban/board_children.py`](dinext_kanban/board_children.py) — hiding on-board children (membership, exclusion before page slicing, hidden names).
+- [`dinext_kanban/move_policy.py`](dinext_kanban/move_policy.py) — move and create policies (`get_move_options`, `get_create_options`, Workflow vs field update).
+- [`dinext_kanban/swimlane.py`](dinext_kanban/swimlane.py) — grouping modes (including `__deadlines`), lane construction, paginated cell loading (`hide_board_children`), and membership changes during DnD.
+- [`dinext_kanban/deadline.py`](dinext_kanban/deadline.py) — working days, deadline buckets, board settings, name filters for deadline lanes.
+- [`frontend/src/`](frontend/src/) — Vue interface source (`SwimlaneRow` / `SwimlaneGroup` / `SwimlaneColumn`, `ChildPanel`, `childPanelBoard`, `swimlaneBoard`, `deadline`, `createValidation`, `swimlaneCreate`, `CardTags`, `CardExtraInfo`, `listNavigation` / List cap, `tagDragDrop`, density / child-panel state, show-child-tasks and column resizing in Vuex).
+- [`dinext_kanban/dinext_kanban/custom/kanban_board.json`](dinext_kanban/dinext_kanban/custom/kanban_board.json) — **Show Tags**, **Extra Info**, **Swimlane Field**, **Deadline Field** / attention days / deadline columns Custom Fields on Kanban Board.
+- [`dinext_kanban/dinext_kanban/custom/kanban_board_column.json`](dinext_kanban/dinext_kanban/custom/kanban_board_column.json) — **Column Width** Custom Field (`custom_column_width`) on Kanban Board Column.
+- [`dinext_kanban/dinext_kanban/doctype/kanban_column_value/`](dinext_kanban/dinext_kanban/doctype/kanban_column_value/) — column value catalog for deadline MultiSelect.
+- [`dinext_kanban/dinext_kanban/doctype/kanban_board_deadline_column/`](dinext_kanban/dinext_kanban/doctype/kanban_board_deadline_column/) — child Table MultiSelect for “columns with deadlines.”
+- [`dinext_kanban/public/js/kanban_highlight.js`](dinext_kanban/public/js/kanban_highlight.js) — Kanban Board form script (highlight, swimlane/deadline Autocomplete, column MultiCheck).
 
-После каждого commit локальный `post-commit` hook формирует предложение для документации в `../dinext-docs/doc-proposals/inbox/`. Повторная установка hook:
-
-```bash
-python3 ../dinext-docs/scripts/install_doc_intake_hooks.py \
-  --docs-root ../dinext-docs \
-  --app-root . \
-  --apply
-```
-
-## ❤️ Благодарности
-
-Приложение основано на открытом проекте [tridz-dev/quick_kanban](https://github.com/tridz-dev/quick_kanban). Развитие и интеграция в продукт Dinext ведутся в репозитории `dinext_kanban`.
-
-## 🗂️ Структура репозитория
+## 🗂️ Repository structure
 
 ```text
 dinext_kanban/
-├── .github/workflows/          # CI: quality gates, Semgrep и release workflow
+├── .github/workflows/          # CI: quality gates, Semgrep, and release workflow
 ├── frontend/
-│   ├── e2e/                    # Playwright-сценарии и автономная browser fixture
+│   ├── e2e/                    # Playwright scenarios and standalone browser fixture
 │   ├── src/
-│   │   ├── components/         # Vue-компоненты доски, колонок, карточек, меток и swimlane
-│   │   ├── test/               # Общая настройка Vitest и тесты интеграционных scripts
-│   │   ├── utils/              # Store, listNavigation, createValidation, swimlaneCreate, deadline, DnD меток, swimlaneBoard, меню
-│   │   ├── App.vue             # Корневой Vue-компонент
-│   │   ├── main.js             # Mount/unmount Vue-приложения (в т.ч. setDinextKanbanShowChildTasks)
-│   │   └── style.css           # Стили нового Kanban
-│   ├── package.json            # Frontend-зависимости и команды (build = vite + copy + bench build)
-│   ├── playwright.config.js    # Конфигурация browser-тестов
-│   └── vite.config.js          # Сборка и unit-тесты
+│   │   ├── components/         # Vue components for board, columns, cards, tags, and swimlanes
+│   │   ├── test/               # Shared Vitest setup and integration script tests
+│   │   ├── utils/              # Store, listNavigation, createValidation, swimlaneCreate, deadline, tag DnD, swimlaneBoard, menus
+│   │   ├── App.vue             # Root Vue component
+│   │   ├── main.js             # Vue application mount/unmount (including setDinextKanbanShowChildTasks)
+│   │   └── style.css           # New Kanban styles
+│   ├── package.json            # Frontend dependencies and commands (build = vite + copy + bench build)
+│   ├── playwright.config.js    # Browser test configuration
+│   └── vite.config.js          # Build and unit tests
 ├── dinext_kanban/
 │   ├── public/
-│   │   ├── css/                # Собранные и подключаемые стили
-│   │   └── js/                 # Bootstrap, KanbanView override, form script и Vue bundle
+│   │   ├── css/                # Built and integrated styles
+│   │   └── js/                 # Bootstrap, KanbanView override, form script, and Vue bundle
 │   ├── dinext_kanban/
-│   │   ├── custom/             # Custom Fields Board (tags, extra info, swimlane, deadlines) и Column Width
+│   │   ├── custom/             # Board Custom Fields (tags, extra info, swimlane, deadlines) and Column Width
 │   │   └── doctype/            # Kanban Column Value, Kanban Board Deadline Column
-│   ├── tests/                  # Backend-тесты Frappe
-│   ├── translations/           # CSV-переводы (ru)
-│   ├── api.py                  # Permission-aware API доски (в т.ч. get_column_page)
-│   ├── board_children.py       # Hide on-board child docs для tree DocType
-│   ├── deadline.py             # Buckets сроков, holiday lists, фильтры deadline-lanes
-│   ├── move_policy.py          # Политики move / create и Workflow
-│   ├── validation.py           # Mandatory rules при перемещении
-│   ├── swimlane.py             # Группировка по дорожкам (в т.ч. deadlines) и lane membership
-│   └── hooks.py                # Метаданные Frappe и подключение assets
-├── AGENTS.md                   # Указатель на central dinext-docs
-├── package.json                # Корневой Yarn workspace
+│   ├── tests/                  # Frappe backend tests
+│   ├── translations/           # CSV translations (ru)
+│   ├── api.py                  # Permission-aware board API (including get_column_page)
+│   ├── board_children.py       # Hide on-board child documents for tree DocTypes
+│   ├── deadline.py             # Deadline buckets, holiday lists, deadline-lane filters
+│   ├── move_policy.py          # Move / create and Workflow policies
+│   ├── validation.py           # Mandatory rules during moves
+│   ├── swimlane.py             # Lane grouping (including deadlines) and lane membership
+│   └── hooks.py                # Frappe metadata and asset integration
+├── AGENTS.md                   # Agent instructions
+├── package.json                # Root Yarn workspace
 ├── pyproject.toml              # Python package metadata
-├── yarn.lock                   # Зафиксированные frontend-зависимости
-└── license.txt                 # Лицензия GPL-3
+├── yarn.lock                   # Locked frontend dependencies
+└── license.txt                 # GPL-3 license
 ```
 
-## 🔗 Поток данных
+## 🔗 Data flow
 
 ```mermaid
 flowchart LR
-    User[Пользователь открывает Kanban] --> Native[Frappe KanbanView]
+    User[User opens Kanban] --> Native[Frappe KanbanView]
     Native --> Bridge[kanban_view bridge]
-    Bridge -->|ошибка загрузки| Standard[Стандартный Kanban Frappe]
-    Bridge -->|успех| Bundle[Загрузка Vue bundle]
+    Bridge -->|loading error| Standard[Standard Frappe Kanban]
+    Bridge -->|success| Bundle[Load Vue bundle]
     Bundle --> Store[Vuex store]
-    Store --> Board[Vue-компоненты доски]
+    Store --> Board[Vue board components]
     Store --> ColumnPage[get_column_page]
     Store --> BoardNames[get_board_document_names / get_hidden_board_child_names]
     Store --> Totals[get_column_totals]
@@ -634,28 +621,28 @@ flowchart LR
     ColumnPage --> BoardChildren[board_children exclude]
     CellPage --> BoardChildren
     Totals --> BoardChildren
-    User --> ListNav[Двойной клик по счётчику колонки]
-    ListNav --> ListView[ListView колонка + опционально name not in]
-    User --> TagFilter[Двойной клик по метке]
+    User --> ListNav[Double-click column counter]
+    ListNav --> ListView[ListView column + optional name not in]
+    User --> TagFilter[Double-click tag]
     TagFilter --> FilterArea[filter_area _user_tags like]
-    FilterArea --> Refresh[ListView.refresh и перезагрузка доски]
-    User --> Create[Создание карточки]
+    FilterArea --> Refresh[ListView.refresh and board reload]
+    User --> Create[Create card]
     Create --> CreateOpts
-    Create --> FormUI[Quick Entry или полная форма]
-    FormUI --> RevealCreate[Pin сверху и scroll-reveal]
-    User --> Move[Перемещение карточки]
-    Move --> Optimistic[Оптимистичное обновление Vuex]
+    Create --> FormUI[Quick Entry or full form]
+    FormUI --> RevealCreate[Pin to top and scroll-reveal]
+    User --> Move[Move card]
+    Move --> Optimistic[Optimistic Vuex update]
     Optimistic --> MoveAPI[move_card]
     Optimistic --> CellAPI[move_card_to_cell]
     CellAPI --> LaneMem[apply_lane_membership]
-    LaneMem -->|deadlines| LaneBlocked[Смена дорожки запрещена]
-    MoveAPI -->|Успех| Saved[Документ сохранён]
-    CellAPI -->|Успех| Saved
-    MoveAPI -->|Ошибка или конфликт| Rollback[Позиция восстановлена]
-    CellAPI -->|Ошибка или конфликт| Rollback
-    Saved --> RevealMove[Scroll-reveal и подсветка]
+    LaneMem -->|deadlines| LaneBlocked[Lane change prohibited]
+    MoveAPI -->|Success| Saved[Document saved]
+    CellAPI -->|Success| Saved
+    MoveAPI -->|Error or conflict| Rollback[Position restored]
+    CellAPI -->|Error or conflict| Rollback
+    Saved --> RevealMove[Scroll-reveal and highlighting]
 ```
 
-## Лицензия
+## License
 
-Проект распространяется по лицензии GNU GPL v3. Полный текст находится в [license.txt](license.txt).
+The project is licensed under GNU GPL v3. The full text is in [license.txt](license.txt).
