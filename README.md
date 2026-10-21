@@ -1,5 +1,25 @@
 [Русский](README.ru.md)
 
+<!-- dinext-presentation:start -->
+<p align="center">
+  <a href="https://dinext.ru"><img src="docs/assets/readme/dinext-logo.png" alt="Dinext" width="128"></a>
+</p>
+<h1 align="center">Dinext Kanban</h1>
+
+<hr>
+
+<p align="center">Configurable Kanban boards for Dinext with workflow-aware moves, filtering and task cards.</p>
+
+<p align="center">
+  <img src="docs/assets/readme/overview.png" alt="A demonstration project board organized by task status." width="960">
+</p>
+<p align="center"><sub>A demonstration project board organized by task status.</sub></p>
+
+<p align="center">
+  <a href="https://dinext.ru">Website</a> · <a href="https://docs.dinext.ru">Documentation</a>
+</p>
+<!-- dinext-presentation:end -->
+
 # Dinext Kanban
 
 ## 📖 Overview
