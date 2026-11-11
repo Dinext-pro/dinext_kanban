@@ -20,7 +20,7 @@ HUB_ITEMS = (
 	},
 )
 
-HUB_SECTIONS = ({"section": "My Work", "list_limit": 5},)
+HUB_SECTIONS = ({"section": "My Work", "list_limit": 5, "card_columns": 3},)
 
 HUB_DOCTYPE_ITEMS = (
 	{
@@ -58,4 +58,5 @@ def register_dinext_hub_items() -> None:
 
 	register_hub_items(HUB_ITEMS, source_app=APP_NAME)
 	register_hub_sections(HUB_SECTIONS, source_app=APP_NAME)
-	register_hub_doctype_items(HUB_DOCTYPE_ITEMS, source_app=APP_NAME)
+	if "dinext_projects" not in frappe.get_installed_apps():
+		register_hub_doctype_items(HUB_DOCTYPE_ITEMS, source_app=APP_NAME)
